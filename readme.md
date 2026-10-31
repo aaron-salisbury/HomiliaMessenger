@@ -21,7 +21,7 @@ All contacts are stored locally on your machine. The application does not send d
 ## Development
 
 - The solution is `src/HomiliaMessenger.slnx`.
-- Run `dotnet build/cake.cs` from the repository root to restore, build (Release) and test the solution; it uses [Cake.Sdk](https://cakebuild.net/docs/running-builds/runners/cake-sdk), pinned in `global.json`. Pass script arguments after `--` to change what runs, for example `dotnet build/cake.cs -- --target=Build --configuration=Debug` (without the `--`, `dotnet` consumes `--configuration` itself and the build stays in Release).
+- Run `dotnet build/cake.cs` from the repository root to restore, build (Release) and test the solution; it uses [Cake.Sdk](https://cakebuild.net/docs/running-builds/runners/cake-sdk), pinned in `global.json`. Pass script arguments after `--` to change what runs, for example `dotnet build/cake.cs -- --target=Build --configuration=Debug` (without the `--`, `dotnet` consumes `--configuration` itself and the build stays in Release). Every run ends by deleting any empty `TestResults` folders in the repository; `--target=CleanTestResults` does only that.
 - Run the app with `dotnet run --project src/HomiliaMessenger.DesktopApp`.
 - As configured in the `Directory.Build.props` file, every project targets .NET 10, disables implicit using directives, and treats all types as not-nullable unless explicitly declared.
 - The desktop application is built on the [Avalonia](https://github.com/AvaloniaUI/Avalonia) UI framework.
