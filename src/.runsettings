@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<RunSettings>
+    <RunConfiguration>
+      <!-- Visual Studio creates TestResults in the solution root by default, and there seems to be no way to disable that. -->
+      <ResultsDirectory>%temp%\TestResults</ResultsDirectory>
+  </RunConfiguration>
+</RunSettings>

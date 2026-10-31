@@ -1,0 +1,58 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+			 mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+			 x:Class="HomiliaMessenger.Presentation.Desktop.Views.SettingsView"
+             xmlns:vm="clr-namespace:HomiliaMessenger.Presentation.Desktop.ViewModels"
+             x:DataType="vm:SettingsViewModel">
+
+	<UserControl.Styles>
+		<Style Selector="TextBlock.section-header">
+			<Setter Property="FontSize" Value="18"/>
+			<Setter Property="FontWeight" Value="Bold"/>
+		</Style>
+	</UserControl.Styles>
+
+	<Border>
+		<ScrollViewer>
+			<Grid ColumnDefinitions="*,*">
+				<StackPanel Grid.Column="0" Spacing="18">
+
+					<StackPanel Spacing="8">
+						<TextBlock Text="Appearance" Classes="section-header" />
+
+						<StackPanel>
+							<TextBlock Text="Choose Theme" />
+							<StackPanel Margin="20,0,0,0">
+								<RadioButton IsChecked="{Binding ThemeIsSystem}" GroupName="Theme" Content="System" Command="{Binding SetThemeCommand}" CommandParameter="System" />
+								<RadioButton IsChecked="{Binding ThemeIsLight}" GroupName="Theme" Content="Light" Command="{Binding SetThemeCommand}" CommandParameter="Light" />
+								<RadioButton IsChecked="{Binding ThemeIsDark}" GroupName="Theme" Content="Dark" Command="{Binding SetThemeCommand}" CommandParameter="Dark" />
+							</StackPanel>
+						</StackPanel>
+					</StackPanel>
+
+					<StackPanel Spacing="8">
+						<TextBlock Text="About this Application" Classes="section-header" />
+
+						<StackPanel>
+							<TextBlock Text="{Binding ApplicationInfo}" />
+							<StackPanel Orientation="Horizontal">
+								<TextBlock Text="© " />
+								<TextBlock Text="{Binding CopyHolder}" />
+							</StackPanel>
+						</StackPanel>
+
+						<TextBlock TextWrapping="Wrap" Text="{Binding AppDescription}" />
+
+						<StackPanel Orientation="Horizontal" Spacing="12">
+							<HyperlinkButton Content="Privacy Statement" NavigateUri="{Binding PrivacyURL}" />
+							<HyperlinkButton Content="Issues" NavigateUri="{Binding IssuesURL}" />
+						</StackPanel>
+					</StackPanel>
+
+				</StackPanel>
+			</Grid>
+		</ScrollViewer>
+	</Border>
+</UserControl>

@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <PublishSingleFile>true</PublishSingleFile>
+    <Product>Homilia Messenger</Product>
+    <Description>A messenger where every contact is an AI persona. Experiment with conversations with agents.</Description>
+    <AssemblyName>HomiliaMessenger</AssemblyName>
+    <ApplicationIcon>icon.ico</ApplicationIcon>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="icon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" Version="$(AvaloniaVersion)" />
+    <PackageReference Include="Serilog.Extensions.Logging" Version="10.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\HomiliaMessenger.Business\HomiliaMessenger.Business.csproj" />
+    <ProjectReference Include="..\HomiliaMessenger.Data\HomiliaMessenger.Data.csproj" />
+    <ProjectReference Include="..\HomiliaMessenger.Integrations\HomiliaMessenger.Integrations.csproj" />
+    <ProjectReference Include="..\HomiliaMessenger.Presentation.Desktop\HomiliaMessenger.Presentation.Desktop.csproj" />
+  </ItemGroup>
+</Project>

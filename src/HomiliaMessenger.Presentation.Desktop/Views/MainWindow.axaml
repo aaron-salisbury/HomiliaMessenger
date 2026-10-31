@@ -1,0 +1,16 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+		mc:Ignorable="d" d:DesignWidth="1366" d:DesignHeight="768"
+		MinWidth="1100" MinHeight="415"
+		Width="1100" Height="619"
+        x:Class="HomiliaMessenger.Presentation.Desktop.Views.MainWindow"
+        xmlns:views="clr-namespace:HomiliaMessenger.Presentation.Desktop.Views"
+        Icon="/Base/Assets/icon.ico"
+        Title="Homilia Messenger"
+        WindowStartupLocation="CenterScreen">
+
+	<views:MainView />
+
+</Window>

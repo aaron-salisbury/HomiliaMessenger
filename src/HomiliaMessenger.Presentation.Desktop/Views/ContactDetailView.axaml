@@ -1,0 +1,150 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="700"
+             x:Class="HomiliaMessenger.Presentation.Desktop.Views.ContactDetailView"
+             xmlns:vm="clr-namespace:HomiliaMessenger.Presentation.Desktop.ViewModels"
+             x:DataType="vm:ContactDetailViewModel"
+             xmlns:converters="clr-namespace:HomiliaMessenger.Presentation.Desktop.Base.Converters"
+             xmlns:i="using:Material.Icons.Avalonia"
+             xmlns:imaging="clr-namespace:Avalonia.Media.Imaging;assembly=Avalonia.Base">
+
+    <UserControl.Resources>
+        <converters:BooleanToMaterialIconKindConverter x:Key="BooleanToMaterialIconKindConverter" />
+        <converters:BirthdayToDateConverter x:Key="BirthdayToDateConverter" />
+        <imaging:Bitmap x:Key="ContactPlaceholder">avares://HomiliaMessenger.Presentation.Desktop/Base/Assets/contact-placeholder.png</imaging:Bitmap>
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+        <Style Selector="i|MaterialIcon.section-icon">
+            <Setter Property="Width" Value="24"/>
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="Opacity" Value="0.5"/>
+            <Setter Property="VerticalAlignment" Value="Top"/>
+            <Setter Property="Margin" Value="0,6,0,0"/>
+        </Style>
+
+        <Style Selector="TextBlock.section-label">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+
+        <Style Selector="TextBlock.section-hint">
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Opacity" Value="0.7"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+
+        <Style Selector="Button#AddPhotoButton">
+            <Setter Property="Opacity" Value="0"/>
+        </Style>
+        <Style Selector="Ellipse#AddPhotoButtonBackground">
+            <Setter Property="Opacity" Value="0"/>
+        </Style>
+        <Style Selector="Grid#PhotoGrid:pointerover Button#AddPhotoButton">
+            <Setter Property="Opacity" Value="1"/>
+        </Style>
+        <Style Selector="Grid#PhotoGrid:pointerover Ellipse#AddPhotoButtonBackground">
+            <Setter Property="Opacity" Value="0.8"/>
+        </Style>
+    </UserControl.Styles>
+
+    <StackPanel Spacing="16" MaxWidth="900" HorizontalAlignment="Left">
+
+        <!-- Header -->
+        <StackPanel HorizontalAlignment="Left" Orientation="Horizontal">
+            <!-- Photo -->
+            <Grid Name="PhotoGrid">
+                <Ellipse HorizontalAlignment="Center" VerticalAlignment="Center" Width="80" Height="80">
+                    <Ellipse.Fill>
+                        <ImageBrush Source="{Binding PhotoPreview, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                    </Ellipse.Fill>
+                </Ellipse>
+                <Grid Name="AddPhotoOverlay">
+                    <Ellipse Name="AddPhotoButtonBackground"
+                             HorizontalAlignment="Center"
+                             VerticalAlignment="Center"
+                             Width="83"
+                             Height="83"
+                             Fill="{DynamicResource SystemRegionColor}" />
+                    <Button Name="AddPhotoButton"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Width="80"
+                            Height="80"
+                            CornerRadius="40"
+                            ToolTip.Tip="Choose photo"
+                            Click="ChoosePhoto_Click">
+                        <i:MaterialIcon Kind="CameraOutline" Width="24" Height="24" />
+                    </Button>
+                </Grid>
+            </Grid>
+            <!-- Display Name -->
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="24,0,12,0">
+                <TextBlock Text="{Binding GivenName}" VerticalAlignment="Center" MaxLines="1" TextTrimming="CharacterEllipsis" FontSize="30" MaxWidth="300" />
+                <TextBlock Text="{Binding FamilyName}" VerticalAlignment="Center" MaxLines="1" TextTrimming="CharacterEllipsis" FontSize="30" MaxWidth="300" />
+            </StackPanel>
+            <!-- Favorite -->
+            <Button Name="FavoriteButton" Command="{Binding FlipFavoriteCommand}" Classes="noBackground" ToolTip.Tip="Favorite">
+                <i:MaterialIcon Kind="{Binding IsFavorite, Converter={StaticResource BooleanToMaterialIconKindConverter}, ConverterParameter=Star|StarOutline}" Width="30" Height="30" />
+            </Button>
+            <!-- Remove photo -->
+            <Button Command="{Binding RemovePhotoCommand}" Classes="noBackground" ToolTip.Tip="Remove photo" VerticalAlignment="Center">
+                <i:MaterialIcon Kind="ImageRemoveOutline" Width="22" Height="22" Opacity="0.7" />
+            </Button>
+        </StackPanel>
+
+        <!-- Name -->
+        <Grid ColumnDefinitions="Auto,*,*" RowDefinitions="Auto,Auto" ColumnSpacing="10" RowSpacing="8">
+            <i:MaterialIcon Grid.Row="0" Grid.Column="0" Kind="AccountOutline" Classes="section-icon" />
+            <TextBox Grid.Row="0" Grid.Column="1" PlaceholderText="Given name" Text="{Binding GivenName}" AutomationProperties.Name="Given name" />
+            <TextBox Grid.Row="0" Grid.Column="2" PlaceholderText="Family name" Text="{Binding FamilyName}" AutomationProperties.Name="Family name" />
+            <TextBox Grid.Row="1" Grid.Column="1" PlaceholderText="Nickname (shown in the contact list)" Text="{Binding Nickname}" AutomationProperties.Name="Nickname" />
+        </Grid>
+
+        <!-- Birthday -->
+        <Grid ColumnDefinitions="Auto,Auto,Auto" RowDefinitions="Auto" ColumnSpacing="10" RowSpacing="8">
+            <i:MaterialIcon Grid.Row="0" Grid.Column="0" Kind="CakeVariantOutline" Classes="section-icon" />
+            <DatePicker Grid.Row="0" Grid.Column="1" SelectedDate="{Binding Birthday, Mode=TwoWay, Converter={StaticResource BirthdayToDateConverter}}"
+                        AutomationProperties.Name="Birthday" />
+            <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding AgeDescription}" VerticalAlignment="Center" Opacity="0.8" />
+        </Grid>
+
+        <!-- Gender -->
+        <Grid ColumnDefinitions="Auto,*,*" RowDefinitions="Auto" ColumnSpacing="10" RowSpacing="8">
+            <i:MaterialIcon Grid.Row="0" Grid.Column="0" Kind="CardAccountDetailsOutline" Classes="section-icon" />
+            <TextBox Grid.Row="0" Grid.Column="1" PlaceholderText="Gender" Text="{Binding Gender}" AutomationProperties.Name="Gender" />
+        </Grid>
+
+        <!-- Personality -->
+        <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="4">
+            <i:MaterialIcon Grid.Row="0" Grid.RowSpan="3" Grid.Column="0" Kind="EmoticonOutline" Classes="section-icon" />
+            <TextBlock Grid.Row="0" Grid.Column="1" Text="Personality" Classes="section-label" />
+            <TextBlock Grid.Row="1" Grid.Column="1" Classes="section-hint"
+                       Text="Temperament, values, sense of humor, and how they talk. For example: gruff but warm, dry humor, plain-spoken, guarded about the war." />
+            <TextBox Grid.Row="2" Grid.Column="1" Margin="0,4,0,0" Text="{Binding Personality}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="90"
+                     AutomationProperties.Name="Personality" />
+        </Grid>
+
+        <!-- Background -->
+        <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="4">
+            <i:MaterialIcon Grid.Row="0" Grid.RowSpan="3" Grid.Column="0" Kind="BookOpenPageVariantOutline" Classes="section-icon" />
+            <TextBlock Grid.Row="0" Grid.Column="1" Text="Background" Classes="section-label" />
+            <TextBlock Grid.Row="1" Grid.Column="1" Classes="section-hint"
+                       Text="Life story, relationships, and experiences they can draw from. For example: drafted in 1968, served as an Army medic, now a grandfather of four in Ohio." />
+            <TextBox Grid.Row="2" Grid.Column="1" Margin="0,4,0,0" Text="{Binding Background}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="130"
+                     AutomationProperties.Name="Background" />
+        </Grid>
+
+        <!-- Agent -->
+        <Grid ColumnDefinitions="Auto,*,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="4">
+            <i:MaterialIcon Grid.Row="0" Grid.RowSpan="3" Grid.Column="0" Kind="RobotOutline" Classes="section-icon" />
+            <TextBlock Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="2" Text="Agent" Classes="section-label" />
+            <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Classes="section-hint"
+                       Text="The agent that speaks for this contact. It can be changed at any time without losing the contact." />
+            <TextBox Grid.Row="2" Grid.Column="1" Margin="0,4,0,0" PlaceholderText="Provider (e.g. Ollama)" Text="{Binding AgentProvider}" AutomationProperties.Name="Agent provider" />
+            <TextBox Grid.Row="2" Grid.Column="2" Margin="0,4,0,0" PlaceholderText="Model (e.g. llama3.1:8b)" Text="{Binding AgentModel}" AutomationProperties.Name="Agent model" />
+        </Grid>
+
+    </StackPanel>
+</UserControl>

@@ -1,0 +1,70 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="HomiliaMessenger.Presentation.Desktop.Views.ContactsView"
+             xmlns:vm="clr-namespace:HomiliaMessenger.Presentation.Desktop.ViewModels"
+             x:DataType="vm:ContactsViewModel"
+             xmlns:views="clr-namespace:HomiliaMessenger.Presentation.Desktop.Views"
+             xmlns:converters="clr-namespace:HomiliaMessenger.Presentation.Desktop.Base.Converters"
+             xmlns:i="using:Material.Icons.Avalonia"
+             xmlns:imaging="clr-namespace:Avalonia.Media.Imaging;assembly=Avalonia.Base"
+             xmlns:contacts="clr-namespace:HomiliaMessenger.Business.Modules.Contacts;assembly=HomiliaMessenger.Business">
+
+    <!-- Offset default padding so master section aligns with header & nav menu bars. Reapply padding to detail section. -->
+    <UserControl.Margin>-20</UserControl.Margin>
+
+    <UserControl.Resources>
+        <converters:BytesToBitmapConverter x:Key="BytesToBitmapConverter" />
+        <converters:BooleanToMaterialIconKindConverter x:Key="BooleanToMaterialIconKindConverter" />
+        <imaging:Bitmap x:Key="ContactPlaceholder">avares://HomiliaMessenger.Presentation.Desktop/Base/Assets/contact-placeholder.png</imaging:Bitmap>
+    </UserControl.Resources>
+
+    <!-- Disabled while an operation runs so edits and saves cannot overlap. -->
+    <Grid ColumnDefinitions="275,*" IsEnabled="{Binding !IsBusy}">
+
+        <!-- Master -->
+        <Border Grid.Column="0" CornerRadius="12,0,0,0" ClipToBounds="True" Background="{DynamicResource SystemRegionColor}">
+            <Grid RowDefinitions="Auto,*">
+
+                <TextBox Grid.Row="0" Margin="10" PlaceholderText="Search contacts" Text="{Binding SearchText}" AutomationProperties.Name="Search contacts">
+                    <TextBox.InnerLeftContent>
+                        <i:MaterialIcon Kind="Magnify" Width="18" Height="18" Margin="8,0,0,0" Opacity="0.6" />
+                    </TextBox.InnerLeftContent>
+                </TextBox>
+
+                <ListBox Grid.Row="1" Background="Transparent" ItemsSource="{Binding VisibleContacts}" SelectedItem="{Binding ListSelection}">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="contacts:Contact">
+
+                            <!-- Contact Preview -->
+                            <Grid ColumnDefinitions="50,10,*,5,20">
+                                <Ellipse Grid.Column="0" VerticalAlignment="Center" Width="50" Height="50">
+                                    <Ellipse.Fill>
+                                        <!-- Decoded at thumbnail size and cached per photo buffer by the converter. -->
+                                        <ImageBrush Source="{Binding Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                                    </Ellipse.Fill>
+                                </Ellipse>
+                                <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding Personality}" TextTrimming="CharacterEllipsis" MaxLines="1" FontSize="11" Opacity="0.75" />
+                                </StackPanel>
+                                <i:MaterialIcon Grid.Column="4" Kind="{Binding IsFavorite, Converter={StaticResource BooleanToMaterialIconKindConverter}, ConverterParameter=Star|StarOutline}"
+                                                Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Grid>
+
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+            </Grid>
+        </Border>
+
+        <!-- Detail -->
+        <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" Padding="20">
+            <views:ContactDetailView DataContext="{Binding Detail}" />
+        </ScrollViewer>
+
+    </Grid>
+</UserControl>

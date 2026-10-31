@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="HomiliaMessenger.Business/HomiliaMessenger.Business.csproj" />
+  <Project Path="HomiliaMessenger.Data/HomiliaMessenger.Data.csproj" />
+  <Project Path="HomiliaMessenger.Integrations/HomiliaMessenger.Integrations.csproj" />
+  <Project Path="HomiliaMessenger.Presentation.Desktop/HomiliaMessenger.Presentation.Desktop.csproj" />
+  <Project Path="HomiliaMessenger.DesktopApp/HomiliaMessenger.DesktopApp.csproj" />
+  <Project Path="HomiliaMessenger.Tests/HomiliaMessenger.Tests.csproj" />
+</Solution>

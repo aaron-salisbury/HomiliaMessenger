@@ -1,0 +1,34 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:i="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:v="clr-namespace:HomiliaMessenger.Presentation.Desktop.Views"
+             xmlns:vm="clr-namespace:HomiliaMessenger.Presentation.Desktop.ViewModels"
+             x:Class="HomiliaMessenger.Presentation.Desktop.App"
+             RequestedThemeVariant="Default">
+    <!-- "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options. -->
+
+    <Application.DataTemplates>
+        <DataTemplate DataType="{x:Type vm:ContactsViewModel}">
+            <v:ContactsView />
+        </DataTemplate>
+		<DataTemplate DataType="{x:Type vm:ContactDetailViewModel}">
+			<v:ContactDetailView />
+		</DataTemplate>
+        <DataTemplate DataType="{x:Type vm:SettingsViewModel}">
+            <v:SettingsView />
+        </DataTemplate>
+    </Application.DataTemplates>
+
+    <Application.Styles>
+        <FluentTheme />
+        <i:MaterialIconStyles />
+        <StyleInclude Source="/Base/Styles/Colors.axaml" />
+        <StyleInclude Source="/Base/Styles/UserControlStyles.axaml" />
+        <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
+        <StyleInclude Source="avares://AvaloniaProgressRing/Styles/ProgressRing.xaml" />
+    </Application.Styles>
+
+    <Application.Resources>
+        <FontFamily x:Key="ViewHeadingFont">avares://HomiliaMessenger.Presentation.Desktop/Base/Assets/Fonts/akashi-font#Akashi</FontFamily>
+    </Application.Resources>
+</Application>

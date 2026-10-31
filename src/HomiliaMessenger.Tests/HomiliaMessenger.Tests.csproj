@@ -1,0 +1,14 @@
+<Project Sdk="MSTest.Sdk/4.5.1">
+
+  <PropertyGroup>
+    <Description>Unit tests for the HomiliaMessenger application.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\HomiliaMessenger.Business\HomiliaMessenger.Business.csproj" />
+    <ProjectReference Include="..\HomiliaMessenger.Data\HomiliaMessenger.Data.csproj" />
+    <ProjectReference Include="..\HomiliaMessenger.Integrations\HomiliaMessenger.Integrations.csproj" />
+    <ProjectReference Include="..\HomiliaMessenger.Presentation.Desktop\HomiliaMessenger.Presentation.Desktop.csproj" />
+  </ItemGroup>
+
+</Project>
