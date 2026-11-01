@@ -1,0 +1,311 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="550"
+             x:Class="HomiliaMessenger.Presentation.Desktop.Views.MessengerView"
+             xmlns:vm="clr-namespace:HomiliaMessenger.Presentation.Desktop.ViewModels"
+             x:DataType="vm:MessengerViewModel"
+             xmlns:m="clr-namespace:HomiliaMessenger.Presentation.Desktop.Models"
+             xmlns:converters="clr-namespace:HomiliaMessenger.Presentation.Desktop.Base.Converters"
+             xmlns:i="using:Material.Icons.Avalonia"
+             xmlns:imaging="clr-namespace:Avalonia.Media.Imaging;assembly=Avalonia.Base"
+             xmlns:contacts="clr-namespace:HomiliaMessenger.Business.Modules.Contacts;assembly=HomiliaMessenger.Business">
+
+    <!-- Offset default padding so the conversation list aligns with header & nav menu bars. -->
+    <UserControl.Margin>-20</UserControl.Margin>
+
+    <UserControl.Resources>
+        <converters:BytesToBitmapConverter x:Key="BytesToBitmapConverter" />
+        <imaging:Bitmap x:Key="ContactPlaceholder">avares://HomiliaMessenger.Presentation.Desktop/Base/Assets/contact-placeholder.png</imaging:Bitmap>
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+
+        <!-- Message bubbles. Grouped bubbles keep rounded outer corners and tighten the corners where they meet. -->
+        <Style Selector="Border.bubble">
+            <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundBaseLowBrush}" />
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="MaxWidth" Value="520" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="CornerRadius" Value="4,18,18,4" />
+        </Style>
+        <Style Selector="Border.bubble.first">
+            <Setter Property="CornerRadius" Value="18,18,18,4" />
+        </Style>
+        <Style Selector="Border.bubble.last">
+            <Setter Property="CornerRadius" Value="4,18,18,18" />
+        </Style>
+        <Style Selector="Border.bubble.first.last">
+            <Setter Property="CornerRadius" Value="18" />
+        </Style>
+        <Style Selector="Border.bubble.mine">
+            <Setter Property="Background" Value="{DynamicResource SystemControlHighlightAccentBrush}" />
+            <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="CornerRadius" Value="18,4,4,18" />
+        </Style>
+        <Style Selector="Border.bubble.mine.first">
+            <Setter Property="CornerRadius" Value="18,18,4,18" />
+        </Style>
+        <Style Selector="Border.bubble.mine.last">
+            <Setter Property="CornerRadius" Value="18,4,18,18" />
+        </Style>
+        <Style Selector="Border.bubble.mine.first.last">
+            <Setter Property="CornerRadius" Value="18" />
+        </Style>
+        <Style Selector="Border.bubble.mine SelectableTextBlock">
+            <Setter Property="Foreground" Value="White" />
+        </Style>
+
+        <Style Selector="StackPanel.message">
+            <Setter Property="Margin" Value="0,1" />
+        </Style>
+        <Style Selector="StackPanel.message.first">
+            <Setter Property="Margin" Value="0,8,0,1" />
+        </Style>
+
+        <Style Selector="TextBlock.preview.typing">
+            <Setter Property="FontStyle" Value="Italic" />
+        </Style>
+
+        <!-- Typing indicator: three dots pulsing in turn. -->
+        <Style Selector="Ellipse.typingDot">
+            <Setter Property="Width" Value="8" />
+            <Setter Property="Height" Value="8" />
+            <Setter Property="Fill" Value="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
+            <Setter Property="Opacity" Value="0.3" />
+            <Style.Animations>
+                <Animation Duration="0:0:1.2" IterationCount="INFINITE">
+                    <KeyFrame Cue="0%">
+                        <Setter Property="Opacity" Value="0.3" />
+                    </KeyFrame>
+                    <KeyFrame Cue="25%">
+                        <Setter Property="Opacity" Value="1" />
+                    </KeyFrame>
+                    <KeyFrame Cue="50%">
+                        <Setter Property="Opacity" Value="0.3" />
+                    </KeyFrame>
+                    <KeyFrame Cue="100%">
+                        <Setter Property="Opacity" Value="0.3" />
+                    </KeyFrame>
+                </Animation>
+            </Style.Animations>
+        </Style>
+        <Style Selector="Ellipse.typingDot.second">
+            <Style.Animations>
+                <Animation Duration="0:0:1.2" Delay="0:0:0.2" IterationCount="INFINITE">
+                    <KeyFrame Cue="0%">
+                        <Setter Property="Opacity" Value="0.3" />
+                    </KeyFrame>
+                    <KeyFrame Cue="25%">
+                        <Setter Property="Opacity" Value="1" />
+                    </KeyFrame>
+                    <KeyFrame Cue="50%">
+                        <Setter Property="Opacity" Value="0.3" />
+                    </KeyFrame>
+                    <KeyFrame Cue="100%">
+                        <Setter Property="Opacity" Value="0.3" />
+                    </KeyFrame>
+                </Animation>
+            </Style.Animations>
+        </Style>
+        <Style Selector="Ellipse.typingDot.third">
+            <Style.Animations>
+                <Animation Duration="0:0:1.2" Delay="0:0:0.4" IterationCount="INFINITE">
+                    <KeyFrame Cue="0%">
+                        <Setter Property="Opacity" Value="0.3" />
+                    </KeyFrame>
+                    <KeyFrame Cue="25%">
+                        <Setter Property="Opacity" Value="1" />
+                    </KeyFrame>
+                    <KeyFrame Cue="50%">
+                        <Setter Property="Opacity" Value="0.3" />
+                    </KeyFrame>
+                    <KeyFrame Cue="100%">
+                        <Setter Property="Opacity" Value="0.3" />
+                    </KeyFrame>
+                </Animation>
+            </Style.Animations>
+        </Style>
+
+    </UserControl.Styles>
+
+    <Grid ColumnDefinitions="300,*">
+
+        <!-- Conversation list -->
+        <Border Grid.Column="0" CornerRadius="12,0,0,0" ClipToBounds="True" Background="{DynamicResource SystemRegionColor}"
+                BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="0,0,1,0">
+            <Grid RowDefinitions="Auto,*">
+
+                <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="10">
+                    <TextBox Grid.Column="0" PlaceholderText="Search chats" Text="{Binding SearchText}" AutomationProperties.Name="Search chats">
+                        <TextBox.InnerLeftContent>
+                            <i:MaterialIcon Kind="Magnify" Width="18" Height="18" Margin="8,0,0,0" Opacity="0.6" />
+                        </TextBox.InnerLeftContent>
+                    </TextBox>
+
+                    <Button Grid.Column="1" x:Name="NewChatButton" Margin="8,0,0,0" Width="34" Height="34" Padding="0" CornerRadius="17"
+                            Background="Transparent" ToolTip.Tip="New chat" AutomationProperties.Name="New chat">
+                        <i:MaterialIcon Kind="SquareEditOutline" Width="20" Height="20" />
+                        <Button.Flyout>
+                            <Flyout Placement="BottomEdgeAlignedRight">
+                                <StackPanel Width="280" Spacing="8">
+                                    <TextBlock Text="New chat" FontWeight="SemiBold" FontSize="15" />
+                                    <TextBox PlaceholderText="Search contacts" Text="{Binding ContactSearchText}" AutomationProperties.Name="Search contacts" />
+                                    <TextBlock Text="No contacts yet. Add a persona on the Contacts page first." IsVisible="{Binding !HasContacts}"
+                                               TextWrapping="Wrap" Opacity="0.7" />
+                                    <ListBox ItemsSource="{Binding VisibleContacts}" MaxHeight="320" Background="Transparent"
+                                             SelectionChanged="ContactPicker_SelectionChanged" IsVisible="{Binding HasContacts}">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate x:DataType="contacts:Contact">
+                                                <Grid ColumnDefinitions="36,10,*">
+                                                    <Ellipse Grid.Column="0" Width="36" Height="36">
+                                                        <Ellipse.Fill>
+                                                            <ImageBrush Source="{Binding Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                                                        </Ellipse.Fill>
+                                                    </Ellipse>
+                                                    <TextBlock Grid.Column="2" Text="{Binding DisplayName}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </StackPanel>
+                            </Flyout>
+                        </Button.Flyout>
+                    </Button>
+                </Grid>
+
+                <TextBlock Grid.Row="1" Text="No chats yet. Use the pencil button to start one." IsVisible="{Binding !HasConversations}"
+                           TextWrapping="Wrap" TextAlignment="Center" Margin="24" Opacity="0.6" />
+
+                <ListBox Grid.Row="1" Background="Transparent" ItemsSource="{Binding VisibleConversations}" SelectedItem="{Binding SelectedConversation}">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="m:ConversationListItem">
+                            <Grid ColumnDefinitions="50,10,*,Auto" Background="Transparent">
+                                <Grid.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Delete chat" Click="DeleteConversation_Click">
+                                            <MenuItem.Icon>
+                                                <i:MaterialIcon Kind="TrashCanOutline" />
+                                            </MenuItem.Icon>
+                                        </MenuItem>
+                                    </ContextMenu>
+                                </Grid.ContextMenu>
+
+                                <Ellipse Grid.Column="0" VerticalAlignment="Center" Width="50" Height="50">
+                                    <Ellipse.Fill>
+                                        <ImageBrush Source="{Binding Contact.Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                                    </Ellipse.Fill>
+                                </Ellipse>
+                                <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Contact.DisplayName}" TextTrimming="CharacterEllipsis" FontWeight="SemiBold" />
+                                    <TextBlock Classes="preview" Classes.typing="{Binding IsTyping}" Text="{Binding Preview}"
+                                               TextTrimming="CharacterEllipsis" MaxLines="1" FontSize="12" Opacity="0.75" />
+                                </StackPanel>
+                                <TextBlock Grid.Column="3" Text="{Binding LastActivity}" FontSize="11" Opacity="0.6" VerticalAlignment="Top" Margin="6,6,0,0" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+            </Grid>
+        </Border>
+
+        <!-- No open chat -->
+        <StackPanel Grid.Column="1" IsVisible="{Binding !HasActiveThread}" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10">
+            <i:MaterialIcon Kind="ForumOutline" Width="64" Height="64" Opacity="0.35" />
+            <TextBlock Text="Pick a chat, or start a new one with the pencil button." Opacity="0.6" TextAlignment="Center" />
+        </StackPanel>
+
+        <!-- Thread -->
+        <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" IsVisible="{Binding HasActiveThread}">
+
+            <!-- Thread header -->
+            <Border Grid.Row="0" Padding="16,10" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="0,0,0,1">
+                <Grid ColumnDefinitions="40,12,*">
+                    <Ellipse Grid.Column="0" Width="40" Height="40">
+                        <Ellipse.Fill>
+                            <ImageBrush Source="{Binding ActiveContact.Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                        </Ellipse.Fill>
+                    </Ellipse>
+                    <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding ActiveContact.DisplayName}" FontWeight="SemiBold" FontSize="16" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding ActiveSubtitle}" FontSize="12" Opacity="0.65" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Empty new chat -->
+            <StackPanel Grid.Row="1" IsVisible="{Binding !HasMessages}" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10">
+                <Ellipse Width="96" Height="96" HorizontalAlignment="Center">
+                    <Ellipse.Fill>
+                        <ImageBrush Source="{Binding ActiveContact.Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=200, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                    </Ellipse.Fill>
+                </Ellipse>
+                <TextBlock Text="{Binding ActiveContact.DisplayName}" FontWeight="SemiBold" FontSize="18" HorizontalAlignment="Center" />
+                <TextBlock Text="{Binding ActiveContact.DisplayName, StringFormat='Say hello to {0}.'}" Opacity="0.6" HorizontalAlignment="Center" />
+            </StackPanel>
+
+            <!-- Messages -->
+            <ScrollViewer Grid.Row="1" x:Name="MessagesScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Margin="16,8,16,12">
+                    <ItemsControl ItemsSource="{Binding Messages}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="m:MessageItem">
+                                <StackPanel Classes="message" Classes.first="{Binding IsFirstInGroup}">
+                                    <TextBlock Text="{Binding TimeSeparator}" IsVisible="{Binding HasTimeSeparator}"
+                                               HorizontalAlignment="Center" FontSize="11" Opacity="0.55" Margin="0,10,0,6" />
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <!-- Reserves the avatar column for every contact bubble so a group's bubbles line up. -->
+                                        <Panel Grid.Column="0" Width="28" Margin="0,0,8,0" VerticalAlignment="Bottom" IsVisible="{Binding !IsFromUser}">
+                                            <Ellipse Width="28" Height="28" IsVisible="{Binding ShowsAvatar}">
+                                                <Ellipse.Fill>
+                                                    <ImageBrush Source="{Binding $parent[ItemsControl].((vm:MessengerViewModel)DataContext).ActiveContact.Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                                                </Ellipse.Fill>
+                                            </Ellipse>
+                                        </Panel>
+                                        <Border Grid.Column="1" Classes="bubble" Classes.mine="{Binding IsFromUser}" Classes.first="{Binding IsFirstInGroup}"
+                                                Classes.last="{Binding IsLastInGroup}" ToolTip.Tip="{Binding SentAtToolTip}">
+                                            <SelectableTextBlock Text="{Binding Text}" TextWrapping="Wrap" />
+                                        </Border>
+                                    </Grid>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- Typing indicator -->
+                    <Grid ColumnDefinitions="Auto,*" Margin="0,8,0,0" IsVisible="{Binding IsContactTyping}">
+                        <Ellipse Grid.Column="0" Width="28" Height="28" Margin="0,0,8,0" VerticalAlignment="Bottom">
+                            <Ellipse.Fill>
+                                <ImageBrush Source="{Binding ActiveContact.Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                            </Ellipse.Fill>
+                        </Ellipse>
+                        <Border Grid.Column="1" Classes="bubble first last" Padding="14,12" ToolTip.Tip="{Binding ActiveContact.DisplayName, StringFormat='{}{0} is typing'}">
+                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                <Ellipse Classes="typingDot" />
+                                <Ellipse Classes="typingDot second" />
+                                <Ellipse Classes="typingDot third" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Composer -->
+            <Border Grid.Row="2" Padding="16,10" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="0,1,0,0">
+                <Grid ColumnDefinitions="*,10,Auto">
+                    <TextBox Grid.Column="0" x:Name="Composer" Text="{Binding DraftText}" AcceptsReturn="True" TextWrapping="Wrap"
+                             MaxHeight="140" MinHeight="38" CornerRadius="19" Padding="14,9" VerticalContentAlignment="Center" MaxLength="4000"
+                             PlaceholderText="{Binding ActiveContact.DisplayName, StringFormat='Message {0}'}" AutomationProperties.Name="Message" />
+                    <Button Grid.Column="2" Classes="accent" Command="{Binding SendCommand}" Width="38" Height="38" Padding="0" CornerRadius="19"
+                            VerticalAlignment="Bottom" ToolTip.Tip="Send (Enter). Shift+Enter for a new line." AutomationProperties.Name="Send">
+                        <i:MaterialIcon Kind="Send" Width="18" Height="18" />
+                    </Button>
+                </Grid>
+            </Border>
+
+        </Grid>
+
+    </Grid>
+</UserControl>

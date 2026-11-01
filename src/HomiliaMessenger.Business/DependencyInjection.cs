@@ -1,5 +1,6 @@
 using FluentValidation;
 using HomiliaMessenger.Business.Modules.Contacts;
+using HomiliaMessenger.Business.Modules.Conversations;
 using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Reflection;
@@ -19,6 +20,9 @@ public static class DependencyInjection
         services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly(), includeInternalTypes: true);
 
         services.AddScoped<IContactService, ContactService>();
+
+        services.AddSingleton<SimulatedReplies>();
+        services.AddScoped<IConversationService, ConversationService>();
 
         return services;
     }

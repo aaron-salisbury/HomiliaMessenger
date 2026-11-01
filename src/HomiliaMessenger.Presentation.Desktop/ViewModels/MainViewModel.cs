@@ -32,9 +32,10 @@ public partial class MainViewModel : BaseViewModel
 
     public ObservableCollection<MenuPaneItemTemplate> PaneItems { get; }
 
-    public MainViewModel(IRibbonControlFactory ribbonControlFactory, ContactsViewModel contactsViewModel, SettingsViewModel settingsViewModel)
+    public MainViewModel(IRibbonControlFactory ribbonControlFactory, MessengerViewModel messengerViewModel, ContactsViewModel contactsViewModel, SettingsViewModel settingsViewModel)
     {
         _ribbonControlFactory = ribbonControlFactory ?? throw new ArgumentNullException(nameof(ribbonControlFactory));
+        ArgumentNullException.ThrowIfNull(messengerViewModel);
         _contactsViewModel = contactsViewModel ?? throw new ArgumentNullException(nameof(contactsViewModel));
 
         _settingsViewModel = settingsViewModel ?? throw new ArgumentNullException(nameof(settingsViewModel));
@@ -43,6 +44,7 @@ public partial class MainViewModel : BaseViewModel
         [
             // Icon key ref: https://pictogrammers.com/library/mdi/
 
+            new MenuPaneItemTemplate(messengerViewModel, "ForumOutline", "Messenger"),
             new MenuPaneItemTemplate(contactsViewModel, "CardAccountMail", "Contacts")
         ];
 

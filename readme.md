@@ -6,13 +6,14 @@ See the [product specification](docs/product_specification.md) for the full dire
 
 ## Current Features
 
+- **Messenger:** a conversation list (most recent first, searchable, with message previews) and a chat thread with grouped message bubbles, timestamps, a typing indicator, and a composer (Enter sends, Shift+Enter adds a line). Start a chat with any contact, continue an existing one, or delete it. Each contact has one conversation, stored locally. Contacts answer with random canned replies until agents are connected.
 - **Persona contacts:** add, edit, and delete contacts with a name, nickname, birthday (required; personas must be 18 or older, and their age is calculated from it), gender, personality, background, photo, and favorite flag.
 - **Agent assignment:** record the provider and model that will speak for each contact. Agents are not connected yet.
 - Searchable contact list with favorites first, plus unsaved-change protection when switching contacts.
 - Theme selection (System, Light, or Dark) that is remembered between sessions.
 - Local SQLite persistence and rolling diagnostic logs.
 
-Messaging, agent integration, and optional voice are planned for later phases.
+Agent integration and optional voice are planned for later phases.
 
 ## Privacy
 

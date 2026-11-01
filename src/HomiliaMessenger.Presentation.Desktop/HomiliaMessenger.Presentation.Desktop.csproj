@@ -50,6 +50,9 @@
     <Compile Update="Base\Controls\RibbonControls\ContactsRibbonControl.axaml.cs">
       <DependentUpon>ContactsRibbonControl.axaml</DependentUpon>
     </Compile>
+    <Compile Update="Base\Controls\RibbonControls\MessengerRibbonControl.axaml.cs">
+      <DependentUpon>MessengerRibbonControl.axaml</DependentUpon>
+    </Compile>
   </ItemGroup>
 
   <ItemGroup>

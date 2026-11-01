@@ -70,7 +70,7 @@ What the agent is given about earlier turns. The initial approach is the most re
 
 ## Delivery Phases
 
-### Phase 1: Persona Contacts (current)
+### Phase 1: Persona Contacts
 
 - Application foundation: solution layout, composition root, logging, SQLite persistence with migrations, and architecture tests.
 - A contacts master/detail view: searchable list, favorites first, and a persona editor with photo.
@@ -78,7 +78,7 @@ What the agent is given about earlier turns. The initial approach is the most re
 - Business validation of contacts, with the result shown in the ribbon status.
 - A Settings page whose theme choice (System, Light, or Dark) persists across restarts.
 
-### Phase 2: Messenger
+### Phase 2: Messenger (current)
 
 - A messenger view: conversation list, chat thread with message bubbles, and a composer. It is built with the app's own controls; SukiUI is not adopted.
 - Persisted conversations per contact.
