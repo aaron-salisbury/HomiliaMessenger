@@ -2,6 +2,7 @@ using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using HomiliaMessenger.Business.Modules.Contacts;
+using HomiliaMessenger.Business.Modules.Speech;
 using HomiliaMessenger.Presentation.Desktop.Base;
 using HomiliaMessenger.Presentation.Desktop.Models;
 using System;
@@ -22,6 +23,9 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
     private byte[]? _photo;
     private bool _disposed;
     private readonly bool _trackChanges;
+    private IReadOnlyList<SpeechVoice> _voices = [];
+    private bool _refreshingVoices;
+    private string? _voiceId;
 
     [ObservableProperty] private string? _givenName;
     [ObservableProperty] private string? _familyName;
@@ -35,6 +39,12 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string? _personality;
     [ObservableProperty] private string? _background;
     [ObservableProperty] private AgentOption _agent = AgentOption.None;
+    [ObservableProperty] private VoiceOption? _voice = VoiceOption.None;
+    [ObservableProperty] private bool _isSpeechAvailable;
+    [ObservableProperty] private IReadOnlyList<VoiceOption> _voiceOptions = [VoiceOption.None];
+
+    public string VoiceDescription => _voiceId is null ? "No voice selected."
+        : "Current voice: " + (_voices.FirstOrDefault(voice => voice.Id == _voiceId)?.DisplayName ?? _voiceId);
     [ObservableProperty] private bool _isFavorite;
     [ObservableProperty] private Bitmap? _photoPreview;
     [ObservableProperty] private string _photoDescription = "No photo";
@@ -63,10 +73,11 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
 
     /// <param name="contact">The contact to edit, or <see langword="null"/> for a new one.</param>
     /// <param name="agentOptions">The agents to choose from; when omitted, only no agent.</param>
-    public ContactDetailViewModel(Contact? contact = null, IReadOnlyList<AgentOption>? agentOptions = null)
+    public ContactDetailViewModel(Contact? contact = null, IReadOnlyList<AgentOption>? agentOptions = null, IReadOnlyList<SpeechVoice>? voices = null, bool isSpeechAvailable = false)
     {
         _id = contact?.Id ?? ContactId.New();
         AgentOptions = agentOptions ?? [AgentOption.None];
+        _voiceId = contact?.VoiceId;
 
         if (contact is not null)
         {
@@ -83,7 +94,44 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
             LoadStoredPhoto(contact.Photo);
         }
 
+        RefreshVoices(voices ?? [], isSpeechAvailable);
         _trackChanges = true;
+    }
+
+    public void RefreshVoices(IReadOnlyList<SpeechVoice> voices, bool isAvailable)
+    {
+        _refreshingVoices = true;
+        try
+        {
+            _voices = voices;
+            IsSpeechAvailable = isAvailable;
+            VoiceOptions = [VoiceOption.None, .. _voices.Where(voice => Gender.Value is null || voice.Gender == Gender.Value)
+                .Select(voice => new VoiceOption(voice.DisplayName, voice.Id, voice.Gender))];
+            // A saved voice outside the filter is described separately. A cleared ComboBox selection is not an edit;
+            // only choosing an actual option (including None) changes the saved voice.
+            Voice = VoiceOptions.FirstOrDefault(option => option.Id == _voiceId);
+            OnPropertyChanged(nameof(VoiceDescription));
+        }
+        finally
+        {
+            _refreshingVoices = false;
+        }
+    }
+
+    partial void OnGenderChanged(GenderOption value)
+    {
+        RefreshVoices(_voices, IsSpeechAvailable);
+    }
+
+    partial void OnVoiceChanged(VoiceOption? value)
+    {
+        // Replacing the options here, while the combo box is still applying the user's choice, could clear it. The
+        // options depend only on gender, so only the description needs updating.
+        if (!_refreshingVoices && value is not null)
+        {
+            _voiceId = value.Id;
+            OnPropertyChanged(nameof(VoiceDescription));
+        }
     }
 
     /// <summary>
@@ -98,7 +146,8 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
     {
         base.OnPropertyChanged(e);
 
-        if (_trackChanges && e.PropertyName is not (nameof(IsDirty) or nameof(PhotoPreview) or nameof(PhotoDescription) or nameof(AgeDescription)))
+        if (_trackChanges && !_refreshingVoices && !(e.PropertyName == nameof(Voice) && Voice is null)
+            && e.PropertyName is not (nameof(IsDirty) or nameof(PhotoPreview) or nameof(PhotoDescription) or nameof(AgeDescription)))
         {
             IsDirty = true;
         }
@@ -192,6 +241,7 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
             Personality = Clean(Personality),
             Background = Clean(Background),
             Agent = Agent.Assignment,
+            VoiceId = _voiceId,
             IsFavorite = IsFavorite,
             Photo = _photo is null ? null : [.. _photo]
         };

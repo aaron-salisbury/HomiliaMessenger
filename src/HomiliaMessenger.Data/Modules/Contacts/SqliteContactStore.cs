@@ -13,7 +13,7 @@ namespace HomiliaMessenger.Data.Modules.Contacts;
 internal sealed class SqliteContactStore : IContactStore
 {
     private const string SELECT_CONTACT_SQL = """
-        SELECT Id, GivenName, FamilyName, Nickname, Birthday, Gender, Relationship, Personality, Background, AgentProvider, AgentModel, Photo, IsFavorite
+        SELECT Id, GivenName, FamilyName, Nickname, Birthday, Gender, Relationship, Personality, Background, AgentProvider, AgentModel, VoiceId, Photo, IsFavorite
         FROM Contact
         """;
 
@@ -50,12 +50,12 @@ internal sealed class SqliteContactStore : IContactStore
         ArgumentNullException.ThrowIfNull(contact);
 
         const string sql = """
-            INSERT INTO Contact (Id, GivenName, FamilyName, Nickname, Birthday, Gender, Relationship, Personality, Background, AgentProvider, AgentModel, Photo, IsFavorite)
-            VALUES (@Id, @GivenName, @FamilyName, @Nickname, @Birthday, @Gender, @Relationship, @Personality, @Background, @AgentProvider, @AgentModel, @Photo, @IsFavorite)
+            INSERT INTO Contact (Id, GivenName, FamilyName, Nickname, Birthday, Gender, Relationship, Personality, Background, AgentProvider, AgentModel, VoiceId, Photo, IsFavorite)
+            VALUES (@Id, @GivenName, @FamilyName, @Nickname, @Birthday, @Gender, @Relationship, @Personality, @Background, @AgentProvider, @AgentModel, @VoiceId, @Photo, @IsFavorite)
             ON CONFLICT(Id) DO UPDATE SET
                 GivenName=excluded.GivenName, FamilyName=excluded.FamilyName, Nickname=excluded.Nickname,
                 Birthday=excluded.Birthday, Gender=excluded.Gender, Relationship=excluded.Relationship, Personality=excluded.Personality, Background=excluded.Background,
-                AgentProvider=excluded.AgentProvider, AgentModel=excluded.AgentModel,
+                AgentProvider=excluded.AgentProvider, AgentModel=excluded.AgentModel, VoiceId=excluded.VoiceId,
                 Photo=excluded.Photo, IsFavorite=excluded.IsFavorite;
             """;
 
@@ -74,6 +74,7 @@ internal sealed class SqliteContactStore : IContactStore
             contact.Background,
             AgentProvider = contact.Agent?.Provider,
             AgentModel = contact.Agent?.Model,
+            contact.VoiceId,
             contact.Photo,
             contact.IsFavorite
         }, cancellationToken: cancellationToken));
@@ -108,6 +109,7 @@ internal sealed class SqliteContactStore : IContactStore
             Personality = row.Personality,
             Background = row.Background,
             Agent = row.AgentProvider is null || row.AgentModel is null ? null : new AgentAssignment(row.AgentProvider, row.AgentModel),
+            VoiceId = row.VoiceId,
             Photo = row.Photo,
             IsFavorite = row.IsFavorite
         };
@@ -126,6 +128,7 @@ internal sealed class SqliteContactStore : IContactStore
         public string? Background { get; set; }
         public string? AgentProvider { get; set; }
         public string? AgentModel { get; set; }
+        public string? VoiceId { get; set; }
         public byte[]? Photo { get; set; }
         public bool IsFavorite { get; set; }
     }

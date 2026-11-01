@@ -18,6 +18,16 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.12" />
     <PackageReference Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.18.0" />
+    <!-- Use the existing ONNX Runtime supplied by GenAI, rather than a second native runtime. -->
+    <PackageReference Include="KokoroSharp" Version="0.8.4" GeneratePathProperty="true" ExcludeAssets="build;buildTransitive" />
+  </ItemGroup>
+
+  <!-- Explicit content items also reach publish output; KokoroSharp's own copy target only handles builds. -->
+  <ItemGroup>
+    <Content Include="$(PkgKokoroSharp)/content/voices/a*.npy;$(PkgKokoroSharp)/content/voices/b*.npy"
+             Link="SpeechVoices/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(PkgKokoroSharp)/content/voices/LICENSE" Link="SpeechVoices/LICENSE"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

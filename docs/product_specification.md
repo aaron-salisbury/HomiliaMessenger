@@ -26,7 +26,7 @@ The solution follows the repository's [development conventions](development_conv
 
 - **Business** owns contacts, personas, conversations, persona framing, validation, and the capability contracts the app requires (such as persisting contacts or exchanging messages with an agent).
 - **Data** implements persistence contracts using SQLite (Microsoft.Data.Sqlite with Dapper) and versioned schema migrations.
-- **Integrations** adapts agent providers, and later speech providers, to Business capability contracts. It also provides the operating-system credential store (Windows Credential Manager, or Secret Service through `secret-tool` on Linux) behind the Business `ICredentialStore` contract.
+- **Integrations** adapts agent and speech providers to Business capability contracts. It also provides the operating-system credential store (Windows Credential Manager, or Secret Service through `secret-tool` on Linux) behind the Business `ICredentialStore` contract.
 - **Presentation.Desktop** provides Avalonia MVVM views and presentation state.
 - **DesktopApp** is the executable and composition root. It owns startup, dependency injection, database initialization, logging, and the application lifetime.
 - **Tests** contains automated tests across the solution, including architecture boundary tests.
@@ -107,7 +107,9 @@ Memory is stored with the conversation, so it carries over when the contact's ag
 
 ### Phase 4: Optional Voice
 
-- Optional text-to-speech for persona replies (for example, Kokoro, as in AtaraxiaAI).
+- Optional local text-to-speech for persona replies using Kokoro, encapsulated in Integrations without a separate worker executable. Settings offers a verified model download and a persistent enable/disable choice; English voices ship with the app.
+- Once speech is available, each contact can have a saved voice. The editor filters choices to the contact's gender, when specified, but changing gender does not invalidate or clear an existing voice.
+- A speech toggle beside the reload/history control in the chat ribbon opts in to reading new replies while the normal text remains visible. It defaults off, is never persisted, and turns off when switching chats or leaving Messenger. Turning it off cancels playback and pending audio. Existing message history is never read automatically.
 - Optional speech-to-text for composing messages.
 - Both are opt-in messenger features and are never required to chat.
 

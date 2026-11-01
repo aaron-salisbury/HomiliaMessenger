@@ -1,9 +1,12 @@
 using HomiliaMessenger.Business.Modules.Contacts;
+using HomiliaMessenger.Business.Modules.Speech;
+using HomiliaMessenger.Tests.Speech;
 using HomiliaMessenger.Presentation.Desktop.Base.Converters;
 using HomiliaMessenger.Presentation.Desktop.Models;
 using HomiliaMessenger.Presentation.Desktop.ViewModels;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 
@@ -79,6 +82,66 @@ public sealed class ContactDetailViewModelTests
         Assert.AreSame(phi, assigned.Agent);
         Assert.HasCount(2, assigned.AgentOptions);
         Assert.AreEqual(new AgentAssignment("Local", "phi-3.5-mini"), assigned.ToContact().Agent);
+    }
+
+    [TestMethod]
+    public void Voice_FiltersChoicesByGenderWithoutClearingTheSavedVoice()
+    {
+        FakeSpeech speech = new();
+        Contact rose = new() { Id = ContactId.New(), GivenName = "Rose", Gender = Gender.Female, VoiceId = "af_heart" };
+        using ContactDetailViewModel detail = new(rose, voices: speech.Voices, isSpeechAvailable: true);
+
+        Assert.IsFalse(detail.IsDirty);
+        Assert.AreEqual("af_heart", detail.Voice!.Id);
+        Assert.AreSequenceEqual(new string?[] { null, "af_heart" }, detail.VoiceOptions.Select(option => option.Id).ToArray());
+
+        detail.Gender = GenderOption.For(Gender.Male);
+        Assert.AreSequenceEqual(new string?[] { null, "am_adam" }, detail.VoiceOptions.Select(option => option.Id).ToArray());
+        Assert.AreEqual("af_heart", detail.ToContact().VoiceId);
+        Assert.Contains("Heart", detail.VoiceDescription);
+        detail.Voice = null; // What a ComboBox does when the selected item is removed from its ItemsSource.
+        Assert.AreEqual("af_heart", detail.ToContact().VoiceId);
+
+        detail.AcceptChanges();
+        detail.RefreshVoices(speech.Voices, false);
+        Assert.IsFalse(detail.IsDirty);
+        Assert.IsFalse(detail.IsSpeechAvailable);
+        Assert.AreEqual("af_heart", detail.ToContact().VoiceId);
+
+        detail.RefreshVoices(speech.Voices, true);
+        detail.Voice = detail.VoiceOptions.Single(option => option.Id == "am_adam");
+        Assert.IsTrue(detail.IsDirty);
+        Assert.AreEqual("am_adam", detail.ToContact().VoiceId);
+        detail.Voice = VoiceOption.None;
+        Assert.IsNull(detail.ToContact().VoiceId);
+    }
+
+    [TestMethod]
+    public void Voice_WithoutAGenderOffersBothAndPreservesAnUnavailableVoice()
+    {
+        FakeSpeech speech = new();
+        Contact contact = new() { Id = ContactId.New(), VoiceId = "future_voice" };
+        using ContactDetailViewModel detail = new(contact, voices: speech.Voices);
+
+        Assert.HasCount(3, detail.VoiceOptions);
+        Assert.AreEqual("future_voice", detail.ToContact().VoiceId);
+        Assert.IsFalse(detail.IsDirty);
+    }
+
+    [TestMethod]
+    public void Voice_ChoosingAVoiceKeepsTheOptionsAndTheSelection()
+    {
+        IReadOnlyList<SpeechVoice> voices = [new("af_heart", "Heart", Gender.Female), new("af_bella", "Bella", Gender.Female)];
+        using ContactDetailViewModel detail = new(new Contact { Id = ContactId.New(), GivenName = "Rose", Gender = Gender.Female }, null, voices, true);
+        IReadOnlyList<VoiceOption> options = detail.VoiceOptions;
+
+        detail.Voice = options.Single(option => option.Id == "af_bella");
+
+        Assert.AreSame(options, detail.VoiceOptions);
+        Assert.AreEqual("af_bella", detail.Voice?.Id);
+        Assert.AreEqual("af_bella", detail.ToContact().VoiceId);
+        Assert.Contains("Bella", detail.VoiceDescription);
+        Assert.IsTrue(detail.IsDirty);
     }
 
     [TestMethod]

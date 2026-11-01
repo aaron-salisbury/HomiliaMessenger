@@ -34,6 +34,7 @@ public sealed class ContactServiceTests
             Personality = "Gruff but warm. Slow to open up about the war.",
             Background = "Drafted in 1968, Army medic. Grandfather of four.",
             Agent = new AgentAssignment("Ollama", "llama3.1:8b"),
+            VoiceId = "am_adam",
             Photo = [137, 80, 78, 71, 13, 10, 26, 10],
             IsFavorite = true
         };
@@ -63,6 +64,20 @@ public sealed class ContactServiceTests
 
         Assert.HasCount(1, contacts);
         Assert.IsNull(contacts[0].Agent);
+    }
+
+    [TestMethod]
+    public async Task SaveAsync_VoicePersistsWhenGenderChangesAndCanBeCleared()
+    {
+        using TestDatabase database = await TestDatabase.CreateAsync(TestContext);
+        IContactService service = database.Services.GetRequiredService<IContactService>();
+        Contact contact = new() { Id = ContactId.New(), GivenName = "Rose", Birthday = ADULT_BIRTHDAY, Gender = Gender.Female, VoiceId = "af_heart" };
+        Assert.IsTrue((await service.SaveAsync(contact, TestContext.CancellationToken)).IsValid);
+        Assert.IsTrue((await service.SaveAsync(contact with { Gender = Gender.Male }, TestContext.CancellationToken)).IsValid);
+        Assert.AreEqual("af_heart", (await service.GetAsync(contact.Id, TestContext.CancellationToken))!.VoiceId);
+        Assert.AreEqual("af_heart", (await service.ListAsync(TestContext.CancellationToken))[0].VoiceId);
+        Assert.IsTrue((await service.SaveAsync(contact with { VoiceId = null }, TestContext.CancellationToken)).IsValid);
+        Assert.IsNull((await service.GetAsync(contact.Id, TestContext.CancellationToken))!.VoiceId);
     }
 
     [TestMethod]

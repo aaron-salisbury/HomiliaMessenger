@@ -144,6 +144,17 @@
                      AutomationProperties.Name="Background" />
         </Grid>
 
+        <!-- Voice -->
+        <Grid IsVisible="{Binding IsSpeechAvailable}" ColumnDefinitions="Auto,*,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="4">
+            <i:MaterialIcon Grid.Row="0" Grid.Column="0" Kind="VolumeHigh" Classes="section-icon" />
+            <TextBlock Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="2" Text="Voice" Classes="section-label" />
+            <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Classes="section-hint"
+                       Text="Choose a voice for spoken replies. Turn speech on in the chat ribbon when you want to listen." />
+            <ComboBox Grid.Row="2" Grid.Column="1" ItemsSource="{Binding VoiceOptions}" SelectedItem="{Binding Voice, Mode=TwoWay}"
+                      HorizontalAlignment="Stretch" AutomationProperties.Name="Voice" />
+            <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding VoiceDescription}" Classes="section-hint" />
+        </Grid>
+
         <!-- Agent -->
         <Grid ColumnDefinitions="Auto,*,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="4">
             <i:MaterialIcon Grid.Row="0" Grid.RowSpan="3" Grid.Column="0" Kind="RobotOutline" Classes="section-icon" />

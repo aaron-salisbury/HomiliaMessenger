@@ -4,6 +4,7 @@ using FluentValidation.Results;
 using HomiliaMessenger.Business.Base.Extensions;
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
+using HomiliaMessenger.Business.Modules.Speech;
 using HomiliaMessenger.Presentation.Desktop.Base.Controls.RibbonControls;
 using HomiliaMessenger.Presentation.Desktop.Models;
 using RunnethOverStudio.AppToolkit.Modules.ComponentModel;
@@ -19,6 +20,7 @@ public partial class ContactsViewModel : BaseViewModel, IRibbonProvider
 {
     private readonly IContactService _contacts;
     private readonly ILocalModelLibrary _localModels;
+    private readonly ITextToSpeech? _speech;
     private bool _loaded;
     private bool _preserveDetail;
     private bool _syncingListSelection;
@@ -49,16 +51,18 @@ public partial class ContactsViewModel : BaseViewModel, IRibbonProvider
 
     public Type RibbonControlType => typeof(ContactsRibbonControl);
 
-    public ContactsViewModel(IContactService contacts, ILocalModelLibrary localModels)
+    public ContactsViewModel(IContactService contacts, ILocalModelLibrary localModels, ITextToSpeech? speech = null)
     {
         _contacts = contacts ?? throw new ArgumentNullException(nameof(contacts));
         _localModels = localModels ?? throw new ArgumentNullException(nameof(localModels));
+        _speech = speech;
         _detail = CreateDetail(null);
         _detail.MessageRaised += Detail_MessageRaised;
     }
 
     public override async Task InitializeAsync()
     {
+        Detail.RefreshVoices(_speech?.Voices ?? [], _speech?.Model.IsAvailable == true);
         if (_loaded)
         {
             return;
@@ -127,7 +131,7 @@ public partial class ContactsViewModel : BaseViewModel, IRibbonProvider
     /// </summary>
     private ContactDetailViewModel CreateDetail(Contact? contact)
     {
-        return new ContactDetailViewModel(contact, AgentOption.From(_localModels));
+        return new ContactDetailViewModel(contact, AgentOption.From(_localModels), _speech?.Voices, _speech?.Model.IsAvailable == true);
     }
 
     private void ReplaceDetail(ContactDetailViewModel next)

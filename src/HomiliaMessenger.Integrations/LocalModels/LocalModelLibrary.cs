@@ -1,15 +1,12 @@
 using HomiliaMessenger.Business.Modules.Agents;
+using HomiliaMessenger.Integrations.Downloads;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -27,11 +24,6 @@ internal sealed class LocalModelLibrary : ILocalModelLibrary
 {
     internal const string PROVIDER = "Local";
     private const string PARTIAL_SUFFIX = ".download";
-    private const int BUFFER_SIZE = 1024 * 1024;
-
-    // A download that receives nothing for this long is treated as failed (and can be resumed).
-    private static readonly TimeSpan STALL_TIMEOUT = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan PROGRESS_INTERVAL = TimeSpan.FromMilliseconds(200);
 
     private readonly IReadOnlyList<LocalModelDefinition> _catalog;
     private readonly string _modelsDirectory;
@@ -116,12 +108,10 @@ internal sealed class LocalModelLibrary : ILocalModelLibrary
         {
             return LocalModelDownloadResult.Canceled;
         }
-        catch (Exception error) when (error is HttpRequestException or IOException or UnauthorizedAccessException or OperationCanceledException)
+        catch (Exception error) when (error is HttpRequestException or IOException or InvalidDataException or UnauthorizedAccessException or TimeoutException)
         {
-            // A stall surfaces as a cancellation the caller did not request.
             _logger.LogWarning(error, "Downloading local model {ModelId} failed.", model.Id);
-            string problem = error is OperationCanceledException ? "The download stopped receiving data." : error.Message;
-            return LocalModelDownloadResult.Failed($"Could not download {model.DisplayName}: {problem} Try again to resume.");
+            return LocalModelDownloadResult.Failed($"Could not download {model.DisplayName}: {error.Message} Try again to resume.");
         }
         finally
         {
@@ -166,21 +156,19 @@ internal sealed class LocalModelLibrary : ILocalModelLibrary
         string partial = directory + PARTIAL_SUFFIX;
         Directory.CreateDirectory(partial);
 
-        long downloaded = model.Files.Sum(file => Math.Min(ExistingLength(Path.Combine(partial, file.Name)), file.Size));
-        long remaining = model.DownloadBytes - downloaded;
-        long available = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(partial))!).AvailableFreeSpace;
+        long downloaded = model.Files.Sum(file => Math.Min(FileDownload.ExistingLength(Path.Combine(partial, file.Name)), file.Size));
 
-        if (available < remaining)
+        if (FileDownload.MissingSpace(partial, model.DownloadBytes - downloaded, model.DisplayName) is { } problem)
         {
-            return LocalModelDownloadResult.Failed($"{model.DisplayName} needs {FormatGigabytes(remaining)} more disk space; {FormatGigabytes(available)} is free.");
+            return LocalModelDownloadResult.Failed(problem);
         }
 
-        ProgressReporter reporter = new(progress, model.DownloadBytes, downloaded);
+        DownloadProgress reporter = new(progress is null ? null : (bytes, total) => progress.Report(new LocalModelDownloadProgress(bytes, total)), model.DownloadBytes, downloaded);
         HttpClient client = _httpClientFactory.CreateClient();
 
         foreach (LocalModelFile file in model.Files)
         {
-            await DownloadFileAsync(client, new Uri(model.BaseUrl + file.Name), Path.Combine(partial, file.Name), file.Size, reporter, cancellationToken);
+            await FileDownload.DownloadAsync(client, new Uri(model.BaseUrl + file.Name), Path.Combine(partial, file.Name), file.Size, reporter, cancellationToken);
         }
 
         reporter.Report(force: true);
@@ -189,7 +177,7 @@ internal sealed class LocalModelLibrary : ILocalModelLibrary
         {
             string path = Path.Combine(partial, file.Name);
 
-            if (!string.Equals(await HashAsync(path, cancellationToken), file.Sha256, StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(await FileDownload.HashAsync(path, cancellationToken), file.Sha256, StringComparison.OrdinalIgnoreCase))
             {
                 File.Delete(path);
                 return LocalModelDownloadResult.Failed($"{file.Name} did not match its published checksum and was discarded. Try again to download it.");
@@ -205,108 +193,5 @@ internal sealed class LocalModelLibrary : ILocalModelLibrary
         _logger.LogInformation("Downloaded local model {ModelId}.", model.Id);
 
         return LocalModelDownloadResult.Success;
-    }
-
-    private static async Task DownloadFileAsync(HttpClient client, Uri url, string path, long size, ProgressReporter reporter, CancellationToken cancellationToken)
-    {
-        long existing = ExistingLength(path);
-
-        if (existing == size)
-        {
-            return;
-        }
-
-        if (existing > size)
-        {
-            File.Delete(path);
-            // Counted toward progress at its expected size.
-            reporter.Add(-size);
-            existing = 0;
-        }
-
-        using HttpRequestMessage request = new(HttpMethod.Get, url);
-
-        if (existing > 0)
-        {
-            request.Headers.Range = new RangeHeaderValue(existing, null);
-        }
-
-        using CancellationTokenSource stall = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        stall.CancelAfter(STALL_TIMEOUT);
-
-        using HttpResponseMessage response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, stall.Token);
-        response.EnsureSuccessStatusCode();
-
-        // A server that ignores the range sends the whole file, so start the file over.
-        bool append = existing > 0 && response.StatusCode == HttpStatusCode.PartialContent;
-
-        if (existing > 0 && !append)
-        {
-            reporter.Add(-existing);
-        }
-
-        await using Stream source = await response.Content.ReadAsStreamAsync(stall.Token);
-        await using FileStream target = new(path, append ? FileMode.Append : FileMode.Create, FileAccess.Write, FileShare.None, BUFFER_SIZE, useAsync: true);
-        byte[] buffer = new byte[BUFFER_SIZE];
-        int read;
-
-        while ((read = await source.ReadAsync(buffer, stall.Token)) > 0)
-        {
-            stall.CancelAfter(STALL_TIMEOUT);
-            await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
-            reporter.Add(read);
-            reporter.Report();
-        }
-    }
-
-    private static async Task<string> HashAsync(string path, CancellationToken cancellationToken)
-    {
-        await using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read, BUFFER_SIZE, useAsync: true);
-        byte[] hash = await SHA256.HashDataAsync(stream, cancellationToken);
-        return Convert.ToHexString(hash);
-    }
-
-    private static long ExistingLength(string path)
-    {
-        FileInfo info = new(path);
-        return info.Exists ? info.Length : 0;
-    }
-
-    private static string FormatGigabytes(long bytes)
-    {
-        return $"{bytes / 1_000_000_000d:0.0} GB";
-    }
-
-    /// <summary>
-    /// Reports overall progress at most every <see cref="PROGRESS_INTERVAL"/>.
-    /// </summary>
-    private sealed class ProgressReporter
-    {
-        private readonly IProgress<LocalModelDownloadProgress>? _progress;
-        private readonly long _total;
-        private readonly Stopwatch _sinceReport = Stopwatch.StartNew();
-        private long _downloaded;
-
-        internal ProgressReporter(IProgress<LocalModelDownloadProgress>? progress, long total, long downloaded)
-        {
-            _progress = progress;
-            _total = total;
-            _downloaded = downloaded;
-            Report(force: true);
-        }
-
-        internal void Add(long bytes)
-        {
-            _downloaded += bytes;
-        }
-
-        internal void Report(bool force = false)
-        {
-            if (_progress is not null && (force || _sinceReport.Elapsed >= PROGRESS_INTERVAL))
-            {
-                _progress.Report(new LocalModelDownloadProgress(_downloaded, _total));
-                _sinceReport.Restart();
-            }
-        }
     }
 }
