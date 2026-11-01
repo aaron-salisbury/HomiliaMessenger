@@ -1,9 +1,7 @@
 using Avalonia.Controls;
-using HomiliaMessenger.Presentation.Desktop.Base;
 using HomiliaMessenger.Presentation.Desktop.Base.Extensions;
 using HomiliaMessenger.Presentation.Desktop.ViewModels;
 using System;
-using System.Runtime.InteropServices;
 
 namespace HomiliaMessenger.Presentation.Desktop.Views;
 
@@ -14,7 +12,6 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        this.Title = RuntimeInformation.IsOSPlatform(OSPlatform.Linux) ? AppInfo.AppDisplayName : string.Empty;
     }
 
     protected override void OnClosing(WindowClosingEventArgs e)

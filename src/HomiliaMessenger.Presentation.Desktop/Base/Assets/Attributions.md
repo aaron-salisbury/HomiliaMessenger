@@ -8,9 +8,9 @@
 
 ## Icons
 
-- **Utilities Icon** - BlackVariant @ [IconArchive](https://www.iconarchive.com/show/button-ui-system-folders-drives-icons-by-blackvariant/Utilities-icon.html)
+- **Speech Bubble** - Magnific @ [Flaticon](https://www.flaticon.com/free-icon/speech-bubble_3845696)
 
-  Used for the placeholder application logo.
+  Used repo logo and application icon.
 
 - **User** - Becris @ [Magnific](https://www.magnific.com/icon/user_848006)
 

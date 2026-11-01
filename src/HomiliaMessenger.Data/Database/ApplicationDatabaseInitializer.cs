@@ -1,6 +1,6 @@
 using Dapper;
-using Microsoft.Data.Sqlite;
 using HomiliaMessenger.Data.Database.Migrations;
+using Microsoft.Data.Sqlite;
 using System;
 using System.Collections.Generic;
 using System.Linq;

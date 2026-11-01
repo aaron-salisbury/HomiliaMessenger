@@ -1,7 +1,6 @@
 using Avalonia.Controls;
 using HomiliaMessenger.Presentation.Desktop.Base.Extensions;
 using HomiliaMessenger.Presentation.Desktop.ViewModels;
-using System;
 using System.Threading.Tasks;
 
 namespace HomiliaMessenger.Presentation.Desktop.Views;

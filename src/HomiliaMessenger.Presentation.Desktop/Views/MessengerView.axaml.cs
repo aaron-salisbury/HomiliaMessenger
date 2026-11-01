@@ -7,7 +7,6 @@ using HomiliaMessenger.Business.Modules.Conversations;
 using HomiliaMessenger.Presentation.Desktop.Base.Extensions;
 using HomiliaMessenger.Presentation.Desktop.Models;
 using HomiliaMessenger.Presentation.Desktop.ViewModels;
-using System;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Threading.Tasks;

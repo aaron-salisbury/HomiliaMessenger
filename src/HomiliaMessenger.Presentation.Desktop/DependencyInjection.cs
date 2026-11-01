@@ -1,6 +1,6 @@
-using Microsoft.Extensions.DependencyInjection;
 using HomiliaMessenger.Presentation.Desktop.Base.Controls.RibbonControls;
 using HomiliaMessenger.Presentation.Desktop.Settings;
+using Microsoft.Extensions.DependencyInjection;
 using RunnethOverStudio.AppToolkit.Modules.ComponentModel;
 using System;
 
