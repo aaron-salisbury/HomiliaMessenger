@@ -1,3 +1,4 @@
+using HomiliaMessenger.Business.Modules.Agents;
 using Microsoft.ML.OnnxRuntimeGenAI;
 using System;
 using System.Collections.Generic;
@@ -17,9 +18,10 @@ namespace HomiliaMessenger.Integrations.LocalModels;
 internal sealed record ChatTemplateMessage([property: JsonPropertyName("role")] string Role, [property: JsonPropertyName("content")] string Content);
 
 /// <summary>
-/// Sampling for conversational replies: varied enough to sound natural, short enough to read like a text message.
+/// Sampling for conversational replies: varied enough to sound natural, short enough to read like a text message. The
+/// reply limit also bounds how long a reply takes on a CPU.
 /// </summary>
-internal sealed record GenerationSettings(int MaxReplyTokens = 200, double Temperature = 0.8, double TopP = 0.9, int TopK = 40, double RepetitionPenalty = 1.05);
+internal sealed record GenerationSettings(int MaxReplyTokens = 80, double Temperature = 0.8, double TopP = 0.9, int TopK = 40, double RepetitionPenalty = 1.05);
 
 /// <summary>
 /// Keeps one local model loaded and runs generations on it one at a time. A model holds gigabytes of memory, so it is
@@ -52,6 +54,7 @@ internal sealed class OnnxModelHost : IAsyncDisposable, IDisposable
     private int[] _endTokens = [];
     private GeneratorParams? _generatorParams;
     private Generator? _generator;
+    private bool _generatorPrecise;
     private string? _loadedDirectory;
     private DateTimeOffset _lastUsed;
     private bool _disposed;
@@ -73,7 +76,7 @@ internal sealed class OnnxModelHost : IAsyncDisposable, IDisposable
     /// </summary>
     /// <returns>The reply, or <see langword="null"/> when even the latest message does not fit.</returns>
     /// <exception cref="DirectoryNotFoundException">The model's files are missing, for example because it was removed.</exception>
-    internal async Task<string?> GenerateAsync(string modelDirectory, int contextTokens, IReadOnlyList<ChatTemplateMessage> messages, GenerationSettings settings, CancellationToken cancellationToken)
+    internal async Task<string?> GenerateAsync(string modelDirectory, int contextTokens, IReadOnlyList<ChatTemplateMessage> messages, AgentRequest request, GenerationSettings settings, CancellationToken cancellationToken)
     {
         using CancellationTokenSource stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token);
         await _gate.WaitAsync(stop.Token).ConfigureAwait(false);
@@ -84,7 +87,7 @@ internal sealed class OnnxModelHost : IAsyncDisposable, IDisposable
 
             // Generation is CPU-bound native work; keep it off the caller's thread. Continuations must not need the UI
             // thread, which has stopped by the time the application disposes this host at exit.
-            return await Task.Run(() => Generate(modelDirectory, contextTokens, messages, settings, stop.Token), stop.Token).ConfigureAwait(false);
+            return await Task.Run(() => Generate(modelDirectory, contextTokens, messages, request, settings, stop.Token), stop.Token).ConfigureAwait(false);
         }
         finally
         {
@@ -156,7 +159,7 @@ internal sealed class OnnxModelHost : IAsyncDisposable, IDisposable
         DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 
-    private string? Generate(string modelDirectory, int contextTokens, IReadOnlyList<ChatTemplateMessage> messages, GenerationSettings settings, CancellationToken cancellationToken)
+    private string? Generate(string modelDirectory, int contextTokens, IReadOnlyList<ChatTemplateMessage> messages, AgentRequest request, GenerationSettings settings, CancellationToken cancellationToken)
     {
         if (!string.Equals(_loadedDirectory, modelDirectory, StringComparison.OrdinalIgnoreCase))
         {
@@ -183,9 +186,10 @@ internal sealed class OnnxModelHost : IAsyncDisposable, IDisposable
 
         try
         {
-            Generator generator = ContinueFrom(prompt, contextTokens, settings);
+            Generator generator = ContinueFrom(prompt, contextTokens, settings, request.Precise);
             using TokenizerStream stream = _tokenizer!.CreateStream();
             StringBuilder reply = new();
+            bool finished = false;
 
             for (int count = 0; count < settings.MaxReplyTokens && !generator.IsDone(); count++)
             {
@@ -195,13 +199,25 @@ internal sealed class OnnxModelHost : IAsyncDisposable, IDisposable
 
                 if (_endTokens.Contains(token))
                 {
+                    finished = true;
                     break;
                 }
 
                 reply.Append(stream.Decode(token));
+
+                // Stop as soon as the model starts writing the next turn itself.
+                string text = reply.ToString();
+                int end = request.EndOf(text);
+
+                if (end < text.Length)
+                {
+                    reply.Length = end;
+                    finished = true;
+                    break;
+                }
             }
 
-            return reply.ToString();
+            return finished ? reply.ToString() : WithoutUnfinishedEnd(reply.ToString());
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -210,6 +226,16 @@ internal sealed class OnnxModelHost : IAsyncDisposable, IDisposable
             DisposeGenerator();
             throw;
         }
+    }
+
+    /// <summary>
+    /// A reply cut off by the length limit, ended at its last complete sentence or line rather than mid-word.
+    /// </summary>
+    internal static string WithoutUnfinishedEnd(string text)
+    {
+        int end = text.TrimEnd().LastIndexOfAny(['.', '!', '?', '…', '\n']);
+
+        return end > 0 ? text[..(end + 1)].TrimEnd() : text;
     }
 
     /// <summary>
@@ -251,11 +277,11 @@ internal sealed class OnnxModelHost : IAsyncDisposable, IDisposable
     /// Readies the generator to reply to <paramref name="prompt"/>, reusing the cached tokens it shares with the previous
     /// prompt and reply, and reading only the rest.
     /// </summary>
-    private Generator ContinueFrom(int[] prompt, int contextTokens, GenerationSettings settings)
+    private Generator ContinueFrom(int[] prompt, int contextTokens, GenerationSettings settings, bool precise)
     {
         int reusable = 0;
 
-        if (_generator is not null && _generator.TokenCount() > 0 && _generatorParams!.GetSearchNumber("max_length") == contextTokens)
+        if (_generator is not null && _generator.TokenCount() > 0 && _generatorParams!.GetSearchNumber("max_length") == contextTokens && _generatorPrecise == precise)
         {
             ReadOnlySpan<int> cached = _generator.GetSequence(0);
 
@@ -274,7 +300,9 @@ internal sealed class OnnxModelHost : IAsyncDisposable, IDisposable
             _generatorParams = new GeneratorParams(_model!);
             // The cache is allocated for the whole context up front, so the context size bounds memory use.
             _generatorParams.SetSearchOption("max_length", contextTokens);
-            _generatorParams.SetSearchOption("do_sample", true);
+            // A precise request takes the most likely token each time; others sample for natural variety.
+            _generatorParams.SetSearchOption("do_sample", !precise);
+            _generatorPrecise = precise;
             _generatorParams.SetSearchOption("temperature", settings.Temperature);
             _generatorParams.SetSearchOption("top_p", settings.TopP);
             _generatorParams.SetSearchOption("top_k", settings.TopK);

@@ -18,7 +18,7 @@ internal sealed class SqliteConversationStore : IConversationStore
 
     // The last message is found by rowid so equal timestamps still resolve to the most recently inserted message.
     private const string SELECT_CONVERSATION_SQL = """
-        SELECT c.Id, c.ContactId, c.StartedAtUtc, m.Id AS MessageId, m.Sender, m.Text, m.SentAtUtc, m.AgentProvider, m.AgentModel
+        SELECT c.Id, c.ContactId, c.StartedAtUtc, c.MemoryNotes, c.MemoryThroughMessageId, m.Id AS MessageId, m.Sender, m.Text, m.SentAtUtc, m.AgentProvider, m.AgentModel
         FROM Conversation c
         LEFT JOIN ChatMessage m ON m.rowid = (
             SELECT rowid FROM ChatMessage WHERE ConversationId = c.Id ORDER BY SentAtUtc DESC, rowid DESC LIMIT 1)
@@ -127,6 +127,28 @@ internal sealed class SqliteConversationStore : IConversationStore
         return count != 0;
     }
 
+    public async Task<bool> SaveMemoryAsync(ConversationId id, string? notes, MessageId? through, string? expectedNotes, MessageId? expectedThrough, CancellationToken cancellationToken = default)
+    {
+        // IS compares NULLs as equal, so an unchanged empty memory matches.
+        const string sql = """
+            UPDATE Conversation SET MemoryNotes = @Notes, MemoryThroughMessageId = @Through
+            WHERE Id = @Id AND MemoryNotes IS @ExpectedNotes AND MemoryThroughMessageId IS @ExpectedThrough;
+            """;
+
+        await using SqliteConnection connection = await _database.OpenConnectionAsync(cancellationToken);
+
+        int count = await connection.ExecuteAsync(new CommandDefinition(sql, new
+        {
+            Id = ToKey(id.Value),
+            Notes = notes,
+            Through = through is null ? null : ToKey(through.Value.Value),
+            ExpectedNotes = expectedNotes,
+            ExpectedThrough = expectedThrough is null ? null : ToKey(expectedThrough.Value.Value)
+        }, cancellationToken: cancellationToken));
+
+        return count != 0;
+    }
+
     public async Task<bool> DeleteAsync(ConversationId id, CancellationToken cancellationToken = default)
     {
         await using SqliteConnection connection = await _database.OpenConnectionAsync(cancellationToken);
@@ -169,6 +191,8 @@ internal sealed class SqliteConversationStore : IConversationStore
             Id = id,
             ContactId = new ContactId(Guid.Parse(row.ContactId)),
             StartedAtUtc = FromText(row.StartedAtUtc),
+            MemoryNotes = row.MemoryNotes,
+            MemoryThrough = row.MemoryThroughMessageId is null ? null : new MessageId(Guid.Parse(row.MemoryThroughMessageId)),
             LastMessage = row.MessageId is null || row.Sender is null || row.Text is null || row.SentAtUtc is null
                 ? null
                 : Map(row.MessageId, row.Id, row.Sender.Value, row.Text, row.SentAtUtc, row.AgentProvider, row.AgentModel)
@@ -193,6 +217,8 @@ internal sealed class SqliteConversationStore : IConversationStore
         public string Id { get; set; } = string.Empty;
         public string ContactId { get; set; } = string.Empty;
         public string StartedAtUtc { get; set; } = string.Empty;
+        public string? MemoryNotes { get; set; }
+        public string? MemoryThroughMessageId { get; set; }
         public string? MessageId { get; set; }
         public long? Sender { get; set; }
         public string? Text { get; set; }

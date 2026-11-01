@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using FluentValidation.Results;
 using HomiliaMessenger.Business.Base.Extensions;
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
@@ -25,6 +26,9 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     // sent so far, once, as a person reading a burst of messages would.
     private readonly Dictionary<ConversationId, CancellationTokenSource> _pendingReplies = [];
 
+    // Conversations whose memory notes are being updated, so updates do not overlap.
+    private readonly HashSet<ConversationId> _updatingMemory = [];
+
     // Unsent composer text per contact, kept while switching between chats.
     private readonly Dictionary<ContactId, string> _drafts = [];
 
@@ -48,7 +52,10 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     /// <summary>
     /// The open thread's conversation, or <see langword="null"/> for a new chat that has no messages yet.
     /// </summary>
-    [ObservableProperty] private ConversationId? _activeConversationId;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasConversation))]
+    [NotifyCanExecuteChangedFor(nameof(EditMemoryCommand))]
+    private ConversationId? _activeConversationId;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(SendCommand))]
@@ -87,11 +94,22 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     /// </summary>
     public Func<string, string, Task<bool>>? ConfirmAsync { get; set; }
 
+    /// <summary>
+    /// Supplied by the view to let the user read and correct a contact's memory notes, given the contact's name and the
+    /// current notes. Returns the edited notes, or <see langword="null"/> when the user cancels.
+    /// </summary>
+    public Func<string, string?, Task<string?>>? ShowMemoryEditorAsync { get; set; }
+
     public Type RibbonControlType => typeof(MessengerRibbonControl);
 
     public bool HasActiveThread => ActiveContact is not null;
 
     public bool HasReplyProblem => ReplyProblem is not null;
+
+    /// <summary>
+    /// Whether the open chat has a saved conversation, and so memory notes to show.
+    /// </summary>
+    public bool HasConversation => ActiveConversationId is not null;
 
     public string ActiveSubtitle => IsContactTyping
         ? "typing…"
@@ -590,9 +608,79 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
                 item.Conversation = item.Conversation with { LastMessage = reply };
                 MoveToTop(item);
             }
+
+            _ = UpdateMemoryAsync(conversationId);
         }
 
         UpdateTyping();
+    }
+
+    /// <summary>
+    /// Condenses older messages into the contact's notes, in the background after a reply. A reply asked for meanwhile
+    /// waits its turn for the model.
+    /// </summary>
+    private async Task UpdateMemoryAsync(ConversationId conversationId)
+    {
+        if (!_updatingMemory.Add(conversationId))
+        {
+            return;
+        }
+
+        try
+        {
+            if (await _conversations.UpdateMemoryAsync(conversationId) is { } updated
+                && Conversations.FirstOrDefault(existing => existing.Id == conversationId) is { } item)
+            {
+                item.Conversation = item.Conversation with { MemoryNotes = updated.MemoryNotes, MemoryThrough = updated.MemoryThrough };
+            }
+        }
+        catch (Exception)
+        {
+            // Notes are retried after the next reply; until then the contact is still given the messages themselves.
+        }
+        finally
+        {
+            _updatingMemory.Remove(conversationId);
+        }
+    }
+
+    /// <summary>
+    /// Shows what the open chat's contact remembers from earlier, and saves any corrections.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(HasConversation))]
+    private async Task EditMemoryAsync()
+    {
+        if (ShowMemoryEditorAsync is null || ActiveContact is not { } contact
+            || Conversations.FirstOrDefault(existing => existing.Id == ActiveConversationId) is not { } item)
+        {
+            return;
+        }
+
+        string? current = item.Conversation.MemoryNotes;
+        string? edited = await ShowMemoryEditorAsync(contact.DisplayName, current);
+
+        if (edited is null || string.Equals(edited.Trim(), current ?? string.Empty, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        try
+        {
+            ValidationResult result = await _conversations.SaveMemoryNotesAsync(item.Id, edited, current);
+
+            if (!result.IsValid)
+            {
+                Status = result.ToStringPretty("Saving notes");
+                return;
+            }
+
+            item.Conversation = item.Conversation with { MemoryNotes = string.IsNullOrWhiteSpace(edited) ? null : edited.Trim() };
+            Status = $"Saved what {contact.DisplayName} remembers.";
+        }
+        catch (Exception error)
+        {
+            Status = "Could not save the notes: " + error.Message;
+        }
     }
 
     private void UpdateTyping()

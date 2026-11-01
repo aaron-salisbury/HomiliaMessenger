@@ -71,7 +71,15 @@ Before a user message reaches an agent, Business builds the request. It includes
 
 ### Conversation Memory
 
-What the agent is given about earlier turns. The initial approach is the most recent messages within a budget. A rolling summary of older history may be added once real conversations show it is needed. Memory is stored with the conversation, so it carries over when the contact's agent changes.
+What the agent is given about earlier turns: the contact's memory notes plus the messages the notes do not cover yet.
+
+- Once the messages not yet in the notes grow past a budget, the contact's agent lists the facts worth remembering from all but the most recent ones (what the user shared about their life, the people, places, dates, and plans in it, and anything either side agreed to), and those facts are appended to the notes. This runs in the background after a reply.
+- The notes are only appended to, never rewritten by a model: small models asked to rewrite a running summary lose earlier facts a little more each time. When the notes are full, the oldest facts give way.
+- Folding happens in large steps, so the start of the prompt stays the same for most replies and local models can reuse their cache. The reply after a fold reads the whole prompt again.
+- The user can read and correct the notes from the chat, in a dialog that keeps them out of the conversation itself. A background update never overwrites the user's corrections.
+- Contacts with simulated replies keep no notes.
+
+Memory is stored with the conversation, so it carries over when the contact's agent changes.
 
 ## Delivery Phases
 

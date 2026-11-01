@@ -51,7 +51,7 @@ internal sealed class OnnxConversationAgent : IConversationAgent
 
         try
         {
-            string? text = await _host.GenerateAsync(_library.ModelDirectory(model), model.ContextTokens, ToMessages(request), SETTINGS, cancellationToken);
+            string? text = await _host.GenerateAsync(_library.ModelDirectory(model), model.ContextTokens, ToMessages(request), request, SETTINGS, cancellationToken);
 
             if (text is null)
             {

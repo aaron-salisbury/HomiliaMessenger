@@ -29,7 +29,7 @@ public sealed class PersonaFramingTests
     [TestMethod]
     public void Instructions_DescribeThePersonaAndAskForATextInCharacter()
     {
-        string instructions = PersonaFraming.Instructions(WALT, new UserProfile(), TODAY);
+        string instructions = PersonaFraming.Instructions(WALT, new UserProfile(), null, TODAY);
 
         Assert.Contains("You are Grandpa Walt, a real person texting with someone you know", instructions);
         Assert.Contains("Full name: Walt Kowalski", instructions);
@@ -46,13 +46,14 @@ public sealed class PersonaFramingTests
     {
         Contact rose = new() { Id = ContactId.New(), GivenName = "Rose", Birthday = new DateOnly(1990, 1, 1) };
 
-        string instructions = PersonaFraming.Instructions(rose, new UserProfile(), TODAY);
+        string instructions = PersonaFraming.Instructions(rose, new UserProfile(), null, TODAY);
 
         Assert.DoesNotContain("Full name", instructions);
         Assert.DoesNotContain("Personality", instructions);
         Assert.DoesNotContain("Background", instructions);
         Assert.DoesNotContain("the person you are texting", instructions);
         Assert.DoesNotContain("given who they are to you", instructions);
+        Assert.DoesNotContain("What you remember", instructions);
     }
 
     [TestMethod]
@@ -60,7 +61,7 @@ public sealed class PersonaFramingTests
     {
         UserProfile aaron = new() { Name = " Aaron ", Birthday = new DateOnly(1990, 5, 1), Gender = Gender.Male, About = "Lives in Denver. Nurse." };
 
-        string instructions = PersonaFraming.Instructions(WALT with { Relationship = "Grandfather" }, aaron, TODAY);
+        string instructions = PersonaFraming.Instructions(WALT with { Relationship = "Grandfather" }, aaron, null, TODAY);
 
         Assert.Contains("texting with Aaron in a messaging app", instructions);
         Assert.Contains("You are Aaron's grandfather.", instructions);
@@ -78,7 +79,7 @@ public sealed class PersonaFramingTests
     [DataRow("BFF", "You are the BFF of the person you are texting.")]
     public void Instructions_StateTheRelationshipWithoutTheUsersName(string relationship, string expected)
     {
-        string instructions = PersonaFraming.Instructions(WALT with { Relationship = relationship }, new UserProfile(), TODAY);
+        string instructions = PersonaFraming.Instructions(WALT with { Relationship = relationship }, new UserProfile(), null, TODAY);
 
         Assert.Contains(expected, instructions);
     }
@@ -173,6 +174,25 @@ public sealed class PersonaFramingTests
     public void CleanReply_KeepsOnlyThePersonasMessage(string raw, string expected)
     {
         Assert.AreEqual(expected, PersonaFraming.CleanReply(raw, WALT));
+    }
+
+    [TestMethod]
+    public void Build_StopsTheReplyWhereTheModelStartsWritingTheNextTurns()
+    {
+        AgentRequest request = PersonaFraming.Build(WALT, new UserProfile { Name = "Aaron" }, null, [Message(MessageSender.User, "Hi")], "m", TODAY);
+
+        string reply = PersonaFraming.CleanReply("Grandpa Walt: Doing fine, kiddo.  User: Great! Assistant: Anytime.", WALT, request)!;
+        string named = PersonaFraming.CleanReply("Doing fine.\nAaron: Glad to hear it.\nGrandpa Walt: Yep.", WALT, request)!;
+
+        Assert.AreEqual("Doing fine, kiddo.", reply);
+        Assert.AreEqual("Doing fine.", named);
+        Assert.AreEqual("Garden's fine.", PersonaFraming.CleanReply("Garden's fine.\n\nTomatoes came in late, too.", WALT, request));
+        Assert.AreEqual(12, request.EndOf("Doing fine. <|end|>"));
+        Assert.AreEqual(5, new AgentRequest("m", "i", []).EndOf("Hello"));
+        Assert.AreEqual(0, request.EndOf(string.Empty));
+        Assert.AreEqual("Hello there.", PersonaFraming.CleanReply("\n  Grandpa Walt: Hello there.\nAaron: Hi", WALT, request));
+        Assert.AreEqual(20, request.EndOf("\n\nWalt: Hello there.\n\nMore"));
+        Assert.IsNull(PersonaFraming.CleanReply("Grandpa Walt:", WALT, request));
     }
 
     [TestMethod]

@@ -30,20 +30,44 @@ internal static partial class PersonaFraming
     /// </summary>
     internal const int MEMORY_STEP_CHARACTERS = MAX_MEMORY_CHARACTERS / 4;
 
-    internal static AgentRequest Build(Contact contact, UserProfile user, IReadOnlyList<ChatMessage> messages, string model, DateOnly today)
+    /// <param name="memoryNotes">The contact's notes on what was said before <paramref name="messages"/>.</param>
+    /// <param name="messages">The messages not yet condensed into <paramref name="memoryNotes"/>, oldest first.</param>
+    internal static AgentRequest Build(Contact contact, UserProfile user, string? memoryNotes, IReadOnlyList<ChatMessage> messages, string model, DateOnly today)
     {
         ArgumentNullException.ThrowIfNull(contact);
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(messages);
 
-        return new AgentRequest(model, Instructions(contact, user, today), Memory(messages));
+        return new AgentRequest(model, Instructions(contact, user, memoryNotes, today), Memory(messages), StopTexts(contact, user));
+    }
+
+    /// <summary>
+    /// Where a reply should end: speaker labels that show a model has started writing the next turns of the conversation
+    /// itself, and a blank line, since a text message is one paragraph and small models otherwise ramble on.
+    /// </summary>
+    internal static IReadOnlyList<string> StopTexts(Contact contact, UserProfile user)
+    {
+        ArgumentNullException.ThrowIfNull(contact);
+        ArgumentNullException.ThrowIfNull(user);
+
+        List<string> stops = ["User:", "Assistant:", "<|", "\n\n", "\r\n\r\n"];
+
+        foreach (string? name in new[] { user.Name, contact.DisplayName })
+        {
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                stops.Add(name.Trim() + ":");
+            }
+        }
+
+        return stops;
     }
 
     /// <summary>
     /// Who the persona is, who they are texting and how they are related, and how to reply. Who the user is comes right
     /// after the persona's identity, since small models attend most to the start of the instructions.
     /// </summary>
-    internal static string Instructions(Contact contact, UserProfile user, DateOnly today)
+    internal static string Instructions(Contact contact, UserProfile user, string? memoryNotes, DateOnly today)
     {
         ArgumentNullException.ThrowIfNull(contact);
         ArgumentNullException.ThrowIfNull(user);
@@ -84,6 +108,15 @@ internal static partial class PersonaFraming
         AppendField(builder, "Personality", contact.Personality);
         AppendField(builder, "Background", contact.Background);
 
+        bool remembers = !string.IsNullOrWhiteSpace(memoryNotes);
+
+        if (remembers)
+        {
+            builder.AppendLine();
+            builder.AppendLine("What you remember from earlier in this conversation:");
+            builder.AppendLine(memoryNotes!.Trim());
+        }
+
         builder.AppendLine();
         builder.AppendLine($"Today is {today.ToString("dddd, MMMM d, yyyy", CultureInfo.InvariantCulture)}.");
         builder.AppendLine();
@@ -94,6 +127,11 @@ internal static partial class PersonaFraming
         if (!string.IsNullOrWhiteSpace(contact.Relationship) || userName is not null)
         {
             builder.AppendLine($"- Talk to {userName ?? "them"} the way you naturally would, given who they are to you.");
+        }
+
+        if (remembers)
+        {
+            builder.AppendLine($"- Keep in mind what you remember from earlier, and don't ask about things {userName ?? "they"} already told you.");
         }
 
         builder.Append("- Do not add notes, explanations, narration, or commentary about your reply.");
@@ -179,10 +217,11 @@ internal static partial class PersonaFraming
     }
 
     /// <summary>
-    /// Removes what is not part of the persona's message: a leading "Name:" label, surrounding quotes, and trailing
-    /// paragraphs of commentary such as "(Note: ...)". Returns <see langword="null"/> when nothing is left.
+    /// Removes what is not part of the persona's message: a leading "Name:" label, any turns the model went on to write
+    /// itself (from the first of <paramref name="request"/>'s stop texts), surrounding quotes, and trailing paragraphs of
+    /// commentary such as "(Note: ...)". Returns <see langword="null"/> when nothing is left.
     /// </summary>
-    internal static string? CleanReply(string? text, Contact contact)
+    internal static string? CleanReply(string? text, Contact contact, AgentRequest? request = null)
     {
         ArgumentNullException.ThrowIfNull(contact);
 
@@ -202,8 +241,13 @@ internal static partial class PersonaFraming
             }
         }
 
+        if (request is not null)
+        {
+            cleaned = cleaned[..request.EndOf(cleaned)].TrimEnd();
+        }
+
         // Models sometimes follow the reply with a divider or heading and an explanation of it.
-        cleaned = Divider().Split(cleaned)[0];
+        cleaned = BeforeDivider(cleaned);
 
         IEnumerable<string> paragraphs = ParagraphBreak().Split(cleaned)
             .TakeWhile(paragraph => !Commentary().IsMatch(paragraph));
@@ -217,6 +261,22 @@ internal static partial class PersonaFraming
         return cleaned.Length == 0 ? null : cleaned;
     }
 
+    /// <summary>
+    /// The text before any divider line or Markdown heading, after which models tend to add commentary.
+    /// </summary>
+    internal static string BeforeDivider(string text)
+    {
+        return Divider().Split(text)[0];
+    }
+
+    /// <summary>
+    /// Whether a paragraph or line is commentary about a reply, such as "(Note: ...)".
+    /// </summary>
+    internal static bool IsCommentary(string text)
+    {
+        return Commentary().IsMatch(text);
+    }
+
     private static void AppendField(StringBuilder builder, string label, string? value)
     {
         if (!string.IsNullOrWhiteSpace(value))
@@ -228,8 +288,9 @@ internal static partial class PersonaFraming
     [GeneratedRegex(@"\r?\n\s*\r?\n")]
     private static partial Regex ParagraphBreak();
 
-    // Paragraphs such as "(Note: ...)", "*Note*: ...", "[This response ...]", "In this reply, ...", or "Explanation: ...".
-    [GeneratedRegex(@"^\s*[\(\[\*_]*\s*(note|(in )?(this|the above) (response|reply|dialogue|message|conversation)|explanation|commentary)\b", RegexOptions.IgnoreCase)]
+    // Paragraphs such as "(Note: ...)", "*Note*: ...", "[This response ...]", "In this reply, ...", "Word count: 120", or
+    // "Explanation: ...".
+    [GeneratedRegex(@"^\s*[\(\[\*_]*\s*(note|(in )?(this|the above) (response|reply|dialogue|message|conversation|summary|list)|explanation|commentary|word count)\b", RegexOptions.IgnoreCase)]
     private static partial Regex Commentary();
 
     // A line of three or more dashes, asterisks, or underscores, or a Markdown heading such as "#### End of Reply".

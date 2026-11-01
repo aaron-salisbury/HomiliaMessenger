@@ -3,6 +3,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using HomiliaMessenger.Business.Modules.Contacts;
+using HomiliaMessenger.Business.Modules.Conversations;
 using HomiliaMessenger.Presentation.Desktop.Base.Extensions;
 using HomiliaMessenger.Presentation.Desktop.Models;
 using HomiliaMessenger.Presentation.Desktop.ViewModels;
@@ -54,6 +55,11 @@ public partial class MessengerView : UserControl
             {
                 _attachedModel.ConfirmAsync = null;
             }
+
+            if (_attachedModel.ShowMemoryEditorAsync == ShowMemoryEditorAsync)
+            {
+                _attachedModel.ShowMemoryEditorAsync = null;
+            }
         }
 
         _attachedModel = model;
@@ -61,9 +67,17 @@ public partial class MessengerView : UserControl
         if (model is not null)
         {
             model.ConfirmAsync = ConfirmWithDialogAsync;
+            model.ShowMemoryEditorAsync = ShowMemoryEditorAsync;
             model.Messages.CollectionChanged += Messages_CollectionChanged;
             model.PropertyChanged += Model_PropertyChanged;
         }
+    }
+
+    private Task<string?> ShowMemoryEditorAsync(string contactName, string? notes)
+    {
+        return TopLevel.GetTopLevel(this) is Window owner
+            ? MemoryWindow.ShowAsync(owner, contactName, notes, Conversation.MAX_MEMORY_NOTES_LENGTH)
+            : Task.FromResult<string?>(null);
     }
 
     private Task<bool> ConfirmWithDialogAsync(string title, string message)

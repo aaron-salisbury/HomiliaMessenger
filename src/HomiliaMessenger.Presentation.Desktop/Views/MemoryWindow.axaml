@@ -1,0 +1,33 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="520" d:DesignHeight="440"
+        x:Class="HomiliaMessenger.Presentation.Desktop.Views.MemoryWindow"
+        xmlns:i="using:Material.Icons.Avalonia"
+        Width="520" Height="440" MinWidth="420" MinHeight="340"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" CanMinimize="False"
+        Title="Memory">
+
+    <Grid RowDefinitions="Auto,*,Auto,Auto" Margin="24,20,24,20">
+
+        <StackPanel Grid.Row="0" Spacing="6" Margin="0,0,0,14">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+                <i:MaterialIcon Kind="NoteTextOutline" Width="22" Height="22" Opacity="0.8" />
+                <TextBlock x:Name="Heading" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock x:Name="Explanation" TextWrapping="Wrap" FontSize="12" Opacity="0.75" />
+        </StackPanel>
+
+        <TextBox Grid.Row="1" x:Name="Notes" AcceptsReturn="True" TextWrapping="Wrap" AutomationProperties.Name="Memory notes"
+                 VerticalContentAlignment="Top" />
+
+        <TextBlock Grid.Row="2" x:Name="Count" FontSize="11" Opacity="0.6" HorizontalAlignment="Right" Margin="0,4,0,0" />
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Content="Cancel" Click="Cancel_Click" IsCancel="True" />
+            <Button Content="Save" Classes="accent" Click="Save_Click" />
+        </StackPanel>
+
+    </Grid>
+</Window>

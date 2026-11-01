@@ -173,7 +173,7 @@ public sealed class LocalModelTests
         string missing = Path.Combine(Path.GetTempPath(), $"HomiliaMessenger-missing-{Guid.NewGuid():N}");
 
         await Assert.ThrowsExactlyAsync<DirectoryNotFoundException>(() =>
-            host.GenerateAsync(missing, 512, [new ChatTemplateMessage("user", "Hi")], new GenerationSettings(), TestContext.CancellationToken));
+            host.GenerateAsync(missing, 512, [new ChatTemplateMessage("user", "Hi")], new AgentRequest("tiny", string.Empty, []), new GenerationSettings(), TestContext.CancellationToken));
     }
 
     /// <summary>
@@ -195,7 +195,7 @@ public sealed class LocalModelTests
 
         OnnxModelHost host = new();
         Task<string?> generating = host.GenerateAsync(library.ModelDirectory(model), model.ContextTokens,
-            [new ChatTemplateMessage("user", "Write a long story about a garden.")], new GenerationSettings(MaxReplyTokens: 1000), TestContext.CancellationToken);
+            [new ChatTemplateMessage("user", "Write a long story about a garden.")], new AgentRequest(model.Id, string.Empty, []), new GenerationSettings(MaxReplyTokens: 1000), TestContext.CancellationToken);
         await Task.Delay(TimeSpan.FromSeconds(6), TestContext.CancellationToken);
 
         await host.DisposeAsync();

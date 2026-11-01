@@ -46,6 +46,19 @@ public interface IConversationService
     /// </summary>
     Task<ConversationReply> ReplyAsync(ConversationId conversationId, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Condenses older messages into the contact's memory notes once there are too many to give an agent as they are.
+    /// Meant to run after a reply, in the background. Contacts with simulated replies keep no notes.
+    /// </summary>
+    /// <returns>The conversation with its updated notes, or <see langword="null"/> when nothing changed.</returns>
+    Task<Conversation?> UpdateMemoryAsync(ConversationId conversationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Saves the user's corrections to the contact's memory notes. Fails without saving when the notes are too long, or
+    /// when they were updated after <paramref name="expectedNotes"/> were read.
+    /// </summary>
+    Task<ValidationResult> SaveMemoryNotesAsync(ConversationId conversationId, string? notes, string? expectedNotes, CancellationToken cancellationToken = default);
+
     Task<bool> DeleteAsync(ConversationId conversationId, CancellationToken cancellationToken = default);
 }
 
@@ -69,6 +82,13 @@ public interface IConversationStore
     /// Adds a message to its conversation. Returns <see langword="false"/> when the conversation does not exist.
     /// </summary>
     Task<bool> AddMessageAsync(ChatMessage message, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Saves a conversation's memory, only if it is still <paramref name="expectedNotes"/> through
+    /// <paramref name="expectedThrough"/>. Returns <see langword="false"/> when it changed meanwhile, or the conversation
+    /// does not exist.
+    /// </summary>
+    Task<bool> SaveMemoryAsync(ConversationId id, string? notes, MessageId? through, string? expectedNotes, MessageId? expectedThrough, CancellationToken cancellationToken = default);
 
     Task<bool> DeleteAsync(ConversationId id, CancellationToken cancellationToken = default);
 }

@@ -110,9 +110,7 @@ internal sealed class ConversationService : IConversationService
         }
 
         AgentAssignment assignment = contact.Agent ?? SimulatedAgent.ASSIGNMENT;
-
-        // Later registrations take precedence, as they do for single services.
-        IConversationAgent? agent = _agents.LastOrDefault(candidate => string.Equals(candidate.Provider, assignment.Provider.Trim(), StringComparison.OrdinalIgnoreCase));
+        IConversationAgent? agent = FindAgent(assignment);
 
         if (agent is null)
         {
@@ -123,7 +121,10 @@ internal sealed class ConversationService : IConversationService
         IReadOnlyList<ChatMessage> messages = await _store.ListMessagesAsync(conversationId, cancellationToken);
         UserProfile user = await _profile.GetAsync(cancellationToken);
         DateOnly today = DateOnly.FromDateTime(_timeProvider.GetUtcNow().UtcDateTime);
-        AgentRequest request = PersonaFraming.Build(contact, user, messages, assignment.Model.Trim(), today);
+
+        // The agent is given the notes and the messages they do not cover yet.
+        int unremembered = MemoryNotes.FirstUnremembered(messages, conversation.MemoryThrough);
+        AgentRequest request = PersonaFraming.Build(contact, user, conversation.MemoryNotes, [.. messages.Skip(unremembered)], assignment.Model.Trim(), today);
         AgentReply answer = await agent.ReplyAsync(request, cancellationToken);
 
         if (answer.Status != ReplyStatus.Success)
@@ -131,7 +132,7 @@ internal sealed class ConversationService : IConversationService
             return new ConversationReply(answer.Status, null, answer.Problem);
         }
 
-        string? text = PersonaFraming.CleanReply(answer.Text, contact);
+        string? text = PersonaFraming.CleanReply(answer.Text, contact, request);
 
         if (text is null)
         {
@@ -156,6 +157,79 @@ internal sealed class ConversationService : IConversationService
         return await _store.AddMessageAsync(reply, cancellationToken)
             ? new ConversationReply(ReplyStatus.Success, reply, null)
             : new ConversationReply(ReplyStatus.NotFound, null, "The conversation was deleted before the reply was saved.");
+    }
+
+    public async Task<Conversation?> UpdateMemoryAsync(ConversationId conversationId, CancellationToken cancellationToken = default)
+    {
+        Conversation? conversation = await _store.GetAsync(conversationId, cancellationToken);
+        Contact? contact = conversation is null ? null : await _contacts.GetAsync(conversation.ContactId, cancellationToken);
+
+        // Canned replies make no use of notes, and have no model to write them.
+        if (conversation is null || contact?.Agent is not { } assignment || FindAgent(assignment) is not { } agent || agent is SimulatedAgent)
+        {
+            return null;
+        }
+
+        IReadOnlyList<ChatMessage> messages = await _store.ListMessagesAsync(conversationId, cancellationToken);
+        int start = MemoryNotes.FirstUnremembered(messages, conversation.MemoryThrough);
+
+        if (MemoryNotes.FoldBoundary(messages, start) is not { } boundary)
+        {
+            return null;
+        }
+
+        UserProfile user = await _profile.GetAsync(cancellationToken);
+        AgentRequest request = MemoryNotes.ExtractRequest(contact, user, conversation.MemoryNotes, messages.Take(boundary).Skip(start), assignment.Model.Trim());
+        AgentReply answer = await agent.ReplyAsync(request, cancellationToken);
+
+        if (answer.Status != ReplyStatus.Success)
+        {
+            // Try again after the next reply; until then the agent is still given the messages themselves.
+            return null;
+        }
+
+        // Finding nothing worth remembering still moves the notes past these messages.
+        string? notes = MemoryNotes.Append(conversation.MemoryNotes, MemoryNotes.Facts(answer.Text));
+
+        MessageId through = messages[boundary - 1].Id;
+
+        // The user may have corrected the notes while they were being written; their edit wins and this update is retried.
+        bool saved = await _store.SaveMemoryAsync(conversationId, notes, through, conversation.MemoryNotes, conversation.MemoryThrough, cancellationToken);
+
+        return saved ? conversation with { MemoryNotes = notes, MemoryThrough = through } : null;
+    }
+
+    public async Task<ValidationResult> SaveMemoryNotesAsync(ConversationId conversationId, string? notes, string? expectedNotes, CancellationToken cancellationToken = default)
+    {
+        string? cleaned = string.IsNullOrWhiteSpace(notes) ? null : notes.Trim();
+
+        if (cleaned?.Length > Conversation.MAX_MEMORY_NOTES_LENGTH)
+        {
+            return new ValidationResult([new ValidationFailure("MemoryNotes", $"Notes must be {Conversation.MAX_MEMORY_NOTES_LENGTH} characters or fewer.")]);
+        }
+
+        Conversation? conversation = await _store.GetAsync(conversationId, cancellationToken);
+
+        if (conversation is null)
+        {
+            return new ValidationResult([new ValidationFailure("Conversation", "The conversation no longer exists.")]);
+        }
+
+        if (!string.Equals(conversation.MemoryNotes, expectedNotes, StringComparison.Ordinal)
+            || !await _store.SaveMemoryAsync(conversationId, cleaned, conversation.MemoryThrough, conversation.MemoryNotes, conversation.MemoryThrough, cancellationToken))
+        {
+            return new ValidationResult([new ValidationFailure("MemoryNotes", "The notes were updated while you were editing them. Open them again to see the latest.")]);
+        }
+
+        return new ValidationResult();
+    }
+
+    /// <summary>
+    /// The agent for <paramref name="assignment"/>. Later registrations take precedence, as they do for single services.
+    /// </summary>
+    private IConversationAgent? FindAgent(AgentAssignment assignment)
+    {
+        return _agents.LastOrDefault(candidate => string.Equals(candidate.Provider, assignment.Provider.Trim(), StringComparison.OrdinalIgnoreCase));
     }
 
     public Task<bool> DeleteAsync(ConversationId conversationId, CancellationToken cancellationToken = default)
