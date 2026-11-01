@@ -99,7 +99,7 @@ Memory is stored with the conversation, so it carries over when the contact's ag
 
 ### Phase 3: Agent Integration (current)
 
-- A Business conversation capability contract, with at least one provider implemented in Integrations. The first provider runs small models on the device with ONNX Runtime GenAI (provider `Local`), so agents can be tried repeatedly without paid usage, a server, or a GPU, and the same approach can later run on Android. Models are downloaded on demand from Settings, not bundled.
+- A Business conversation capability contract, with at least one provider implemented in Integrations. The first provider runs small models on the device with ONNX Runtime GenAI (provider `Local`), so agents can be tried repeatedly without paid usage, a server, or a GPU, and the same approach can later run on Android. Models are downloaded on demand from Settings, not bundled. GGUF models the user adds from Hugging Face run through llama.cpp (LLamaSharp) behind the same provider, so any of the many models published in that format can be tried quickly. Only one local model is kept loaded at a time, across both runtimes.
 - Persona framing and conversation memory as described above.
 - Switching a contact's agent or model while keeping its conversation.
 - Explicit handling of expected provider states (unavailable, unauthorized, invalid response) instead of surfacing raw exceptions.

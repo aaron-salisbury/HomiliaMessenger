@@ -37,6 +37,12 @@
 					<StackPanel Spacing="8">
 						<TextBlock Text="Local Models" Classes="section-header" />
 						<TextBlock Text="{Binding LocalModelsHint}" TextWrapping="Wrap" Opacity="0.75" />
+						<Button Command="{Binding AddModelCommand}" HorizontalAlignment="Left">
+							<StackPanel Orientation="Horizontal" Spacing="6">
+								<i:MaterialIcon Kind="Plus" />
+								<TextBlock Text="Add from Hugging Face" />
+							</StackPanel>
+						</Button>
 
 						<ItemsControl ItemsSource="{Binding LocalModels}">
 							<ItemsControl.ItemTemplate>
@@ -55,7 +61,7 @@
 													</StackPanel>
 												</Button>
 												<Button Command="{Binding CancelCommand}" IsVisible="{Binding IsDownloading}" Content="Pause" />
-												<Button Command="{Binding DeleteCommand}" IsVisible="{Binding IsDownloaded}" ToolTip.Tip="Remove model">
+												<Button Command="{Binding DeleteCommand}" IsVisible="{Binding CanRemove}" ToolTip.Tip="Remove model">
 													<i:MaterialIcon Kind="TrashCanOutline" />
 												</Button>
 											</StackPanel>

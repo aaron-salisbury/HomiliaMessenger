@@ -1,0 +1,77 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="600" d:DesignHeight="560"
+        x:Class="HomiliaMessenger.Presentation.Desktop.Views.AddLocalModelWindow"
+        xmlns:vm="clr-namespace:HomiliaMessenger.Presentation.Desktop.ViewModels"
+        x:DataType="vm:AddLocalModelViewModel"
+        xmlns:i="using:Material.Icons.Avalonia"
+        Width="600" Height="560" MinWidth="480" MinHeight="420"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" CanMinimize="False"
+        Title="Add a model from Hugging Face">
+
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" Margin="24,20,24,20">
+
+        <StackPanel Grid.Row="0" Spacing="6" Margin="0,0,0,14">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+                <i:MaterialIcon Kind="CloudDownloadOutline" Width="22" Height="22" Opacity="0.8" />
+                <TextBlock Text="Add a model from Hugging Face" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock TextWrapping="Wrap" FontSize="12" Opacity="0.75"
+                       Text="Models in GGUF format run on this computer with llama.cpp. Most chat models on Hugging Face have a GGUF version, often in a repository whose name ends in -GGUF. Models up to about 4B parameters suit most laptops." />
+        </StackPanel>
+
+        <Grid Grid.Row="1" ColumnDefinitions="*,8,Auto">
+            <TextBox Grid.Column="0" Text="{Binding Repository}" PlaceholderText="owner/name, such as Qwen/Qwen2.5-1.5B-Instruct-GGUF, or its address"
+                     AutomationProperties.Name="Repository" />
+            <Button Grid.Column="2" Content="Look up" Command="{Binding LookUpCommand}" IsDefault="True" />
+        </Grid>
+
+        <StackPanel Grid.Row="2" Spacing="6" Margin="0,10,0,0">
+            <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsBusy}" />
+            <SelectableTextBlock Text="{Binding Status}" TextWrapping="Wrap" FontSize="12" />
+        </StackPanel>
+
+        <!-- Gated repositories -->
+        <Border Grid.Row="3" IsVisible="{Binding ShowsTokenSettings}" Margin="0,10,0,0" Padding="12" CornerRadius="8"
+                Background="{DynamicResource SystemControlBackgroundBaseLowBrush}">
+            <StackPanel Spacing="8">
+                <TextBlock TextWrapping="Wrap" FontSize="12"
+                           Text="Gated repositories need a Hugging Face access token with read access, created at huggingface.co/settings/tokens. It is kept in your system's credential store, not in the app's files." />
+                <TextBlock Text="A token is saved. Enter another to replace it." IsVisible="{Binding HasSavedToken}" FontSize="12" Opacity="0.75" />
+                <Grid ColumnDefinitions="*,8,Auto">
+                    <TextBox Grid.Column="0" Text="{Binding Token}" PasswordChar="•" PlaceholderText="hf_…" AutomationProperties.Name="Access token" />
+                    <Button Grid.Column="2" Content="Save and retry" Command="{Binding SaveTokenCommand}" />
+                </Grid>
+                <Button Content="Forget saved token" Command="{Binding ForgetTokenCommand}" IsVisible="{Binding HasSavedToken}" Classes="noBackground" Padding="0" FontSize="12" />
+            </StackPanel>
+        </Border>
+
+        <!-- Variants -->
+        <Grid Grid.Row="4" RowDefinitions="Auto,*" Margin="0,12,0,0" IsVisible="{Binding HasVariants}">
+            <TextBlock Grid.Row="0" Text="{Binding License}" TextWrapping="Wrap" FontSize="12" Opacity="0.75" Margin="0,0,0,6" />
+            <ListBox Grid.Row="1" ItemsSource="{Binding Variants}" SelectedItem="{Binding SelectedVariant}" AutomationProperties.Name="Variants">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:GgufVariantOption">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Grid.Column="0" Text="{Binding Label}" FontWeight="SemiBold" />
+                            <TextBlock Grid.Column="1" Text="{Binding Details}" Opacity="0.75" />
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Grid>
+
+        <StackPanel Grid.Row="5" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Content="Cancel" Click="Cancel_Click" IsCancel="True" />
+            <Button Classes="accent" Command="{Binding AddCommand}">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <i:MaterialIcon Kind="Download" />
+                    <TextBlock Text="Add and download" />
+                </StackPanel>
+            </Button>
+        </StackPanel>
+
+    </Grid>
+</Window>

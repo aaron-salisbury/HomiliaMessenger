@@ -1,5 +1,6 @@
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Conversations;
+using LLama.Exceptions;
 using Microsoft.Extensions.Logging;
 using Microsoft.ML.OnnxRuntimeGenAI;
 using System;
@@ -12,21 +13,27 @@ using System.Threading.Tasks;
 namespace HomiliaMessenger.Integrations.LocalModels;
 
 /// <summary>
-/// Answers with a model running on this device through ONNX Runtime GenAI, without a server or GPU. Contacts use it with
-/// the provider <c>Local</c> and a catalog model name, such as <c>phi-3.5-mini</c>.
+/// Answers with a model running on this device, without a server or GPU: ONNX models through ONNX Runtime GenAI, and GGUF
+/// models through llama.cpp. Contacts use it with the provider <c>Local</c> and a model name, such as
+/// <c>phi-3.5-mini</c>. Only one model is kept loaded across both runtimes, to bound memory use.
 /// </summary>
-internal sealed class OnnxConversationAgent : IConversationAgent
+internal sealed class LocalConversationAgent : IConversationAgent
 {
     private static readonly GenerationSettings SETTINGS = new();
 
     private readonly LocalModelLibrary _library;
     private readonly OnnxModelHost _host;
-    private readonly ILogger<OnnxConversationAgent> _logger;
+    private readonly LlamaModelHost? _llamaHost;
 
-    public OnnxConversationAgent(LocalModelLibrary library, OnnxModelHost host, ILogger<OnnxConversationAgent> logger)
+    // Held across choosing a runtime and generating, so replies on different runtimes never load two models at once.
+    private readonly SemaphoreSlim _runtimeGate = new(1, 1);
+    private readonly ILogger<LocalConversationAgent> _logger;
+
+    public LocalConversationAgent(LocalModelLibrary library, OnnxModelHost host, ILogger<LocalConversationAgent> logger, LlamaModelHost? llamaHost = null)
     {
         _library = library ?? throw new ArgumentNullException(nameof(library));
         _host = host ?? throw new ArgumentNullException(nameof(host));
+        _llamaHost = llamaHost;
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -49,9 +56,32 @@ internal sealed class OnnxConversationAgent : IConversationAgent
             return AgentReply.Unavailable($"{model.DisplayName} has not been downloaded yet. Download it from Settings.");
         }
 
+        await _runtimeGate.WaitAsync(cancellationToken);
+
         try
         {
-            string? text = await _host.GenerateAsync(_library.ModelDirectory(model), model.ContextTokens, ToMessages(request), request, SETTINGS, cancellationToken);
+            string directory = _library.ModelDirectory(model);
+            string? text;
+
+            if (model.Format == LocalModelFormat.Gguf)
+            {
+                if (_llamaHost is null)
+                {
+                    return AgentReply.Unavailable($"{model.DisplayName} needs llama.cpp, which is not available here.");
+                }
+
+                await _host.UnloadAsync(null);
+                text = await _llamaHost.GenerateAsync(directory, model.EntryFile, ToMessages(request), request, SETTINGS, cancellationToken);
+            }
+            else
+            {
+                if (_llamaHost is not null)
+                {
+                    await _llamaHost.UnloadAsync(null);
+                }
+
+                text = await _host.GenerateAsync(directory, model.ContextTokens, ToMessages(request), request, SETTINGS, cancellationToken);
+            }
 
             if (text is null)
             {
@@ -62,15 +92,19 @@ internal sealed class OnnxConversationAgent : IConversationAgent
                 ? AgentReply.InvalidResponse($"{model.DisplayName} returned an empty reply.")
                 : AgentReply.Success(text.Trim());
         }
-        catch (DirectoryNotFoundException)
+        catch (Exception error) when (error is DirectoryNotFoundException or FileNotFoundException)
         {
             // Removed after the check above, while the reply was waiting its turn.
             return AgentReply.Unavailable($"{model.DisplayName} has not been downloaded yet. Download it from Settings.");
         }
-        catch (OnnxRuntimeGenAIException error)
+        catch (Exception error) when (error is OnnxRuntimeGenAIException or RuntimeError or InvalidOperationException)
         {
             _logger.LogError(error, "Local model {ModelId} failed to reply.", model.Id);
             return AgentReply.Unavailable($"{model.DisplayName} could not run: {error.Message}");
+        }
+        finally
+        {
+            _runtimeGate.Release();
         }
     }
 

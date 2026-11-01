@@ -27,7 +27,10 @@ internal static class FileDownload
     /// </summary>
     /// <exception cref="TimeoutException">Nothing was received for <see cref="STALL_TIMEOUT"/>.</exception>
     /// <exception cref="InvalidDataException">The server sent more than <paramref name="size"/> bytes.</exception>
-    internal static async Task DownloadAsync(HttpClient client, Uri url, string path, long size, DownloadProgress progress, CancellationToken cancellationToken)
+    /// <param name="authorization">
+    /// Credentials for the request, such as an access token. They are not sent on to a redirect's other host.
+    /// </param>
+    internal static async Task DownloadAsync(HttpClient client, Uri url, string path, long size, DownloadProgress progress, CancellationToken cancellationToken, AuthenticationHeaderValue? authorization = null)
     {
         ArgumentNullException.ThrowIfNull(client);
         ArgumentNullException.ThrowIfNull(progress);
@@ -48,6 +51,7 @@ internal static class FileDownload
         }
 
         using HttpRequestMessage request = new(HttpMethod.Get, url);
+        request.Headers.Authorization = authorization;
 
         if (existing > 0)
         {

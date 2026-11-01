@@ -112,5 +112,21 @@ public sealed class SpeechSettingsTests
         {
             throw new NotSupportedException();
         }
+        public Task<HuggingFaceLookup> LookUpAsync(string repository, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+        public Task<LocalModelAddResult> AddAsync(HuggingFaceLookup lookup, GgufVariant variant, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+        public Task<bool> HasHuggingFaceTokenAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(false);
+        }
+        public Task SetHuggingFaceTokenAsync(string? token, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
     }
 }
