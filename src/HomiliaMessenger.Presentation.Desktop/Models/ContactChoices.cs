@@ -9,18 +9,18 @@ namespace HomiliaMessenger.Presentation.Desktop.Models;
 /// <summary>
 /// A choice in the contact editor's gender selector.
 /// </summary>
-public sealed record GenderOption(string Label, ContactGender? Value)
+public sealed record GenderOption(string Label, Gender? Value)
 {
     public static GenderOption NotSpecified { get; } = new("Not specified", null);
 
     public static IReadOnlyList<GenderOption> All { get; } =
     [
         NotSpecified,
-        new("Male", ContactGender.Male),
-        new("Female", ContactGender.Female)
+        new("Male", Gender.Male),
+        new("Female", Gender.Female)
     ];
 
-    public static GenderOption For(ContactGender? gender)
+    public static GenderOption For(Gender? gender)
     {
         return All.FirstOrDefault(option => option.Value == gender) ?? NotSpecified;
     }

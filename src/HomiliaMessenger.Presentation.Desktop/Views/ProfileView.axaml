@@ -1,0 +1,136 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="700"
+             x:Class="HomiliaMessenger.Presentation.Desktop.Views.ProfileView"
+             xmlns:vm="clr-namespace:HomiliaMessenger.Presentation.Desktop.ViewModels"
+             x:DataType="vm:ProfileViewModel"
+             xmlns:converters="clr-namespace:HomiliaMessenger.Presentation.Desktop.Base.Converters"
+             xmlns:i="using:Material.Icons.Avalonia"
+             xmlns:imaging="clr-namespace:Avalonia.Media.Imaging;assembly=Avalonia.Base">
+
+    <UserControl.Resources>
+        <converters:BirthdayToDateConverter x:Key="BirthdayToDateConverter" />
+        <imaging:Bitmap x:Key="ContactPlaceholder">avares://HomiliaMessenger.Presentation.Desktop/Base/Assets/contact-placeholder.png</imaging:Bitmap>
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+        <Style Selector="Border.card">
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="ClipToBounds" Value="True" />
+            <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundBaseLowBrush}" />
+        </Style>
+        <Style Selector="TextBlock.field-label">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+        </Style>
+        <Style Selector="TextBlock.field-hint">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Opacity" Value="0.7" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,4,0,0" />
+        </Style>
+    </UserControl.Styles>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel MaxWidth="760" Spacing="16" Margin="0,0,0,8" IsEnabled="{Binding !IsBusy}">
+
+            <!-- Profile header: banner, photo, name -->
+            <Border Classes="card">
+                <Grid RowDefinitions="140,Auto">
+                    <Border Grid.Row="0">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                                <GradientStop Offset="0" Color="{DynamicResource SystemAccentColorDark2}" />
+                                <GradientStop Offset="1" Color="{DynamicResource SystemAccentColorLight1}" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+
+                    <Grid Grid.Row="1" ColumnDefinitions="Auto,*" Margin="28,0,28,24">
+                        <!-- Photo, overlapping the banner -->
+                        <Panel Grid.Column="0" Width="136" Height="136" Margin="0,-68,0,0" VerticalAlignment="Top">
+                            <Ellipse Width="136" Height="136" Fill="{DynamicResource SystemControlBackgroundAltHighBrush}" />
+                            <Ellipse Width="124" Height="124">
+                                <Ellipse.Fill>
+                                    <ImageBrush Source="{Binding PhotoPreview, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                                </Ellipse.Fill>
+                            </Ellipse>
+                            <Button Classes="accent" Width="38" Height="38" Padding="0" CornerRadius="19" Margin="0,0,4,4"
+                                    HorizontalAlignment="Right" VerticalAlignment="Bottom" Click="ChoosePhoto_Click"
+                                    ToolTip.Tip="Upload a photo" AutomationProperties.Name="Upload a photo">
+                                <i:MaterialIcon Kind="CameraOutline" Width="20" Height="20" />
+                            </Button>
+                        </Panel>
+
+                        <StackPanel Grid.Column="1" Margin="22,14,0,0" Spacing="2">
+                            <TextBlock Text="{Binding DisplayName}" FontSize="28" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Summary}" Opacity="0.7" TextTrimming="CharacterEllipsis" />
+                            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
+                                <Button Click="ChoosePhoto_Click">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <i:MaterialIcon Kind="Upload" />
+                                        <TextBlock Text="Upload photo" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Command="{Binding RemovePhotoCommand}" IsVisible="{Binding HasPhoto}" Content="Remove photo" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <!-- Details -->
+            <Border Classes="card" Padding="28,24">
+                <StackPanel Spacing="20">
+                    <StackPanel>
+                        <TextBlock Text="Profile details" FontSize="18" FontWeight="SemiBold" />
+                        <TextBlock Classes="field-hint" Text="Every contact is told who you are, so they know who they're talking to. All fields are optional." />
+                    </StackPanel>
+
+                    <Grid ColumnDefinitions="*,20,*" RowDefinitions="Auto,20,Auto">
+                        <StackPanel Grid.Row="0" Grid.Column="0">
+                            <TextBlock Classes="field-label" Text="Name" />
+                            <TextBox Text="{Binding Name}" PlaceholderText="What your contacts call you" MaxLength="100" AutomationProperties.Name="Name" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="0" Grid.Column="2">
+                            <TextBlock Classes="field-label" Text="Gender" />
+                            <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding GenderOptions}" SelectedItem="{Binding Gender}" AutomationProperties.Name="Gender" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3">
+                            <TextBlock Classes="field-label" Text="Birthday" />
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <DatePicker SelectedDate="{Binding Birthday, Mode=TwoWay, Converter={StaticResource BirthdayToDateConverter}}" AutomationProperties.Name="Birthday" />
+                                <Button Command="{Binding ClearBirthdayCommand}" Classes="noBackground" ToolTip.Tip="Clear birthday" AutomationProperties.Name="Clear birthday">
+                                    <i:MaterialIcon Kind="Close" Opacity="0.7" />
+                                </Button>
+                            </StackPanel>
+                            <TextBlock Classes="field-hint" Text="Contacts are told your age, not your birthday." />
+                        </StackPanel>
+                    </Grid>
+
+                    <StackPanel>
+                        <TextBlock Classes="field-label" Text="About you" />
+                        <TextBox Text="{Binding About}" AcceptsReturn="True" TextWrapping="Wrap" Height="140" MaxLength="{Binding MaxAboutLength}"
+                                 PlaceholderText="Where you live, what you do, what you're into. For example: I live in Denver, work as a nurse, and I'm learning to play guitar."
+                                 AutomationProperties.Name="About you" />
+                    </StackPanel>
+
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Text="{Binding Status}" TextWrapping="Wrap" VerticalAlignment="Center" Opacity="0.8" Margin="0,0,16,0" />
+                        <Button Grid.Column="1" Classes="accent" Command="{Binding SaveCommand}" Padding="18,8">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <i:MaterialIcon Kind="ContentSaveOutline" />
+                                <TextBlock Text="Save changes" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

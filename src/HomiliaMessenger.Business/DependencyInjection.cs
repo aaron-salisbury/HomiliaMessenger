@@ -2,6 +2,7 @@ using FluentValidation;
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
+using HomiliaMessenger.Business.Modules.Profile;
 using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Reflection;
@@ -21,6 +22,7 @@ public static class DependencyInjection
         services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly(), includeInternalTypes: true);
 
         services.AddScoped<IContactService, ContactService>();
+        services.AddScoped<IUserProfileService, UserProfileService>();
 
         services.AddSingleton<IConversationAgent, SimulatedAgent>();
         services.AddScoped<IConversationService, ConversationService>();

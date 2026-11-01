@@ -2,6 +2,7 @@ using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using HomiliaMessenger.Business.Modules.Contacts;
+using HomiliaMessenger.Presentation.Desktop.Base;
 using HomiliaMessenger.Presentation.Desktop.Models;
 using System;
 using System.Collections.Generic;
@@ -17,8 +18,6 @@ namespace HomiliaMessenger.Presentation.Desktop.ViewModels;
 /// </summary>
 public partial class ContactDetailViewModel : ObservableObject, IDisposable
 {
-    private const int MAX_PHOTO_BYTES = 8 * 1024 * 1024;
-
     private readonly ContactId _id;
     private byte[]? _photo;
     private bool _disposed;
@@ -32,6 +31,7 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
     private DateOnly? _birthday;
 
     [ObservableProperty] private GenderOption _gender = GenderOption.NotSpecified;
+    [ObservableProperty] private string? _relationship;
     [ObservableProperty] private string? _personality;
     [ObservableProperty] private string? _background;
     [ObservableProperty] private AgentOption _agent = AgentOption.None;
@@ -75,6 +75,7 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
             Nickname = contact.Nickname;
             Birthday = contact.Birthday;
             Gender = GenderOption.For(contact.Gender);
+            Relationship = contact.Relationship;
             Personality = contact.Personality;
             Background = contact.Background;
             Agent = AgentOptions.FirstOrDefault(option => option.Assignment == contact.Agent) ?? AgentOption.None;
@@ -139,25 +140,7 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
     {
         try
         {
-            if (stream.CanSeek && stream.Length - stream.Position > MAX_PHOTO_BYTES)
-            {
-                throw new InvalidDataException("Photos must be 8 MiB or smaller.");
-            }
-
-            // Read at most one byte past the limit so an oversized stream is rejected without buffering all of it.
-            using MemoryStream buffer = new();
-            byte[] chunk = new byte[81920];
-            int read;
-            while ((read = await stream.ReadAsync(chunk.AsMemory(0, (int)Math.Min(chunk.Length, MAX_PHOTO_BYTES + 1 - buffer.Length)))) > 0)
-            {
-                buffer.Write(chunk, 0, read);
-                if (buffer.Length > MAX_PHOTO_BYTES)
-                {
-                    throw new InvalidDataException("Photos must be 8 MiB or smaller.");
-                }
-            }
-
-            SetPhoto(buffer.ToArray());
+            SetPhoto(await PhotoFile.ReadAsync(stream));
             IsDirty = true;
             MessageRaised?.Invoke(this, "Photo selected. Save the contact to keep it.");
         }
@@ -177,47 +160,22 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
 
     public void SetPhoto(byte[]? bytes)
     {
-        if (bytes?.Length > MAX_PHOTO_BYTES)
-        {
-            throw new InvalidDataException("Photos must be 8 MiB or smaller.");
-        }
-
         Bitmap? preview = null;
+
         if (bytes is not null)
         {
-            if (!IsJpeg(bytes) && !IsPng(bytes))
-            {
-                throw new InvalidDataException("Select a JPEG or PNG photo.");
-            }
+            PhotoFile.EnsureSupported(bytes);
 
-            try
-            {
-                using MemoryStream stream = new(bytes);
-                preview = new Bitmap(stream);
-            }
-            catch
-            {
-                // Keep the original bytes even if the platform cannot preview the image.
-            }
+            // Keep the original bytes even if the platform cannot preview the image.
+            preview = PhotoFile.TryPreview(bytes);
         }
 
         Bitmap? previous = PhotoPreview;
         _photo = bytes is null ? null : [.. bytes];
         PhotoPreview = preview;
-        PhotoDescription = bytes is null ? "No photo" : preview is null ? "Photo saved; preview unavailable" :
-            $"{(IsPng(bytes) ? "PNG" : "JPEG")} photo ({bytes.Length / 1024} KiB)";
+        PhotoDescription = PhotoFile.Describe(bytes, preview is not null);
 
         previous?.Dispose();
-    }
-
-    private static bool IsPng(byte[] data)
-    {
-        return data.Length >= 8 && data.AsSpan(0, 8).SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 });
-    }
-
-    private static bool IsJpeg(byte[] data)
-    {
-        return data.Length >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff;
     }
 
     public Contact ToContact()
@@ -230,6 +188,7 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
             Nickname = Clean(Nickname),
             Birthday = Birthday,
             Gender = Gender.Value,
+            Relationship = Clean(Relationship),
             Personality = Clean(Personality),
             Background = Clean(Background),
             Agent = Agent.Assignment,

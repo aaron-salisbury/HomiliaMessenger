@@ -1,5 +1,6 @@
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
+using HomiliaMessenger.Business.Modules.Profile;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -29,22 +30,40 @@ internal static partial class PersonaFraming
     /// </summary>
     internal const int MEMORY_STEP_CHARACTERS = MAX_MEMORY_CHARACTERS / 4;
 
-    internal static AgentRequest Build(Contact contact, IReadOnlyList<ChatMessage> messages, string model, DateOnly today)
+    internal static AgentRequest Build(Contact contact, UserProfile user, IReadOnlyList<ChatMessage> messages, string model, DateOnly today)
     {
         ArgumentNullException.ThrowIfNull(contact);
+        ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(messages);
 
-        return new AgentRequest(model, Instructions(contact, today), Memory(messages));
+        return new AgentRequest(model, Instructions(contact, user, today), Memory(messages));
     }
 
-    internal static string Instructions(Contact contact, DateOnly today)
+    /// <summary>
+    /// Who the persona is, who they are texting and how they are related, and how to reply. Who the user is comes right
+    /// after the persona's identity, since small models attend most to the start of the instructions.
+    /// </summary>
+    internal static string Instructions(Contact contact, UserProfile user, DateOnly today)
     {
         ArgumentNullException.ThrowIfNull(contact);
+        ArgumentNullException.ThrowIfNull(user);
 
         string name = contact.DisplayName;
+        string? userName = string.IsNullOrWhiteSpace(user.Name) ? null : user.Name.Trim();
         StringBuilder builder = new();
 
-        builder.AppendLine($"You are {name}, a real person texting with someone you know in a messaging app. You are not an AI, a language model, or an assistant, and you never say or suggest that you are.");
+        builder.AppendLine($"You are {name}, a real person texting with {userName ?? "someone you know"} in a messaging app. You are not an AI, a language model, or an assistant, and you never say or suggest that you are.");
+
+        if (!string.IsNullOrWhiteSpace(contact.Relationship))
+        {
+            string relationship = LowerFirst(contact.Relationship.Trim());
+            builder.AppendLine(userName is null
+                ? $"You are the {relationship} of the person you are texting."
+                : $"You are {userName}'s {relationship}.");
+        }
+
+        AppendUser(builder, user, userName, today);
+
         builder.AppendLine();
         builder.AppendLine("About you:");
 
@@ -71,9 +90,45 @@ internal static partial class PersonaFraming
         builder.AppendLine("How to reply:");
         builder.AppendLine($"- Write only {name}'s next text message, the way {name} would actually text: casual and natural, usually one to three short sentences.");
         builder.AppendLine("- Draw on your background and personality when it fits, including what you would rather not talk about.");
+
+        if (!string.IsNullOrWhiteSpace(contact.Relationship) || userName is not null)
+        {
+            builder.AppendLine($"- Talk to {userName ?? "them"} the way you naturally would, given who they are to you.");
+        }
+
         builder.Append("- Do not add notes, explanations, narration, or commentary about your reply.");
 
         return builder.ToString();
+    }
+
+    private static void AppendUser(StringBuilder builder, UserProfile user, string? userName, DateOnly today)
+    {
+        StringBuilder details = new();
+
+        if (user.Birthday is not null)
+        {
+            details.AppendLine($"- Age: {user.AgeOn(today)}");
+        }
+
+        AppendField(details, "Gender", user.Gender?.ToString());
+        AppendField(details, "About them", user.About);
+
+        if (details.Length > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine($"About {userName ?? "the person you are texting"}:");
+            builder.Append(details);
+        }
+    }
+
+    /// <summary>
+    /// "Grandfather" reads naturally mid-sentence as "grandfather"; words such as "BFF" are left alone.
+    /// </summary>
+    private static string LowerFirst(string text)
+    {
+        return text.Length > 1 && char.IsUpper(text[0]) && !char.IsUpper(text[1])
+            ? char.ToLowerInvariant(text[0]) + text[1..]
+            : text;
     }
 
     /// <summary>

@@ -1,6 +1,7 @@
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
+using HomiliaMessenger.Business.Modules.Profile;
 using HomiliaMessenger.Tests.Conversations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -22,7 +23,8 @@ public sealed class AgentReplyTests
         FakeAgent fake = new("Fake", AgentReply.Success("Walt: Still kicking.\n\n(Note: This reply stays in character.)"));
         using TestDatabase database = await ConversationServiceTests.CreateDatabaseAsync(TestContext, default, fake);
         IConversationService service = database.Services.GetRequiredService<IConversationService>();
-        Contact walt = await SaveContactAsync(database, new AgentAssignment(" fake ", " model-x "));
+        Contact walt = await SaveContactAsync(database, new AgentAssignment(" fake ", " model-x "), "Grandson");
+        await database.Services.GetRequiredService<IUserProfileService>().SaveAsync(new UserProfile { Name = "Aaron" }, TestContext.CancellationToken);
 
         SendMessageResult sent = await service.SendAsync(walt.Id, "How are you?", TestContext.CancellationToken);
         ConversationReply result = await service.ReplyAsync(sent.Conversation!.Id, TestContext.CancellationToken);
@@ -35,6 +37,7 @@ public sealed class AgentReplyTests
         Assert.IsNotNull(fake.LastRequest);
         Assert.AreEqual("model-x", fake.LastRequest.Model);
         Assert.Contains("You are Walt", fake.LastRequest.Instructions);
+        Assert.Contains("You are Aaron's grandson.", fake.LastRequest.Instructions);
         Assert.AreEqual(new AgentTurn(MessageSender.User, "How are you?"), fake.LastRequest.Turns[^1]);
     }
 
@@ -86,9 +89,9 @@ public sealed class AgentReplyTests
         Assert.AreEqual(ReplyStatus.InvalidResponse, result.Status);
     }
 
-    private async Task<Contact> SaveContactAsync(TestDatabase database, AgentAssignment agent)
+    private async Task<Contact> SaveContactAsync(TestDatabase database, AgentAssignment agent, string? relationship = null)
     {
-        Contact contact = new() { Id = ContactId.New(), GivenName = "Walt", Birthday = new DateOnly(1948, 3, 14), Agent = agent };
+        Contact contact = new() { Id = ContactId.New(), GivenName = "Walt", Birthday = new DateOnly(1948, 3, 14), Agent = agent, Relationship = relationship };
         await database.Services.GetRequiredService<IContactService>().SaveAsync(contact, TestContext.CancellationToken);
 
         return contact;

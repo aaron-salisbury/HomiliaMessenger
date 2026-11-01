@@ -2,6 +2,7 @@ using FluentValidation;
 using FluentValidation.Results;
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
+using HomiliaMessenger.Business.Modules.Profile;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -14,19 +15,21 @@ internal sealed class ConversationService : IConversationService
 {
     private readonly IConversationStore _store;
     private readonly IContactService _contacts;
+    private readonly IUserProfileService _profile;
     private readonly IValidator<ChatMessage> _validator;
     private readonly IReadOnlyList<IConversationAgent> _agents;
     private readonly TimeProvider _timeProvider;
 
-    public ConversationService(IConversationStore store, IContactService contacts, IValidator<ChatMessage> validator, IEnumerable<IConversationAgent> agents)
-        : this(store, contacts, validator, agents, TimeProvider.System)
+    public ConversationService(IConversationStore store, IContactService contacts, IUserProfileService profile, IValidator<ChatMessage> validator, IEnumerable<IConversationAgent> agents)
+        : this(store, contacts, profile, validator, agents, TimeProvider.System)
     {
     }
 
-    internal ConversationService(IConversationStore store, IContactService contacts, IValidator<ChatMessage> validator, IEnumerable<IConversationAgent> agents, TimeProvider timeProvider)
+    internal ConversationService(IConversationStore store, IContactService contacts, IUserProfileService profile, IValidator<ChatMessage> validator, IEnumerable<IConversationAgent> agents, TimeProvider timeProvider)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _contacts = contacts ?? throw new ArgumentNullException(nameof(contacts));
+        _profile = profile ?? throw new ArgumentNullException(nameof(profile));
         _validator = validator ?? throw new ArgumentNullException(nameof(validator));
         ArgumentNullException.ThrowIfNull(agents);
         _agents = [.. agents];
@@ -118,8 +121,9 @@ internal sealed class ConversationService : IConversationService
         }
 
         IReadOnlyList<ChatMessage> messages = await _store.ListMessagesAsync(conversationId, cancellationToken);
+        UserProfile user = await _profile.GetAsync(cancellationToken);
         DateOnly today = DateOnly.FromDateTime(_timeProvider.GetUtcNow().UtcDateTime);
-        AgentRequest request = PersonaFraming.Build(contact, messages, assignment.Model.Trim(), today);
+        AgentRequest request = PersonaFraming.Build(contact, user, messages, assignment.Model.Trim(), today);
         AgentReply answer = await agent.ReplyAsync(request, cancellationToken);
 
         if (answer.Status != ReplyStatus.Success)

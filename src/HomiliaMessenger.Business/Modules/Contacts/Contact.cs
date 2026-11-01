@@ -11,7 +11,7 @@ public readonly record struct ContactId(Guid Value)
     }
 }
 
-public enum ContactGender
+public enum Gender
 {
     Male,
     Female
@@ -42,7 +42,12 @@ public sealed record Contact
     /// Required when saving. Contacts must be at least 18 years old as of the UTC date.
     /// </summary>
     public DateOnly? Birthday { get; init; }
-    public ContactGender? Gender { get; init; }
+    public Gender? Gender { get; init; }
+
+    /// <summary>
+    /// What the contact is to the user, in the user's words, such as "Grandfather" or "Colleague".
+    /// </summary>
+    public string? Relationship { get; init; }
 
     /// <summary>
     /// Temperament, values, and how the persona carries a conversation.

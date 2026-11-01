@@ -34,6 +34,7 @@ internal sealed class ContactValidator : AbstractValidator<Contact>
         RuleFor(contact => contact.FamilyName).MaximumLength(MAX_NAME_LENGTH);
         RuleFor(contact => contact.Nickname).MaximumLength(MAX_NAME_LENGTH);
         RuleFor(contact => contact.Gender).IsInEnum();
+        RuleFor(contact => contact.Relationship).MaximumLength(MAX_NAME_LENGTH);
 
         // Personas must be adults. Age is judged against the UTC calendar date so the rule does not depend on the machine's time zone.
         RuleFor(contact => contact.Birthday)

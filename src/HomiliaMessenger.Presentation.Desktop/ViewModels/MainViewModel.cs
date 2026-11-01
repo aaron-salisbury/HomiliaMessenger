@@ -13,6 +13,7 @@ public partial class MainViewModel : BaseViewModel
 {
     private readonly IRibbonControlFactory _ribbonControlFactory;
     private readonly ContactsViewModel _contactsViewModel;
+    private readonly ProfileViewModel _profileViewModel;
     private readonly SettingsViewModel _settingsViewModel;
 
     [ObservableProperty]
@@ -32,11 +33,12 @@ public partial class MainViewModel : BaseViewModel
 
     public ObservableCollection<MenuPaneItemTemplate> PaneItems { get; }
 
-    public MainViewModel(IRibbonControlFactory ribbonControlFactory, MessengerViewModel messengerViewModel, ContactsViewModel contactsViewModel, SettingsViewModel settingsViewModel)
+    public MainViewModel(IRibbonControlFactory ribbonControlFactory, MessengerViewModel messengerViewModel, ContactsViewModel contactsViewModel, ProfileViewModel profileViewModel, SettingsViewModel settingsViewModel)
     {
         _ribbonControlFactory = ribbonControlFactory ?? throw new ArgumentNullException(nameof(ribbonControlFactory));
         ArgumentNullException.ThrowIfNull(messengerViewModel);
         _contactsViewModel = contactsViewModel ?? throw new ArgumentNullException(nameof(contactsViewModel));
+        _profileViewModel = profileViewModel ?? throw new ArgumentNullException(nameof(profileViewModel));
 
         _settingsViewModel = settingsViewModel ?? throw new ArgumentNullException(nameof(settingsViewModel));
 
@@ -45,7 +47,8 @@ public partial class MainViewModel : BaseViewModel
             // Icon key ref: https://pictogrammers.com/library/mdi/
 
             new MenuPaneItemTemplate(messengerViewModel, "ForumOutline", "Messenger"),
-            new MenuPaneItemTemplate(contactsViewModel, "CardAccountMail", "Contacts")
+            new MenuPaneItemTemplate(contactsViewModel, "CardAccountMail", "Contacts"),
+            new MenuPaneItemTemplate(profileViewModel, "AccountCircleOutline", "Profile")
         ];
 
         IsPaneOpen = false;
@@ -57,9 +60,9 @@ public partial class MainViewModel : BaseViewModel
     }
 
     /// <summary>
-    /// Whether the contact editor holds edits that would be lost if the app closed now.
+    /// Whether the contact editor or the profile holds edits that would be lost if the app closed now.
     /// </summary>
-    public bool HasUnsavedChanges => _contactsViewModel.Detail.IsDirty;
+    public bool HasUnsavedChanges => _contactsViewModel.Detail.IsDirty || _profileViewModel.IsDirty;
 
     [RelayCommand]
     private void TriggerPane()

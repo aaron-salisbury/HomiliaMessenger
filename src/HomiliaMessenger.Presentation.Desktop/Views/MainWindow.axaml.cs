@@ -36,7 +36,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (await this.ConfirmAsync("Unsaved changes", "Discard your unsaved changes to this contact and exit?"))
+            if (await this.ConfirmAsync("Unsaved changes", "Discard your unsaved changes and exit?"))
             {
                 _discardConfirmed = true;
                 Close();

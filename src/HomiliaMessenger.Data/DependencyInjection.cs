@@ -1,9 +1,11 @@
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
+using HomiliaMessenger.Business.Modules.Profile;
 using HomiliaMessenger.Data.Database;
 using HomiliaMessenger.Data.Database.Migrations;
 using HomiliaMessenger.Data.Modules.Contacts;
 using HomiliaMessenger.Data.Modules.Conversations;
+using HomiliaMessenger.Data.Modules.Profile;
 using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.IO;
@@ -33,10 +35,11 @@ public static class DependencyInjection
         string databasePath = Path.Combine(applicationDataDirectory, DATABASE_FILE_NAME);
         services.AddSingleton<IApplicationDatabase>(_ => new ApplicationDatabase(databasePath));
         services.AddSingleton<ApplicationDatabaseInitializer>(provider => new ApplicationDatabaseInitializer(
-            provider.GetRequiredService<IApplicationDatabase>(), [new CreateContactsMigration(), new CreateConversationsMigration()]));
+            provider.GetRequiredService<IApplicationDatabase>(), [new CreateContactsMigration(), new CreateConversationsMigration(), new AddRelationshipsAndUserProfileMigration()]));
 
         services.AddScoped<IContactStore, SqliteContactStore>();
         services.AddScoped<IConversationStore, SqliteConversationStore>();
+        services.AddScoped<IUserProfileStore, SqliteUserProfileStore>();
 
         return services;
     }

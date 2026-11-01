@@ -1,6 +1,7 @@
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
+using HomiliaMessenger.Business.Modules.Profile;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
 using System.Collections.Generic;
@@ -20,7 +21,7 @@ public sealed class PersonaFramingTests
         FamilyName = "Kowalski",
         Nickname = "Grandpa Walt",
         Birthday = new DateOnly(1948, 3, 14),
-        Gender = ContactGender.Male,
+        Gender = Gender.Male,
         Personality = "Gruff but warm.",
         Background = "Army medic, 1968."
     };
@@ -28,9 +29,9 @@ public sealed class PersonaFramingTests
     [TestMethod]
     public void Instructions_DescribeThePersonaAndAskForATextInCharacter()
     {
-        string instructions = PersonaFraming.Instructions(WALT, TODAY);
+        string instructions = PersonaFraming.Instructions(WALT, new UserProfile(), TODAY);
 
-        Assert.Contains("You are Grandpa Walt", instructions);
+        Assert.Contains("You are Grandpa Walt, a real person texting with someone you know", instructions);
         Assert.Contains("Full name: Walt Kowalski", instructions);
         Assert.Contains("Age: 78 (born March 14, 1948)", instructions);
         Assert.Contains("Gender: Male", instructions);
@@ -45,11 +46,41 @@ public sealed class PersonaFramingTests
     {
         Contact rose = new() { Id = ContactId.New(), GivenName = "Rose", Birthday = new DateOnly(1990, 1, 1) };
 
-        string instructions = PersonaFraming.Instructions(rose, TODAY);
+        string instructions = PersonaFraming.Instructions(rose, new UserProfile(), TODAY);
 
         Assert.DoesNotContain("Full name", instructions);
         Assert.DoesNotContain("Personality", instructions);
         Assert.DoesNotContain("Background", instructions);
+        Assert.DoesNotContain("the person you are texting", instructions);
+        Assert.DoesNotContain("given who they are to you", instructions);
+    }
+
+    [TestMethod]
+    public void Instructions_TellThePersonaWhoTheUserIsAndHowTheyAreRelated()
+    {
+        UserProfile aaron = new() { Name = " Aaron ", Birthday = new DateOnly(1990, 5, 1), Gender = Gender.Male, About = "Lives in Denver. Nurse." };
+
+        string instructions = PersonaFraming.Instructions(WALT with { Relationship = "Grandfather" }, aaron, TODAY);
+
+        Assert.Contains("texting with Aaron in a messaging app", instructions);
+        Assert.Contains("You are Aaron's grandfather.", instructions);
+        Assert.Contains("About Aaron:\n- Age: 36\n- Gender: Male\n- About them: Lives in Denver. Nurse.".Replace("\n", Environment.NewLine), instructions);
+        Assert.DoesNotContain("1990", instructions);
+        Assert.Contains("Talk to Aaron the way you naturally would", instructions);
+
+        // Who the user is comes before the persona's own details.
+        Assert.IsLessThan(instructions.IndexOf("About you:", StringComparison.Ordinal), instructions.IndexOf("Aaron's grandfather", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    [DataRow("Grandfather", "You are the grandfather of the person you are texting.")]
+    [DataRow("old college roommate", "You are the old college roommate of the person you are texting.")]
+    [DataRow("BFF", "You are the BFF of the person you are texting.")]
+    public void Instructions_StateTheRelationshipWithoutTheUsersName(string relationship, string expected)
+    {
+        string instructions = PersonaFraming.Instructions(WALT with { Relationship = relationship }, new UserProfile(), TODAY);
+
+        Assert.Contains(expected, instructions);
     }
 
     [TestMethod]

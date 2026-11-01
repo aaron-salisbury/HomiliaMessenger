@@ -17,6 +17,9 @@
 		<DataTemplate DataType="{x:Type vm:ContactDetailViewModel}">
 			<v:ContactDetailView />
 		</DataTemplate>
+        <DataTemplate DataType="{x:Type vm:ProfileViewModel}">
+            <v:ProfileView />
+        </DataTemplate>
         <DataTemplate DataType="{x:Type vm:SettingsViewModel}">
             <v:SettingsView />
         </DataTemplate>

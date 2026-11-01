@@ -36,7 +36,7 @@ public sealed class ContactDetailViewModelTests
             GivenName = "  Walt  ",
             FamilyName = "   ",
             Birthday = new DateOnly(1948, 3, 14),
-            Gender = GenderOption.For(ContactGender.Male)
+            Gender = GenderOption.For(Gender.Male)
         };
 
         Contact contact = detail.ToContact();
@@ -46,16 +46,16 @@ public sealed class ContactDetailViewModelTests
         Assert.IsNull(contact.FamilyName);
         Assert.AreEqual(new DateOnly(1948, 3, 14), contact.Birthday);
         Assert.AreEqual(78, contact.AgeOn(new DateOnly(2026, 10, 31)));
-        Assert.AreEqual(ContactGender.Male, contact.Gender);
+        Assert.AreEqual(Gender.Male, contact.Gender);
         Assert.IsNull(contact.Agent);
     }
 
     [TestMethod]
     public void Gender_OffersOnlyMaleFemaleOrNotSpecified()
     {
-        using ContactDetailViewModel detail = new(new Contact { Id = ContactId.New(), GivenName = "Rose", Gender = ContactGender.Female });
+        using ContactDetailViewModel detail = new(new Contact { Id = ContactId.New(), GivenName = "Rose", Gender = Gender.Female });
 
-        Assert.AreSequenceEqual(new ContactGender?[] { null, ContactGender.Male, ContactGender.Female }, detail.GenderOptions.Select(option => option.Value).ToArray());
+        Assert.AreSequenceEqual(new Gender?[] { null, Gender.Male, Gender.Female }, detail.GenderOptions.Select(option => option.Value).ToArray());
         Assert.AreEqual("Female", detail.Gender.Label);
         Assert.IsFalse(detail.IsDirty);
 

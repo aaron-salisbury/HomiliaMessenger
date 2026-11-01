@@ -44,6 +44,7 @@ A persona the user can message. Contact details are deliberately limited to what
 | Given name, family name, nickname | Who the persona is and how they are shown. At least one is required. The nickname, when set, is the display name. |
 | Birthday | Required calendar date. The persona's age is derived from it, so personas age naturally over time. Personas must be at least 18 and no older than 150, judged against the current UTC date so the rule does not depend on the machine's time zone. |
 | Gender | Male or female, or not specified. |
+| Relationship | Free text: what the contact is to the user, such as "Grandfather" or "Colleague", so the persona always knows how the two are related. |
 | Personality | Temperament, values, humor, how they talk, and what they're guarded about. |
 | Background | Life story, relationships, and experiences they can draw on. |
 | Agent | The provider and model that speak for the contact, chosen from the models offered in Settings. Optional; contacts without one reply with simulated text. |
@@ -51,6 +52,10 @@ A persona the user can message. Contact details are deliberately limited to what
 | Favorite | Pins the contact to the top of the list. |
 
 Real-contact fields such as phone numbers, email addresses, postal addresses, organizations, social profiles, and vCard interchange are intentionally excluded.
+
+### User Profile
+
+Who the user is, entered once on the Profile page and told to every contact: name, birthday (contacts are told the age, not the date), gender, a free-text "about you", and a photo. Every field is optional. Together with each contact's relationship, it lets a persona know who it is talking to, for example that it is texting its grandson Aaron, an ER nurse in Denver.
 
 ### Agent Assignment
 
@@ -62,7 +67,7 @@ The ongoing message history between the user and one contact. A conversation bel
 
 ### Persona Framing
 
-Before a user message reaches an agent, Business builds the request. It includes the persona's current age (derived from the birthday), instructions to respond conversationally and in character as someone who fits the contact's details, the contact's persona fields, the relevant conversation memory, and the user's message. Persona framing is plain application logic and can be tested without a provider.
+Before a user message reaches an agent, Business builds the request. It includes the persona's current age (derived from the birthday), instructions to respond conversationally and in character as someone who fits the contact's details, who the user is (from the user profile) and how the contact is related to them, the contact's persona fields, the relevant conversation memory, and the user's message. Who the user is comes right after the persona's identity, since small models attend most to the start of their instructions. Persona framing is plain application logic and can be tested without a provider.
 
 ### Conversation Memory
 

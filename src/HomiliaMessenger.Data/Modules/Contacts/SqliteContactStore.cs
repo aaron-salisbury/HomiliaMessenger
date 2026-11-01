@@ -13,7 +13,7 @@ namespace HomiliaMessenger.Data.Modules.Contacts;
 internal sealed class SqliteContactStore : IContactStore
 {
     private const string SELECT_CONTACT_SQL = """
-        SELECT Id, GivenName, FamilyName, Nickname, Birthday, Gender, Personality, Background, AgentProvider, AgentModel, Photo, IsFavorite
+        SELECT Id, GivenName, FamilyName, Nickname, Birthday, Gender, Relationship, Personality, Background, AgentProvider, AgentModel, Photo, IsFavorite
         FROM Contact
         """;
 
@@ -50,11 +50,11 @@ internal sealed class SqliteContactStore : IContactStore
         ArgumentNullException.ThrowIfNull(contact);
 
         const string sql = """
-            INSERT INTO Contact (Id, GivenName, FamilyName, Nickname, Birthday, Gender, Personality, Background, AgentProvider, AgentModel, Photo, IsFavorite)
-            VALUES (@Id, @GivenName, @FamilyName, @Nickname, @Birthday, @Gender, @Personality, @Background, @AgentProvider, @AgentModel, @Photo, @IsFavorite)
+            INSERT INTO Contact (Id, GivenName, FamilyName, Nickname, Birthday, Gender, Relationship, Personality, Background, AgentProvider, AgentModel, Photo, IsFavorite)
+            VALUES (@Id, @GivenName, @FamilyName, @Nickname, @Birthday, @Gender, @Relationship, @Personality, @Background, @AgentProvider, @AgentModel, @Photo, @IsFavorite)
             ON CONFLICT(Id) DO UPDATE SET
                 GivenName=excluded.GivenName, FamilyName=excluded.FamilyName, Nickname=excluded.Nickname,
-                Birthday=excluded.Birthday, Gender=excluded.Gender, Personality=excluded.Personality, Background=excluded.Background,
+                Birthday=excluded.Birthday, Gender=excluded.Gender, Relationship=excluded.Relationship, Personality=excluded.Personality, Background=excluded.Background,
                 AgentProvider=excluded.AgentProvider, AgentModel=excluded.AgentModel,
                 Photo=excluded.Photo, IsFavorite=excluded.IsFavorite;
             """;
@@ -69,6 +69,7 @@ internal sealed class SqliteContactStore : IContactStore
             contact.Nickname,
             Birthday = contact.Birthday is null ? null : ContactBirthday.Format(contact.Birthday.Value),
             Gender = contact.Gender?.ToString(),
+            contact.Relationship,
             contact.Personality,
             contact.Background,
             AgentProvider = contact.Agent?.Provider,
@@ -102,7 +103,8 @@ internal sealed class SqliteContactStore : IContactStore
             FamilyName = row.FamilyName,
             Nickname = row.Nickname,
             Birthday = ContactBirthday.TryParse(row.Birthday, out DateOnly birthday) ? birthday : null,
-            Gender = row.Gender is null ? null : Enum.Parse<ContactGender>(row.Gender),
+            Gender = row.Gender is null ? null : Enum.Parse<Gender>(row.Gender),
+            Relationship = row.Relationship,
             Personality = row.Personality,
             Background = row.Background,
             Agent = row.AgentProvider is null || row.AgentModel is null ? null : new AgentAssignment(row.AgentProvider, row.AgentModel),
@@ -119,6 +121,7 @@ internal sealed class SqliteContactStore : IContactStore
         public string? Nickname { get; set; }
         public string? Birthday { get; set; }
         public string? Gender { get; set; }
+        public string? Relationship { get; set; }
         public string? Personality { get; set; }
         public string? Background { get; set; }
         public string? AgentProvider { get; set; }

@@ -102,6 +102,13 @@
             <TextBox Grid.Row="1" Grid.Column="1" PlaceholderText="Nickname (shown in the contact list)" Text="{Binding Nickname}" AutomationProperties.Name="Nickname" />
         </Grid>
 
+        <!-- Relationship -->
+        <Grid ColumnDefinitions="Auto,*,*" RowDefinitions="Auto" ColumnSpacing="10" RowSpacing="8">
+            <i:MaterialIcon Grid.Row="0" Grid.Column="0" Kind="AccountHeartOutline" Classes="section-icon" />
+            <TextBox Grid.Row="0" Grid.Column="1" PlaceholderText="Relationship to you (e.g. Grandfather, colleague)" Text="{Binding Relationship}"
+                     MaxLength="100" ToolTip.Tip="What they are to you. They will know it when you chat." AutomationProperties.Name="Relationship to you" />
+        </Grid>
+
         <!-- Birthday -->
         <Grid ColumnDefinitions="Auto,Auto,Auto" RowDefinitions="Auto" ColumnSpacing="10" RowSpacing="8">
             <i:MaterialIcon Grid.Row="0" Grid.Column="0" Kind="CakeVariantOutline" Classes="section-icon" />
