@@ -48,11 +48,6 @@ public sealed partial class LocalModelItem : ObservableObject
     public string License { get; }
     public long DownloadBytes { get; }
 
-    /// <summary>
-    /// How to assign this model to a contact.
-    /// </summary>
-    public string AssignmentHint => $"Provider \"{_library.Provider}\", model \"{Id}\"";
-
     public string SizeText => $"{FormatGigabytes(DownloadBytes)} · {License} license" + (IsDownloaded ? " · Downloaded" : string.Empty);
 
     public bool CanDownload => !IsDownloaded && !IsDownloading;

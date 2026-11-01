@@ -61,7 +61,7 @@ internal static partial class PersonaFraming
             builder.AppendLine($"- Age: {contact.AgeOn(today)} (born {born})");
         }
 
-        AppendField(builder, "Gender", contact.Gender);
+        AppendField(builder, "Gender", contact.Gender?.ToString());
         AppendField(builder, "Personality", contact.Personality);
         AppendField(builder, "Background", contact.Background);
 

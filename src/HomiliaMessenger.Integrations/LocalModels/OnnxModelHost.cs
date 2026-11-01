@@ -38,6 +38,11 @@ internal sealed class OnnxModelHost : IAsyncDisposable, IDisposable
     // Reading a long prompt cannot be interrupted, so shutdown waits up to this long for a generation to stop.
     private static readonly TimeSpan SHUTDOWN_WAIT = TimeSpan.FromSeconds(30);
 
+    // ONNX Runtime GenAI must be shut down explicitly before the process exits; otherwise its native threads can leave
+    // the process hanging partway through exiting. Disposing this handle performs that shutdown, once, for the process.
+    private static readonly Lock _runtimeLock = new();
+    private static OgaHandle? _runtime;
+
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly CancellationTokenSource _shutdown = new();
     private readonly TimeProvider _timeProvider;
@@ -162,6 +167,7 @@ internal sealed class OnnxModelHost : IAsyncDisposable, IDisposable
                 throw new DirectoryNotFoundException($"The model folder '{modelDirectory}' does not exist.");
             }
 
+            EnsureRuntimeShutsDownAtExit();
             _model = new Model(modelDirectory);
             _tokenizer = new Tokenizer(_model);
             _endTokens = _tokenizer.GetEosTokenIds().ToArray();
@@ -303,6 +309,27 @@ internal sealed class OnnxModelHost : IAsyncDisposable, IDisposable
         finally
         {
             _gate.Release();
+        }
+    }
+
+    private static void EnsureRuntimeShutsDownAtExit()
+    {
+        lock (_runtimeLock)
+        {
+            if (_runtime is not null)
+            {
+                return;
+            }
+
+            _runtime = new OgaHandle();
+            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+            {
+                lock (_runtimeLock)
+                {
+                    _runtime?.Dispose();
+                    _runtime = null;
+                }
+            };
         }
     }
 

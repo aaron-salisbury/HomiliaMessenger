@@ -29,7 +29,7 @@ public sealed class ContactServiceTests
             FamilyName = "Kowalski",
             Nickname = "Grandpa Walt",
             Birthday = new DateOnly(1948, 3, 14),
-            Gender = "Male",
+            Gender = ContactGender.Male,
             Personality = "Gruff but warm. Slow to open up about the war.",
             Background = "Drafted in 1968, Army medic. Grandfather of four.",
             Agent = new AgentAssignment("Ollama", "llama3.1:8b"),

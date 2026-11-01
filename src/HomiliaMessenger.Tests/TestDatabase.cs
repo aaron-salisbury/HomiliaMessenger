@@ -43,10 +43,14 @@ internal sealed class TestDatabase : IDisposable
 
     public void Dispose()
     {
-        Services.Dispose();
+        // Pooled SQLite connections keep the file open on Windows until the pool is cleared. Clear only this database's
+        // pool: clearing all pools would dispose connections that tests running in parallel are using.
+        using (SqliteConnection connection = Services.GetRequiredService<IApplicationDatabase>().OpenConnectionAsync().GetAwaiter().GetResult())
+        {
+            SqliteConnection.ClearPool(connection);
+        }
 
-        // Pooled SQLite connections keep the file open on Windows until the pool is cleared.
-        SqliteConnection.ClearAllPools();
+        Services.Dispose();
         Directory.Delete(_directory, recursive: true);
     }
 }

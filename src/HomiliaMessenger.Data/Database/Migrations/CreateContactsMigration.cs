@@ -19,7 +19,7 @@ internal sealed class CreateContactsMigration : Migration
                 FamilyName TEXT,
                 Nickname TEXT,
                 Birthday TEXT,
-                Gender TEXT,
+                Gender TEXT CHECK(Gender IN ('Male', 'Female')),
                 Personality TEXT,
                 Background TEXT,
                 AgentProvider TEXT,

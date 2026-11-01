@@ -24,7 +24,10 @@ internal sealed class CreateConversationsMigration : Migration
                 ConversationId TEXT NOT NULL REFERENCES Conversation(Id) ON DELETE CASCADE,
                 Sender INTEGER NOT NULL CHECK(Sender IN (0, 1)),
                 Text TEXT NOT NULL,
-                SentAtUtc TEXT NOT NULL
+                SentAtUtc TEXT NOT NULL,
+                AgentProvider TEXT,
+                AgentModel TEXT,
+                CHECK((AgentProvider IS NULL) = (AgentModel IS NULL))
             );
             CREATE INDEX IX_ChatMessage_Conversation ON ChatMessage(ConversationId, SentAtUtc);
             """;

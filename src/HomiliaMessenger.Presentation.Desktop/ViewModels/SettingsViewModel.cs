@@ -45,7 +45,7 @@ public partial class SettingsViewModel : BaseViewModel
     {
         _themeService = themeService ?? throw new ArgumentNullException(nameof(themeService));
         _localModels = localModels ?? throw new ArgumentNullException(nameof(localModels));
-        LocalModelsHint = $"Run a model on this computer, without a GPU or an account. Download one, then set a contact's agent provider to \"{_localModels.Provider}\" and its model to the model's name. Contacts without an agent reply with simulated text.";
+        LocalModelsHint = "Run a model on this computer, without a GPU or an account. Download one, then choose it as a contact's agent on the Contacts page. Contacts without an agent reply with simulated text.";
 
         AppDisplayName = AppInfo.AppDisplayName;
         ApplicationInfo = $"{AppInfo.AppDisplayName} - {AppInfo.Version}";

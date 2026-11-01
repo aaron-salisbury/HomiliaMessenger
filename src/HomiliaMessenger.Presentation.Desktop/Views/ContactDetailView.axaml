@@ -112,8 +112,9 @@
 
         <!-- Gender -->
         <Grid ColumnDefinitions="Auto,*,*" RowDefinitions="Auto" ColumnSpacing="10" RowSpacing="8">
-            <i:MaterialIcon Grid.Row="0" Grid.Column="0" Kind="CardAccountDetailsOutline" Classes="section-icon" />
-            <TextBox Grid.Row="0" Grid.Column="1" PlaceholderText="Gender" Text="{Binding Gender}" AutomationProperties.Name="Gender" />
+            <i:MaterialIcon Grid.Row="0" Grid.Column="0" Kind="AccountMultipleOutline" Classes="section-icon" />
+            <ComboBox Grid.Row="0" Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{Binding GenderOptions}" SelectedItem="{Binding Gender}"
+                      ToolTip.Tip="Gender" AutomationProperties.Name="Gender" />
         </Grid>
 
         <!-- Personality -->
@@ -141,9 +142,9 @@
             <i:MaterialIcon Grid.Row="0" Grid.RowSpan="3" Grid.Column="0" Kind="RobotOutline" Classes="section-icon" />
             <TextBlock Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="2" Text="Agent" Classes="section-label" />
             <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Classes="section-hint"
-                       Text="The agent that speaks for this contact. Leave both blank for simulated replies, or use provider Local with a model downloaded in Settings. It can be changed at any time without losing the conversation." />
-            <TextBox Grid.Row="2" Grid.Column="1" Margin="0,4,0,0" PlaceholderText="Provider (e.g. Local)" Text="{Binding AgentProvider}" AutomationProperties.Name="Agent provider" />
-            <TextBox Grid.Row="2" Grid.Column="2" Margin="0,4,0,0" PlaceholderText="Model (e.g. phi-3.5-mini)" Text="{Binding AgentModel}" AutomationProperties.Name="Agent model" />
+                       Text="The agent that speaks for this contact. Models are downloaded in Settings. It can be changed at any time without losing the conversation." />
+            <ComboBox Grid.Row="2" Grid.Column="1" Margin="0,4,0,0" HorizontalAlignment="Stretch" ItemsSource="{Binding AgentOptions}" SelectedItem="{Binding Agent}"
+                      AutomationProperties.Name="Agent" />
         </Grid>
 
     </StackPanel>

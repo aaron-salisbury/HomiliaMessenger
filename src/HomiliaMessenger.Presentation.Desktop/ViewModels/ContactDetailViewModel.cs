@@ -2,7 +2,9 @@ using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using HomiliaMessenger.Business.Modules.Contacts;
+using HomiliaMessenger.Presentation.Desktop.Models;
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
@@ -29,11 +31,10 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
     [NotifyPropertyChangedFor(nameof(AgeDescription))]
     private DateOnly? _birthday;
 
-    [ObservableProperty] private string? _gender;
+    [ObservableProperty] private GenderOption _gender = GenderOption.NotSpecified;
     [ObservableProperty] private string? _personality;
     [ObservableProperty] private string? _background;
-    [ObservableProperty] private string? _agentProvider;
-    [ObservableProperty] private string? _agentModel;
+    [ObservableProperty] private AgentOption _agent = AgentOption.None;
     [ObservableProperty] private bool _isFavorite;
     [ObservableProperty] private Bitmap? _photoPreview;
     [ObservableProperty] private string _photoDescription = "No photo";
@@ -46,6 +47,13 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
 
     public ContactId Id => _id;
 
+    public IReadOnlyList<GenderOption> GenderOptions => GenderOption.All;
+
+    /// <summary>
+    /// No agent, then the models offered in Settings.
+    /// </summary>
+    public IReadOnlyList<AgentOption> AgentOptions { get; }
+
     /// <summary>
     /// The persona's current age, derived from <see cref="Birthday"/> as of the UTC date (matching Business validation).
     /// </summary>
@@ -53,9 +61,12 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
         ? $"Age {ContactBirthday.AgeOn(birthday, DateOnly.FromDateTime(DateTime.UtcNow))}"
         : "Birthday required (18 or older)";
 
-    public ContactDetailViewModel(Contact? contact = null)
+    /// <param name="contact">The contact to edit, or <see langword="null"/> for a new one.</param>
+    /// <param name="agentOptions">The agents to choose from; when omitted, only no agent.</param>
+    public ContactDetailViewModel(Contact? contact = null, IReadOnlyList<AgentOption>? agentOptions = null)
     {
         _id = contact?.Id ?? ContactId.New();
+        AgentOptions = agentOptions ?? [AgentOption.None];
 
         if (contact is not null)
         {
@@ -63,11 +74,10 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
             FamilyName = contact.FamilyName;
             Nickname = contact.Nickname;
             Birthday = contact.Birthday;
-            Gender = contact.Gender;
+            Gender = GenderOption.For(contact.Gender);
             Personality = contact.Personality;
             Background = contact.Background;
-            AgentProvider = contact.Agent?.Provider;
-            AgentModel = contact.Agent?.Model;
+            Agent = AgentOptions.FirstOrDefault(option => option.Assignment == contact.Agent) ?? AgentOption.None;
             IsFavorite = contact.IsFavorite;
             LoadStoredPhoto(contact.Photo);
         }
@@ -212,9 +222,6 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
 
     public Contact ToContact()
     {
-        string? agentProvider = Clean(AgentProvider);
-        string? agentModel = Clean(AgentModel);
-
         return new Contact
         {
             Id = _id,
@@ -222,12 +229,10 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
             FamilyName = Clean(FamilyName),
             Nickname = Clean(Nickname),
             Birthday = Birthday,
-            Gender = Clean(Gender),
+            Gender = Gender.Value,
             Personality = Clean(Personality),
             Background = Clean(Background),
-
-            // A half-filled assignment is passed on so Business validation can explain what is missing.
-            Agent = agentProvider is null && agentModel is null ? null : new AgentAssignment(agentProvider ?? string.Empty, agentModel ?? string.Empty),
+            Agent = Agent.Assignment,
             IsFavorite = IsFavorite,
             Photo = _photo is null ? null : [.. _photo]
         };

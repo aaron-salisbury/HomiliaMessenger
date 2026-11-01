@@ -43,10 +43,10 @@ A persona the user can message. Contact details are deliberately limited to what
 | --- | --- |
 | Given name, family name, nickname | Who the persona is and how they are shown. At least one is required. The nickname, when set, is the display name. |
 | Birthday | Required calendar date. The persona's age is derived from it, so personas age naturally over time. Personas must be at least 18 and no older than 150, judged against the current UTC date so the rule does not depend on the machine's time zone. |
-| Gender | Free text, so it can say whatever the persona needs. |
+| Gender | Male or female, or not specified. |
 | Personality | Temperament, values, humor, how they talk, and what they're guarded about. |
 | Background | Life story, relationships, and experiences they can draw on. |
-| Agent | The provider and model that speak for the contact. Optional until agents are integrated. Both values are required if either is set. |
+| Agent | The provider and model that speak for the contact, chosen from the models offered in Settings. Optional; contacts without one reply with simulated text. |
 | Photo | Optional JPEG or PNG avatar, 8 MiB or smaller. |
 | Favorite | Pins the contact to the top of the list. |
 

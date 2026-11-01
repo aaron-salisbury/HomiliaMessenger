@@ -20,7 +20,7 @@ public sealed class PersonaFramingTests
         FamilyName = "Kowalski",
         Nickname = "Grandpa Walt",
         Birthday = new DateOnly(1948, 3, 14),
-        Gender = "Male",
+        Gender = ContactGender.Male,
         Personality = "Gruff but warm.",
         Background = "Army medic, 1968."
     };

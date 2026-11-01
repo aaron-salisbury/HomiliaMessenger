@@ -2,8 +2,10 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using FluentValidation.Results;
 using HomiliaMessenger.Business.Base.Extensions;
+using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Presentation.Desktop.Base.Controls.RibbonControls;
+using HomiliaMessenger.Presentation.Desktop.Models;
 using RunnethOverStudio.AppToolkit.Modules.ComponentModel;
 using System;
 using System.Collections.Generic;
@@ -16,6 +18,7 @@ namespace HomiliaMessenger.Presentation.Desktop.ViewModels;
 public partial class ContactsViewModel : BaseViewModel, IRibbonProvider
 {
     private readonly IContactService _contacts;
+    private readonly ILocalModelLibrary _localModels;
     private bool _loaded;
     private bool _preserveDetail;
     private bool _syncingListSelection;
@@ -46,10 +49,11 @@ public partial class ContactsViewModel : BaseViewModel, IRibbonProvider
 
     public Type RibbonControlType => typeof(ContactsRibbonControl);
 
-    public ContactsViewModel(IContactService contacts)
+    public ContactsViewModel(IContactService contacts, ILocalModelLibrary localModels)
     {
         _contacts = contacts ?? throw new ArgumentNullException(nameof(contacts));
-        _detail = new ContactDetailViewModel();
+        _localModels = localModels ?? throw new ArgumentNullException(nameof(localModels));
+        _detail = CreateDetail(null);
         _detail.MessageRaised += Detail_MessageRaised;
     }
 
@@ -114,7 +118,16 @@ public partial class ContactsViewModel : BaseViewModel, IRibbonProvider
             return;
         }
 
-        ReplaceDetail(new ContactDetailViewModel(value));
+        ReplaceDetail(CreateDetail(value));
+    }
+
+    /// <summary>
+    /// An editor for <paramref name="contact"/>, offering the local models as they are now, so a model downloaded since
+    /// the last editor opened is shown as ready.
+    /// </summary>
+    private ContactDetailViewModel CreateDetail(Contact? contact)
+    {
+        return new ContactDetailViewModel(contact, AgentOption.From(_localModels));
     }
 
     private void ReplaceDetail(ContactDetailViewModel next)
@@ -205,7 +218,7 @@ public partial class ContactsViewModel : BaseViewModel, IRibbonProvider
         // A deleted or missing selection leaves an empty editor rather than a stale one.
         if (SelectedContact is null && selectId is not null && Detail.Id == selectId && (rebuildDetail || !Detail.IsDirty))
         {
-            ReplaceDetail(new ContactDetailViewModel());
+            ReplaceDetail(CreateDetail(null));
         }
     }
 
@@ -253,7 +266,7 @@ public partial class ContactsViewModel : BaseViewModel, IRibbonProvider
 
         if (SelectedContact is null)
         {
-            ReplaceDetail(new ContactDetailViewModel());
+            ReplaceDetail(CreateDetail(null));
         }
         else
         {
@@ -333,7 +346,7 @@ public partial class ContactsViewModel : BaseViewModel, IRibbonProvider
 
             if (SelectedContact is null)
             {
-                ReplaceDetail(new ContactDetailViewModel());
+                ReplaceDetail(CreateDetail(null));
             }
 
             try

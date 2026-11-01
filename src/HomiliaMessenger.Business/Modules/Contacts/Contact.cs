@@ -11,6 +11,12 @@ public readonly record struct ContactId(Guid Value)
     }
 }
 
+public enum ContactGender
+{
+    Male,
+    Female
+}
+
 /// <summary>
 /// Identifies the agent that speaks for a contact: the provider the application connects through and the model it uses.
 /// </summary>
@@ -36,7 +42,7 @@ public sealed record Contact
     /// Required when saving. Contacts must be at least 18 years old as of the UTC date.
     /// </summary>
     public DateOnly? Birthday { get; init; }
-    public string? Gender { get; init; }
+    public ContactGender? Gender { get; init; }
 
     /// <summary>
     /// Temperament, values, and how the persona carries a conversation.
