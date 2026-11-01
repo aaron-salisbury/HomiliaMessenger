@@ -38,6 +38,8 @@ public sealed class KokoroSpeechTests
         Assert.IsTrue(speech.Model.IsDownloaded);
         Assert.IsFalse(speech.Model.IsEnabled);
         await speech.SetEnabledAsync(true, TestContext.CancellationToken);
+        // Emoji-only or malformed-only messages should be a quiet success, without attempting to load a model.
+        Assert.IsTrue((await speech.SpeakAsync("\U0001F642\uD800\0\uFFFE", "af_heart", TestContext.CancellationToken)).IsSuccessful);
         await using KokoroSpeech reopened = Create(folder.Path, server);
         Assert.IsTrue(reopened.Model.IsAvailable);
         Assert.IsFalse((await reopened.SpeakAsync("Hello", "../not-a-voice", TestContext.CancellationToken)).IsSuccessful);
@@ -130,7 +132,7 @@ public sealed class KokoroSpeechTests
             return Task.CompletedTask;
         });
         await speech.SetEnabledAsync(true, TestContext.CancellationToken);
-        Assert.IsTrue((await speech.SpeakAsync("Hello, how are you today?", "af_heart", TestContext.CancellationToken)).IsSuccessful);
+        Assert.IsTrue((await speech.SpeakAsync("Hello \U0001F642, how are you\uD800 today?\uFFFE", "af_heart", TestContext.CancellationToken)).IsSuccessful);
         Assert.IsTrue((await speech.SpeakAsync("Hello, how are you today?", "bm_george", TestContext.CancellationToken)).IsSuccessful);
         await Assert.ThrowsAsync<OperationCanceledException>(() => speech.SpeakAsync(string.Concat(Enumerable.Repeat("Hello, how are you today? ", 100)), "af_heart", stop.Token));
         Assert.AreEqual(3, playbacks);

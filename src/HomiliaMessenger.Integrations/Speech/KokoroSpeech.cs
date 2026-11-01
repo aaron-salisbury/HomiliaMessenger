@@ -222,6 +222,12 @@ internal sealed class KokoroSpeech : ITextToSpeech, IAsyncDisposable
                 return new(false, "This speech voice is unavailable. Choose a voice on the Contacts page.");
             }
 
+            string speechText = SpeechText.Prepare(text);
+            if (string.IsNullOrWhiteSpace(speechText))
+            {
+                return SpeechResult.Success;
+            }
+
             using CancellationTokenSource stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token, _playbackStop.Token);
             // Native inference and phonemization must never run on the UI thread. Use the core model API so failures
             // propagate to this task instead of escaping a library-owned background thread.
@@ -235,7 +241,7 @@ internal sealed class KokoroSpeech : ITextToSpeech, IAsyncDisposable
                 }
 
                 KokoroVoice voice = KokoroVoice.FromPath(Path.Combine(AppContext.BaseDirectory, "SpeechVoices", voiceId + ".npy"));
-                int[] tokens = Tokenizer.Tokenize(text, voiceId[0] == 'b' ? "en-gb" : "en-us");
+                int[] tokens = Tokenizer.Tokenize(speechText, voiceId[0] == 'b' ? "en-gb" : "en-us");
                 foreach (int[] segment in tokens.Chunk(KokoroModel.maxTokens))
                 {
                     stop.Token.ThrowIfCancellationRequested();
