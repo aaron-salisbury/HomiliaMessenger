@@ -1,5 +1,6 @@
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
+using HomiliaMessenger.Tests.Speech;
 using HomiliaMessenger.Presentation.Desktop.Models;
 using HomiliaMessenger.Presentation.Desktop.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
@@ -162,11 +163,114 @@ public sealed class MessengerViewModelTests
         Assert.IsEmpty(await database.Services.GetRequiredService<IConversationService>().ListAsync(TestContext.CancellationToken));
     }
 
-    private static MessengerViewModel CreateViewModel(TestDatabase database)
+    [TestMethod]
+    public async Task Speech_StartsOffAndOnlyVoicesNewRepliesAfterOptingIn()
+    {
+        using TestDatabase database = await ConversationServiceTests.CreateDatabaseAsync(TestContext);
+        IContactService contacts = database.Services.GetRequiredService<IContactService>();
+        Contact walt = (await ConversationServiceTests.AddContactAsync(database, "Walt", TestContext)) with { VoiceId = "am_adam" };
+        await contacts.SaveAsync(walt, TestContext.CancellationToken);
+        FakeSpeech speech = new();
+        MessengerViewModel messenger = CreateViewModel(database, speech);
+        await messenger.InitializeAsync();
+        await messenger.StartChatCommand.ExecuteAsync(walt);
+        Assert.IsTrue(messenger.CanVoiceReplies);
+        Assert.IsFalse(messenger.IsSpeechOn);
+
+        messenger.DraftText = "Hello";
+        await messenger.SendCommand.ExecuteAsync(null);
+        await WaitUntilAsync(() => messenger.Messages.Count == 2 && !messenger.IsContactTyping);
+        Assert.IsEmpty(speech.Spoken);
+        messenger.ToggleSpeechCommand.Execute(null);
+        Assert.IsEmpty(speech.Spoken); // Turning on speech never reads existing history.
+        messenger.DraftText = "How are you?";
+        await messenger.SendCommand.ExecuteAsync(null);
+        await WaitUntilAsync(() => speech.Spoken.Count == 1);
+        Assert.AreEqual(messenger.Messages[^1].Text, speech.Spoken[0].Text);
+        Assert.AreEqual("am_adam", speech.Spoken[0].Voice);
+
+        MessengerViewModel relaunched = CreateViewModel(database, speech);
+        await relaunched.InitializeAsync();
+        await relaunched.StartChatCommand.ExecuteAsync(walt);
+        Assert.IsFalse(relaunched.IsSpeechOn);
+        Assert.HasCount(1, speech.Spoken);
+    }
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task Speech_StopsPlaybackWhenSwitchedOffOrTheChatChanges(bool switchChat)
+    {
+        using TestDatabase database = await ConversationServiceTests.CreateDatabaseAsync(TestContext);
+        Contact walt = (await ConversationServiceTests.AddContactAsync(database, "Walt", TestContext)) with { VoiceId = "am_adam" };
+        Contact rose = await ConversationServiceTests.AddContactAsync(database, "Rose", TestContext);
+        await database.Services.GetRequiredService<IContactService>().SaveAsync(walt, TestContext.CancellationToken);
+        FakeSpeech speech = new() { HoldPlayback = true };
+        MessengerViewModel messenger = CreateViewModel(database, speech);
+        await messenger.InitializeAsync();
+        await messenger.StartChatCommand.ExecuteAsync(walt);
+        messenger.ToggleSpeechCommand.Execute(null);
+        messenger.DraftText = "Hi";
+        await messenger.SendCommand.ExecuteAsync(null);
+        await WaitUntilAsync(() => speech.Spoken.Count == 1);
+        if (switchChat)
+        {
+            await messenger.StartChatCommand.ExecuteAsync(rose);
+        }
+        else
+        {
+            messenger.ToggleSpeechCommand.Execute(null);
+        }
+
+        await speech.Canceled.Task.WaitAsync(TestContext.CancellationToken);
+        Assert.IsFalse(messenger.IsSpeechOn);
+    }
+
+    [TestMethod]
+    public async Task Speech_AFailureKeepsTheTextAndSwitchesSpeechOff()
+    {
+        using TestDatabase database = await ConversationServiceTests.CreateDatabaseAsync(TestContext);
+        Contact walt = (await ConversationServiceTests.AddContactAsync(database, "Walt", TestContext)) with { VoiceId = "am_adam" };
+        await database.Services.GetRequiredService<IContactService>().SaveAsync(walt, TestContext.CancellationToken);
+        FakeSpeech speech = new() { FailPlayback = true };
+        MessengerViewModel messenger = CreateViewModel(database, speech);
+        await messenger.InitializeAsync();
+        await messenger.StartChatCommand.ExecuteAsync(walt);
+        messenger.ToggleSpeechCommand.Execute(null);
+        messenger.DraftText = "Hi";
+        await messenger.SendCommand.ExecuteAsync(null);
+        await WaitUntilAsync(() => messenger.Messages.Count == 2 && !messenger.IsContactTyping);
+        Assert.IsFalse(messenger.IsSpeechOn);
+        Assert.Contains("Audio device unavailable", messenger.Status);
+        Assert.IsFalse(string.IsNullOrWhiteSpace(messenger.Messages[^1].Text));
+    }
+
+    [TestMethod]
+    public async Task Speech_RequiresBothAnAvailableModelAndAContactVoice()
+    {
+        using TestDatabase database = await ConversationServiceTests.CreateDatabaseAsync(TestContext);
+        Contact walt = await ConversationServiceTests.AddContactAsync(database, "Walt", TestContext);
+        FakeSpeech speech = new();
+        MessengerViewModel messenger = CreateViewModel(database, speech);
+        await messenger.InitializeAsync();
+        await messenger.StartChatCommand.ExecuteAsync(walt);
+        Assert.IsFalse(messenger.CanVoiceReplies);
+        messenger.ToggleSpeechCommand.Execute(null);
+        Assert.IsFalse(messenger.IsSpeechOn);
+
+        speech.Model = speech.Model with { IsEnabled = false };
+        await messenger.StartChatCommand.ExecuteAsync(walt with { Id = ContactId.New(), VoiceId = "am_adam" });
+        messenger.ToggleSpeechCommand.Execute(null);
+        Assert.IsFalse(messenger.CanVoiceReplies);
+        Assert.IsFalse(messenger.IsSpeechOn);
+        Assert.IsEmpty(speech.Spoken);
+    }
+
+    private static MessengerViewModel CreateViewModel(TestDatabase database, FakeSpeech? speech = null)
     {
         return new MessengerViewModel(
             database.Services.GetRequiredService<IConversationService>(),
-            database.Services.GetRequiredService<IContactService>());
+            database.Services.GetRequiredService<IContactService>(), speech);
     }
 
     private static ChatMessage Message(MessageSender sender, DateTimeOffset sentAtUtc)

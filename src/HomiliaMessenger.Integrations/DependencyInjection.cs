@@ -2,6 +2,8 @@ using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Credentials;
 using HomiliaMessenger.Integrations.Credentials;
 using HomiliaMessenger.Integrations.LocalModels;
+using HomiliaMessenger.Business.Modules.Speech;
+using HomiliaMessenger.Integrations.Speech;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System;
@@ -52,6 +54,10 @@ public static class DependencyInjection
             provider.GetRequiredService<ILogger<LocalModelLibrary>>()));
         services.AddSingleton<ILocalModelLibrary>(provider => provider.GetRequiredService<LocalModelLibrary>());
         services.AddSingleton<IConversationAgent, OnnxConversationAgent>();
+        services.AddSingleton<ITextToSpeech>(provider => new KokoroSpeech(
+            Path.Combine(applicationDataDirectory, "Speech", "Kokoro"),
+            provider.GetRequiredService<IHttpClientFactory>(),
+            provider.GetRequiredService<ILogger<KokoroSpeech>>()));
 
         return services;
     }

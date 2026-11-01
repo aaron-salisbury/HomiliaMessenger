@@ -60,6 +60,8 @@ public sealed record Contact
     public string? Background { get; init; }
 
     public AgentAssignment? Agent { get; init; }
+    /// <summary>The optional voice used for spoken replies. Independent of the contact's current gender.</summary>
+    public string? VoiceId { get; init; }
     public byte[]? Photo { get; init; }
     public bool IsFavorite { get; init; }
 

@@ -7,7 +7,12 @@
              xmlns:vm="clr-namespace:HomiliaMessenger.Presentation.Desktop.ViewModels"
              x:DataType="vm:MessengerViewModel"
              xmlns:i="using:Material.Icons.Avalonia"
+             xmlns:converters="clr-namespace:HomiliaMessenger.Presentation.Desktop.Base.Converters"
              Background="Transparent">
+
+    <UserControl.Resources>
+        <converters:BooleanToMaterialIconKindConverter x:Key="SpeechIconConverter" />
+    </UserControl.Resources>
 
     <UserControl.Styles>
         <Style Selector="Button">
@@ -28,6 +33,12 @@
                    MaxWidth="420" TextTrimming="CharacterEllipsis" Opacity="0.8" />
 
         <StackPanel Orientation="Horizontal" IsEnabled="{Binding !IsBusy}">
+
+            <Button Command="{Binding ToggleSpeechCommand}" IsVisible="{Binding CanVoiceReplies}"
+                    ToolTip.Tip="{Binding SpeechToggleHint}"
+                    AutomationProperties.Name="Toggle spoken replies">
+                <i:MaterialIcon Kind="{Binding IsSpeechOn, Converter={StaticResource SpeechIconConverter}, ConverterParameter=VolumeHigh|VolumeOff}" />
+            </Button>
 
             <Button Command="{Binding RefreshCommand}" ToolTip.Tip="Reload chats">
                 <i:MaterialIcon Kind="Refresh" />

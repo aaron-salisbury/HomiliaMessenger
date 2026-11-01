@@ -47,6 +47,7 @@ public partial class MessengerView : UserControl
     {
         if (_attachedModel is not null)
         {
+            _attachedModel.StopSpeech();
             _attachedModel.Messages.CollectionChanged -= Messages_CollectionChanged;
             _attachedModel.PropertyChanged -= Model_PropertyChanged;
 

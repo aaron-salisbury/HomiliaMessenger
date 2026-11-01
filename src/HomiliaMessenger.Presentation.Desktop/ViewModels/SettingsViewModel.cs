@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using HomiliaMessenger.Business.Modules.Agents;
+using HomiliaMessenger.Business.Modules.Speech;
 using HomiliaMessenger.Presentation.Desktop.Base;
 using HomiliaMessenger.Presentation.Desktop.Models;
 using HomiliaMessenger.Presentation.Desktop.Settings;
@@ -8,6 +9,7 @@ using RunnethOverStudio.AppToolkit.Modules.ComponentModel;
 using System;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace HomiliaMessenger.Presentation.Desktop.ViewModels;
@@ -27,6 +29,20 @@ public partial class SettingsViewModel : BaseViewModel
 
     private readonly ThemeService _themeService;
     private readonly ILocalModelLibrary _localModels;
+    private readonly ITextToSpeech? _speech;
+    private CancellationTokenSource? _speechDownload;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanDownloadSpeech))]
+    private bool _hasSpeechModel;
+    [ObservableProperty] private bool _speechEnabled;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanDownloadSpeech))]
+    private bool _isSpeechDownloading;
+    [ObservableProperty] private double _speechProgress;
+    [ObservableProperty] private string _speechStatus = "Not downloaded. Speech is optional.";
+
+    public bool CanDownloadSpeech => !HasSpeechModel && !IsSpeechDownloading;
 
     /// <summary>
     /// Models that run on this device. Kept for the view model's lifetime so a download continues while the user is on
@@ -41,10 +57,11 @@ public partial class SettingsViewModel : BaseViewModel
     /// </summary>
     public Func<string, string, Task<bool>>? ConfirmAsync { get; set; }
 
-    public SettingsViewModel(ThemeService themeService, ILocalModelLibrary localModels)
+    public SettingsViewModel(ThemeService themeService, ILocalModelLibrary localModels, ITextToSpeech? speech = null)
     {
         _themeService = themeService ?? throw new ArgumentNullException(nameof(themeService));
         _localModels = localModels ?? throw new ArgumentNullException(nameof(localModels));
+        _speech = speech;
         LocalModelsHint = "Run a model on this computer, without a GPU or an account. Download one, then choose it as a contact's agent on the Contacts page. Contacts without an agent reply with simulated text.";
 
         AppDisplayName = AppInfo.AppDisplayName;
@@ -59,6 +76,11 @@ public partial class SettingsViewModel : BaseViewModel
 
     public override Task InitializeAsync()
     {
+        if (!IsSpeechDownloading)
+        {
+            RefreshSpeech();
+        }
+
         if (LocalModels.Count == 0)
         {
             foreach (LocalModel model in _localModels.List())
@@ -76,6 +98,105 @@ public partial class SettingsViewModel : BaseViewModel
         }
 
         return Task.CompletedTask;
+    }
+
+    private void RefreshSpeech()
+    {
+        HasSpeechModel = _speech?.Model.IsDownloaded == true;
+        SpeechEnabled = _speech?.Model.IsAvailable == true;
+        SpeechStatus = SpeechEnabled ? "Kokoro is ready. Choose each contact's voice on the Contacts page."
+            : HasSpeechModel ? "Kokoro is downloaded. Enable it to choose voices and hear replies."
+            : "Not downloaded. Speech is optional.";
+    }
+
+    [RelayCommand]
+    private async Task DownloadSpeechAsync()
+    {
+        if (_speech is null || !CanDownloadSpeech)
+        {
+            return;
+        }
+
+        using CancellationTokenSource download = new();
+        _speechDownload = download;
+        IsSpeechDownloading = true;
+        SpeechProgress = 0;
+        SpeechStatus = "Downloading Kokoro…";
+        try
+        {
+            SpeechResult result = await _speech.DownloadAsync(new Progress<double>(value => SpeechProgress = value), download.Token);
+            if (result.IsSuccessful)
+            {
+                await _speech.SetEnabledAsync(true, download.Token);
+                RefreshSpeech();
+            }
+            else
+            {
+                SpeechStatus = result.Problem ?? "Could not download Kokoro.";
+            }
+        }
+        catch (OperationCanceledException) when (download.IsCancellationRequested)
+        {
+            RefreshSpeech();
+            SpeechStatus = "Download canceled. You can start it again.";
+        }
+        catch (Exception error)
+        {
+            RefreshSpeech();
+            SpeechStatus = "Could not set up speech: " + error.Message;
+        }
+        finally
+        {
+            _speechDownload = null;
+            IsSpeechDownloading = false;
+        }
+    }
+
+    [RelayCommand]
+    private void CancelSpeechDownload()
+    {
+        _speechDownload?.Cancel();
+    }
+
+    [RelayCommand]
+    private async Task ToggleSpeechModelAsync()
+    {
+        if (_speech is null || !HasSpeechModel || IsSpeechDownloading)
+        {
+            return;
+        }
+
+        try
+        {
+            await _speech.SetEnabledAsync(!SpeechEnabled);
+            RefreshSpeech();
+        }
+        catch (Exception error)
+        {
+            RefreshSpeech();
+            SpeechStatus = "Could not change speech settings: " + error.Message;
+        }
+    }
+
+    [RelayCommand]
+    private async Task RemoveSpeechModelAsync()
+    {
+        if (_speech is null || IsSpeechDownloading
+            || !await ConfirmWithViewAsync("Remove Kokoro", "Remove the downloaded speech model? Saved contact voices will be kept."))
+        {
+            return;
+        }
+
+        try
+        {
+            await _speech.RemoveAsync();
+            RefreshSpeech();
+        }
+        catch (Exception error)
+        {
+            RefreshSpeech();
+            SpeechStatus = "Could not remove Kokoro: " + error.Message;
+        }
     }
 
     private Task<bool> ConfirmWithViewAsync(string title, string message)

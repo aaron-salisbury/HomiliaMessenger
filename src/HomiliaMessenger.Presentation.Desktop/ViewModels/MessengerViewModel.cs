@@ -5,6 +5,7 @@ using HomiliaMessenger.Business.Base.Extensions;
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
+using HomiliaMessenger.Business.Modules.Speech;
 using HomiliaMessenger.Presentation.Desktop.Base.Controls.RibbonControls;
 using HomiliaMessenger.Presentation.Desktop.Models;
 using RunnethOverStudio.AppToolkit.Modules.ComponentModel;
@@ -21,6 +22,18 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
 {
     private readonly IConversationService _conversations;
     private readonly IContactService _contacts;
+    private readonly ITextToSpeech? _speech;
+    private CancellationTokenSource? _speechSession;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SpeechToggleHint))]
+    private bool _isSpeechOn;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanVoiceReplies))]
+    private bool _isSpeechAvailable;
+
+    public bool CanVoiceReplies => IsSpeechAvailable && !string.IsNullOrWhiteSpace(ActiveContact?.VoiceId);
+    public string SpeechToggleHint => IsSpeechOn ? "Turn spoken replies off" : "Turn spoken replies on";
 
     // Conversations whose contact is replying. Writing again meanwhile restarts the reply so that it answers everything
     // sent so far, once, as a person reading a burst of messages would.
@@ -45,7 +58,7 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     /// Who the open thread is with, or <see langword="null"/> when no thread is open.
     /// </summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasActiveThread), nameof(ActiveSubtitle))]
+    [NotifyPropertyChangedFor(nameof(HasActiveThread), nameof(ActiveSubtitle), nameof(CanVoiceReplies))]
     [NotifyCanExecuteChangedFor(nameof(SendCommand))]
     private Contact? _activeContact;
 
@@ -115,10 +128,70 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         ? "typing…"
         : ActiveContact?.Agent is { } agent ? $"{agent.Provider} · {agent.Model}" : "Simulated replies";
 
-    public MessengerViewModel(IConversationService conversations, IContactService contacts)
+    public MessengerViewModel(IConversationService conversations, IContactService contacts, ITextToSpeech? speech = null)
     {
         _conversations = conversations ?? throw new ArgumentNullException(nameof(conversations));
         _contacts = contacts ?? throw new ArgumentNullException(nameof(contacts));
+        _speech = speech;
+    }
+
+    partial void OnActiveContactChanged(Contact? oldValue, Contact? newValue)
+    {
+        if (oldValue?.Id != newValue?.Id || oldValue?.VoiceId != newValue?.VoiceId)
+        {
+            StopSpeech();
+        }
+    }
+
+    partial void OnIsSpeechOnChanged(bool value)
+    {
+        _speechSession?.Cancel();
+        _speechSession?.Dispose();
+        _speechSession = value ? new CancellationTokenSource() : null;
+    }
+
+    public void StopSpeech()
+    {
+        IsSpeechOn = false;
+    }
+
+    [RelayCommand]
+    private void ToggleSpeech()
+    {
+        IsSpeechAvailable = _speech?.Model.IsAvailable == true;
+        if (CanVoiceReplies)
+        {
+            IsSpeechOn = !IsSpeechOn;
+        }
+        else
+        {
+            StopSpeech();
+        }
+    }
+
+    private async Task VoiceReplyAsync(ChatMessage reply, string voiceId, CancellationTokenSource session)
+    {
+        try
+        {
+            SpeechResult result = await _speech!.SpeakAsync(reply.Text, voiceId, session.Token);
+            if (!result.IsSuccessful && ReferenceEquals(session, _speechSession))
+            {
+                Status = result.Problem ?? "Could not voice the reply.";
+                StopSpeech();
+            }
+        }
+        catch (OperationCanceledException) when (session.IsCancellationRequested)
+        {
+            // Speech was switched off, the chat changed, or its view closed.
+        }
+        catch (Exception error)
+        {
+            if (ReferenceEquals(session, _speechSession))
+            {
+                Status = "Could not voice the reply: " + error.Message;
+                StopSpeech();
+            }
+        }
     }
 
     /// <summary>
@@ -134,6 +207,12 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
 
     private async Task<bool> TryRefreshAsync()
     {
+        IsSpeechAvailable = _speech?.Model.IsAvailable == true;
+        if (!IsSpeechAvailable)
+        {
+            StopSpeech();
+        }
+
         try
         {
             IsBusy = true;
@@ -599,6 +678,10 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
             if (ActiveConversationId == conversationId)
             {
                 AppendMessage(reply);
+                if (current && IsSpeechOn && CanVoiceReplies && ActiveContact?.VoiceId is { } voiceId && _speechSession is { } session)
+                {
+                    _ = VoiceReplyAsync(reply, voiceId, session);
+                }
             }
 
             ConversationListItem? item = Conversations.FirstOrDefault(existing => existing.Id == conversationId);

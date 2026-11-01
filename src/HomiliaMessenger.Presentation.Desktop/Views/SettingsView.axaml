@@ -71,6 +71,22 @@
 						</ItemsControl>
 					</StackPanel>
 
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Text to Speech" Classes="section-header" />
+                        <TextBlock Text="Kokoro v1.0 · 326 MB · Apache 2.0" FontWeight="SemiBold" />
+                        <TextBlock Text="Read new replies aloud on this computer. English voices are included; no account or GPU is needed. Download Kokoro, choose a voice for each contact, then turn speech on in the chat ribbon. Chats always start with speech off after relaunch."
+                                   TextWrapping="Wrap" Opacity="0.75" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="Download Kokoro" Command="{Binding DownloadSpeechCommand}" IsVisible="{Binding CanDownloadSpeech}" />
+                            <Button Content="Cancel download" Command="{Binding CancelSpeechDownloadCommand}" IsVisible="{Binding IsSpeechDownloading}" />
+                            <CheckBox Content="Use Kokoro" IsChecked="{Binding SpeechEnabled, Mode=OneWay}"
+                                      Command="{Binding ToggleSpeechModelCommand}" IsVisible="{Binding HasSpeechModel}" />
+                            <Button Content="Remove model" Command="{Binding RemoveSpeechModelCommand}" IsVisible="{Binding HasSpeechModel}" />
+                        </StackPanel>
+                        <ProgressBar Value="{Binding SpeechProgress}" Maximum="100" IsVisible="{Binding IsSpeechDownloading}" />
+                        <TextBlock Text="{Binding SpeechStatus}" TextWrapping="Wrap" FontSize="12" />
+                    </StackPanel>
+
 					<StackPanel Spacing="8">
 						<TextBlock Text="About this Application" Classes="section-header" />
 
