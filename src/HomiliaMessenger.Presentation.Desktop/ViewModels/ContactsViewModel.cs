@@ -62,6 +62,8 @@ public partial class ContactsViewModel : BaseViewModel, IRibbonProvider
 
     public override async Task InitializeAsync()
     {
+        // Models and voices may have been added, downloaded, or removed in Settings since the editor opened.
+        Detail.RefreshAgentOptions(AgentOption.From(_localModels));
         Detail.RefreshVoices(_speech?.Voices ?? [], _speech?.Model.IsAvailable == true);
         if (_loaded)
         {

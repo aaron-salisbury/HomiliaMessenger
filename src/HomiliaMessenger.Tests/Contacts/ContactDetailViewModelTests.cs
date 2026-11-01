@@ -129,6 +129,51 @@ public sealed class ContactDetailViewModelTests
     }
 
     [TestMethod]
+    public void RefreshAgentOptions_OffersNewModelsKeepingTheAgentAndEdits()
+    {
+        AgentOption phi = new("Phi-3.5 mini", new AgentAssignment("Local", "phi-3.5-mini"));
+        Contact walt = new() { Id = ContactId.New(), GivenName = "Walt", Agent = phi.Assignment };
+        using ContactDetailViewModel detail = new(walt, [AgentOption.None, phi]);
+        bool dirtyBefore = detail.IsDirty;
+
+        AgentOption qwen = new("Qwen2.5 · Q4_K_M", new AgentAssignment("Local", "qwen"));
+        detail.RefreshAgentOptions([AgentOption.None, phi with { Label = "Phi-3.5 mini" }, qwen]);
+
+        Assert.IsFalse(dirtyBefore);
+        Assert.IsFalse(detail.IsDirty);
+        Assert.HasCount(3, detail.AgentOptions);
+        Assert.AreEqual(phi.Assignment, detail.Agent.Assignment);
+        Assert.AreEqual(detail.AgentOptions[1], detail.Agent);
+
+        detail.GivenName = "Walter";
+        detail.Agent = detail.AgentOptions[2];
+        detail.RefreshAgentOptions([AgentOption.None, qwen]);
+
+        Assert.IsTrue(detail.IsDirty);
+        Assert.AreEqual("Walter", detail.GivenName);
+        Assert.AreEqual(qwen.Assignment, detail.ToContact().Agent);
+    }
+
+    [TestMethod]
+    public void RefreshAgentOptions_KeepsAnAgentWhoseModelWasRemoved()
+    {
+        AgentOption qwen = new("Qwen2.5 · Q4_K_M", new AgentAssignment("Local", "qwen"));
+        Contact walt = new() { Id = ContactId.New(), GivenName = "Walt", Agent = qwen.Assignment };
+        using ContactDetailViewModel detail = new(walt, [AgentOption.None, qwen]);
+
+        detail.RefreshAgentOptions([AgentOption.None]);
+
+        Assert.AreEqual("Qwen2.5 · Q4_K_M (removed)", detail.Agent.Label);
+        Assert.AreEqual(qwen.Assignment, detail.ToContact().Agent);
+        Assert.IsFalse(detail.IsDirty);
+
+        detail.RefreshAgentOptions([AgentOption.None, qwen]);
+
+        Assert.AreEqual(qwen, detail.Agent);
+        Assert.HasCount(2, detail.AgentOptions);
+    }
+
+    [TestMethod]
     public void Voice_ChoosingAVoiceKeepsTheOptionsAndTheSelection()
     {
         IReadOnlyList<SpeechVoice> voices = [new("af_heart", "Heart", Gender.Female), new("af_bella", "Bella", Gender.Female)];

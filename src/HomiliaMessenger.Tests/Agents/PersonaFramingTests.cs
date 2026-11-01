@@ -39,6 +39,8 @@ public sealed class PersonaFramingTests
         Assert.Contains("Background: Army medic, 1968.", instructions);
         Assert.Contains("Today is Saturday, October 31, 2026.", instructions);
         Assert.Contains("never say or suggest that you are", instructions);
+        Assert.Contains("including swearing when it fits who they are", instructions);
+        Assert.Contains("never masked with asterisks", instructions);
     }
 
     [TestMethod]

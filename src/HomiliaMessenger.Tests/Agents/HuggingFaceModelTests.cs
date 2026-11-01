@@ -1,8 +1,10 @@
 using HomiliaMessenger.Business.Modules.Agents;
+using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
 using HomiliaMessenger.Business.Modules.Credentials;
 using HomiliaMessenger.Integrations.LocalModels;
 using HomiliaMessenger.Presentation.Desktop.ViewModels;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
@@ -204,6 +206,28 @@ public sealed class HuggingFaceModelTests
     public void LlamaContext_FitsTheCacheBudgetWithinTheModelsLimit(int layers, int heads, int kvHeads, int embedding, int trained, int expected)
     {
         Assert.AreEqual(expected, LlamaModelHost.ContextTokens(layers, heads, kvHeads, embedding, trained));
+    }
+
+    [TestMethod]
+    public async Task ContactsPage_OffersAModelAddedWhileAContactWasOpen()
+    {
+        HuggingFace server = HuggingFace.WithTinyRepository();
+        using TestFolder folder = new();
+        using TestDatabase database = await TestDatabase.CreateAsync(TestContext);
+        IContactService contacts = database.Services.GetRequiredService<IContactService>();
+        await contacts.SaveAsync(new Contact { Id = ContactId.New(), GivenName = "Walt", Birthday = new DateOnly(1948, 3, 14) }, TestContext.CancellationToken);
+        LocalModelLibrary library = CreateLibrary(folder.Path, server, null);
+        ContactsViewModel page = new(contacts, library);
+
+        await page.InitializeAsync();
+        int offeredBefore = page.Detail.AgentOptions.Count;
+        HuggingFaceLookup lookup = await library.LookUpAsync(REPO, TestContext.CancellationToken);
+        LocalModelAddResult added = await library.AddAsync(lookup, lookup.Variants[0], TestContext.CancellationToken);
+        await page.InitializeAsync();
+
+        Assert.AreEqual(1, offeredBefore);
+        Assert.Contains(option => option.Assignment?.Model == added.ModelId, page.Detail.AgentOptions);
+        Assert.IsFalse(page.Detail.IsDirty);
     }
 
     [TestMethod]
