@@ -79,8 +79,8 @@
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <Button Content="Download Kokoro" Command="{Binding DownloadSpeechCommand}" IsVisible="{Binding CanDownloadSpeech}" />
                             <Button Content="Cancel download" Command="{Binding CancelSpeechDownloadCommand}" IsVisible="{Binding IsSpeechDownloading}" />
-                            <CheckBox Content="Use Kokoro" IsChecked="{Binding SpeechEnabled, Mode=OneWay}"
-                                      Command="{Binding ToggleSpeechModelCommand}" IsVisible="{Binding HasSpeechModel}" />
+                            <CheckBox Content="Use Kokoro" IsChecked="{Binding SpeechEnabled, Mode=TwoWay}"
+                                      IsEnabled="{Binding !IsSpeechDownloading}" IsVisible="{Binding HasSpeechModel}" />
                             <Button Content="Remove model" Command="{Binding RemoveSpeechModelCommand}" IsVisible="{Binding HasSpeechModel}" />
                         </StackPanel>
                         <ProgressBar Value="{Binding SpeechProgress}" Maximum="100" IsVisible="{Binding IsSpeechDownloading}" />

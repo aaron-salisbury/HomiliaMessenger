@@ -1,10 +1,12 @@
 using HomiliaMessenger.Business.Modules.Contacts;
+using HomiliaMessenger.Business.Modules.Speech;
 using HomiliaMessenger.Tests.Speech;
 using HomiliaMessenger.Presentation.Desktop.Base.Converters;
 using HomiliaMessenger.Presentation.Desktop.Models;
 using HomiliaMessenger.Presentation.Desktop.ViewModels;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 
@@ -124,6 +126,22 @@ public sealed class ContactDetailViewModelTests
         Assert.HasCount(3, detail.VoiceOptions);
         Assert.AreEqual("future_voice", detail.ToContact().VoiceId);
         Assert.IsFalse(detail.IsDirty);
+    }
+
+    [TestMethod]
+    public void Voice_ChoosingAVoiceKeepsTheOptionsAndTheSelection()
+    {
+        IReadOnlyList<SpeechVoice> voices = [new("af_heart", "Heart", Gender.Female), new("af_bella", "Bella", Gender.Female)];
+        using ContactDetailViewModel detail = new(new Contact { Id = ContactId.New(), GivenName = "Rose", Gender = Gender.Female }, null, voices, true);
+        IReadOnlyList<VoiceOption> options = detail.VoiceOptions;
+
+        detail.Voice = options.Single(option => option.Id == "af_bella");
+
+        Assert.AreSame(options, detail.VoiceOptions);
+        Assert.AreEqual("af_bella", detail.Voice?.Id);
+        Assert.AreEqual("af_bella", detail.ToContact().VoiceId);
+        Assert.Contains("Bella", detail.VoiceDescription);
+        Assert.IsTrue(detail.IsDirty);
     }
 
     [TestMethod]

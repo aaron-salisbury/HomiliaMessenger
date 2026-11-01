@@ -85,6 +85,54 @@ public sealed class KokoroSpeechTests
     }
 
     [TestMethod]
+    public async Task Download_ResumesAfterAConnectionDropsInsteadOfStartingOver()
+    {
+        using TestFolder folder = new();
+        using Server server = new(MODEL) { DropAfter = 10 };
+        await using KokoroSpeech speech = Create(folder.Path, server);
+
+        SpeechResult dropped = await speech.DownloadAsync(cancellationToken: TestContext.CancellationToken);
+        long kept = new FileInfo(Path.Combine(folder.Path, "kokoro.onnx.download")).Length;
+        server.DropAfter = null;
+        SpeechResult resumed = await speech.DownloadAsync(cancellationToken: TestContext.CancellationToken);
+
+        Assert.IsFalse(dropped.IsSuccessful);
+        Assert.Contains("Try again to resume", dropped.Problem!);
+        Assert.AreEqual(10, kept);
+        Assert.AreEqual(10, server.LastRangeStart);
+        Assert.IsTrue(resumed.IsSuccessful);
+        Assert.IsTrue(speech.Model.IsDownloaded);
+    }
+
+    [TestMethod]
+    public async Task Download_ReportsAnOversizedDownloadAsAFailure()
+    {
+        using TestFolder folder = new();
+        using Server server = new([.. MODEL, .. MODEL]);
+        await using KokoroSpeech speech = Create(folder.Path, server);
+
+        SpeechResult result = await speech.DownloadAsync(cancellationToken: TestContext.CancellationToken);
+
+        Assert.IsFalse(result.IsSuccessful);
+        Assert.Contains("larger than expected", result.Problem!);
+        Assert.IsFalse(speech.Model.IsDownloaded);
+    }
+
+    [TestMethod]
+    public void Segments_SplitALongReplyAtPunctuationWithinTheModelLimit()
+    {
+        int[] tokens = Tokenizer.Tokenize(string.Concat(Enumerable.Repeat("Hello there, how are you doing today? I hope the garden is well. ", 40)), "en-us");
+
+        int[][] segments = [.. KokoroSpeech.Segments(tokens)];
+
+        Assert.IsGreaterThan(1, segments.Length);
+        Assert.IsTrue(segments.All(segment => segment.Length <= KokoroModel.maxTokens));
+        // The splitter drops the space between segments, and nothing else.
+        Assert.IsGreaterThanOrEqualTo(tokens.Length - segments.Length, segments.Sum(segment => segment.Length));
+        Assert.IsLessThan(KokoroModel.maxTokens, segments[0].Length);
+    }
+
+    [TestMethod]
     public async Task BundledVoicesAndPhonemizerWorkWithTheSharedOnnxRuntime()
     {
         using TestFolder folder = new();
@@ -149,6 +197,8 @@ public sealed class KokoroSpeechTests
         public byte[] Content { get; set; }
         public HttpStatusCode Status { get; set; } = HttpStatusCode.OK;
         public bool Hold { get; set; }
+        public int? DropAfter { get; set; }
+        public long? LastRangeStart { get; private set; }
         public int Requests { get; private set; }
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Server(byte[] content)
@@ -167,7 +217,46 @@ public sealed class KokoroSpeechTests
             {
                 await Task.Delay(Timeout.Infinite, cancellationToken);
             }
-            return new(Status) { Content = new ByteArrayContent(Content) };
+
+            if (Status != HttpStatusCode.OK)
+            {
+                return new(Status);
+            }
+
+            long start = request.Headers.Range?.Ranges.First().From ?? 0;
+            LastRangeStart = start > 0 ? start : LastRangeStart;
+            byte[] body = Content[(int)start..];
+            HttpContent content = DropAfter is { } drop ? new StreamContent(new DroppingStream(body, drop)) : new ByteArrayContent(body);
+            return new(start > 0 ? HttpStatusCode.PartialContent : HttpStatusCode.OK) { Content = content };
+        }
+    }
+
+    /// <summary>
+    /// Sends the first bytes, then fails as a dropped connection does.
+    /// </summary>
+    private sealed class DroppingStream(byte[] content, int dropAfter) : MemoryStream(content)
+    {
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (Position >= dropAfter)
+            {
+                throw new IOException("The connection was reset.");
+            }
+
+            return base.Read(buffer, offset, (int)Math.Min(count, dropAfter - Position));
+        }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(Read(buffer, offset, count));
+        }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            byte[] chunk = new byte[buffer.Length];
+            int read = Read(chunk, 0, chunk.Length);
+            chunk.AsSpan(0, read).CopyTo(buffer.Span);
+            return ValueTask.FromResult(read);
         }
     }
 

@@ -678,7 +678,8 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
             if (ActiveConversationId == conversationId)
             {
                 AppendMessage(reply);
-                if (current && IsSpeechOn && CanVoiceReplies && ActiveContact?.VoiceId is { } voiceId && _speechSession is { } session)
+                // Spoken even when a newer reply has been asked for, since it is shown; replies are voiced in turn.
+                if (IsSpeechOn && CanVoiceReplies && ActiveContact?.VoiceId is { } voiceId && _speechSession is { } session)
                 {
                     _ = VoiceReplyAsync(reply, voiceId, session);
                 }

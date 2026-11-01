@@ -125,10 +125,12 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
 
     partial void OnVoiceChanged(VoiceOption? value)
     {
+        // Replacing the options here, while the combo box is still applying the user's choice, could clear it. The
+        // options depend only on gender, so only the description needs updating.
         if (!_refreshingVoices && value is not null)
         {
             _voiceId = value.Id;
-            RefreshVoices(_voices, IsSpeechAvailable);
+            OnPropertyChanged(nameof(VoiceDescription));
         }
     }
 

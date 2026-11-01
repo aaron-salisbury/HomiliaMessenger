@@ -2,6 +2,7 @@ using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Speech;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -19,6 +20,7 @@ internal sealed class FakeSpeech : ITextToSpeech
     public bool HoldPlayback { get; set; }
     public bool FailPlayback { get; set; }
     public bool HoldDownload { get; set; }
+    public bool FailEnable { get; set; }
     public TaskCompletionSource Canceled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public async Task<SpeechResult> DownloadAsync(IProgress<double>? progress = null, CancellationToken cancellationToken = default)
@@ -35,6 +37,11 @@ internal sealed class FakeSpeech : ITextToSpeech
 
     public Task SetEnabledAsync(bool enabled, CancellationToken cancellationToken = default)
     {
+        if (FailEnable)
+        {
+            throw new IOException("The settings folder is read-only.");
+        }
+
         Model = Model with { IsEnabled = enabled };
         return Task.CompletedTask;
     }

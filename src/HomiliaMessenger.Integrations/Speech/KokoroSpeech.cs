@@ -1,5 +1,6 @@
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Speech;
+using HomiliaMessenger.Integrations.Downloads;
 using KokoroSharp;
 using KokoroSharp.Core;
 using KokoroSharp.Processing;
@@ -12,7 +13,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
-using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -36,6 +36,9 @@ internal sealed class KokoroSpeech : ITextToSpeech, IAsyncDisposable
     private readonly CancellationTokenSource _shutdown = new();
     private CancellationTokenSource _playbackStop = new();
     private KokoroModel? _model;
+
+    // Voices loaded for this model, so each reply does not read and parse its voice file again.
+    private readonly Dictionary<string, KokoroVoice> _voices = new(StringComparer.Ordinal);
     private SessionOptions? _options;
     private volatile bool _enabled;
     private bool _disposed;
@@ -69,6 +72,10 @@ internal sealed class KokoroSpeech : ITextToSpeech, IAsyncDisposable
         return file.Exists && file.Length == _download.Bytes;
     }
 
+    /// <summary>
+    /// Downloads and verifies the model. A failed, stalled, or canceled download keeps what arrived, and the next attempt
+    /// resumes it.
+    /// </summary>
     public async Task<SpeechResult> DownloadAsync(IProgress<double>? progress = null, CancellationToken cancellationToken = default)
     {
         using CancellationTokenSource stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token);
@@ -84,41 +91,23 @@ internal sealed class KokoroSpeech : ITextToSpeech, IAsyncDisposable
             }
 
             Directory.CreateDirectory(_directory);
-            using HttpClient client = _http.CreateClient();
-            using HttpResponseMessage response = await client.GetAsync(_download.Url, HttpCompletionOption.ResponseHeadersRead, stop.Token).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
-            await using Stream source = await response.Content.ReadAsStreamAsync(stop.Token).ConfigureAwait(false);
-            await using (FileStream target = new(partial, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true))
+            long downloaded = Math.Min(FileDownload.ExistingLength(partial), _download.Bytes);
+
+            if (FileDownload.MissingSpace(_directory, _download.Bytes - downloaded, "Kokoro") is { } problem)
             {
-                byte[] buffer = new byte[81920];
-                long total = 0;
-                int read;
-                using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-                while (true)
-                {
-                    using CancellationTokenSource stalled = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
-                    stalled.CancelAfter(TimeSpan.FromSeconds(60));
-                    read = await source.ReadAsync(buffer, stalled.Token).ConfigureAwait(false);
-                    if (read == 0)
-                    {
-                        break;
-                    }
+                return new(false, problem);
+            }
 
-                    total += read;
-                    if (total > _download.Bytes)
-                    {
-                        return new(false, "The Kokoro download has an unexpected size.");
-                    }
+            DownloadProgress reporter = new(progress is null ? null : (bytes, total) => progress.Report(bytes * 100d / total), _download.Bytes, downloaded);
+            using HttpClient client = _http.CreateClient();
+            await FileDownload.DownloadAsync(client, new Uri(_download.Url), partial, _download.Bytes, reporter, stop.Token).ConfigureAwait(false);
+            reporter.Report(force: true);
 
-                    hash.AppendData(buffer, 0, read);
-                    await target.WriteAsync(buffer.AsMemory(0, read), stop.Token).ConfigureAwait(false);
-                    progress?.Report(total * 100d / _download.Bytes);
-                }
-
-                if (total != _download.Bytes || !Convert.ToHexString(hash.GetHashAndReset()).Equals(_download.Sha256, StringComparison.OrdinalIgnoreCase))
-                {
-                    return new(false, "The Kokoro download failed its integrity check. Please try again.");
-                }
+            if (FileDownload.ExistingLength(partial) != _download.Bytes
+                || !string.Equals(await FileDownload.HashAsync(partial, stop.Token).ConfigureAwait(false), _download.Sha256, StringComparison.OrdinalIgnoreCase))
+            {
+                File.Delete(partial);
+                return new(false, "The Kokoro download failed its integrity check and was discarded. Please try again.");
             }
 
             File.Move(partial, ModelPath, overwrite: true);
@@ -128,21 +117,14 @@ internal sealed class KokoroSpeech : ITextToSpeech, IAsyncDisposable
         {
             throw;
         }
-        catch (Exception error)
+        catch (Exception error) when (error is HttpRequestException or IOException or InvalidDataException or UnauthorizedAccessException or TimeoutException)
         {
             _logger.LogWarning(error, "Could not download Kokoro");
-            return new(false, "Could not download Kokoro: " + error.Message);
+            return new(false, $"Could not download Kokoro: {error.Message} Try again to resume.");
         }
         finally
         {
-            try
-            {
-                File.Delete(partial);
-            }
-            finally
-            {
-                _gate.Release();
-            }
+            _gate.Release();
         }
     }
 
@@ -240,9 +222,15 @@ internal sealed class KokoroSpeech : ITextToSpeech, IAsyncDisposable
                     _model = new KokoroModel(ModelPath, _options);
                 }
 
-                KokoroVoice voice = KokoroVoice.FromPath(Path.Combine(AppContext.BaseDirectory, "SpeechVoices", voiceId + ".npy"));
+                if (!_voices.TryGetValue(voiceId, out KokoroVoice? voice))
+                {
+                    voice = KokoroVoice.FromPath(Path.Combine(AppContext.BaseDirectory, "SpeechVoices", voiceId + ".npy"));
+                    _voices[voiceId] = voice;
+                }
+
                 int[] tokens = Tokenizer.Tokenize(speechText, voiceId[0] == 'b' ? "en-gb" : "en-us");
-                foreach (int[] segment in tokens.Chunk(KokoroModel.maxTokens))
+
+                foreach (int[] segment in Segments(tokens))
                 {
                     stop.Token.ThrowIfCancellationRequested();
                     float[] samples = _model.Infer(segment, voice.Features);
@@ -252,11 +240,12 @@ internal sealed class KokoroSpeech : ITextToSpeech, IAsyncDisposable
             }, stop.Token).ConfigureAwait(false);
             return SpeechResult.Success;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw;
+            // Speech was turned off or removed in Settings, or the app is closing; the reply simply stops.
+            return SpeechResult.Success;
         }
-        catch (Exception error)
+        catch (Exception error) when (error is not OperationCanceledException)
         {
             _logger.LogWarning(error, "Could not voice a reply with Kokoro");
             Unload();
@@ -265,6 +254,21 @@ internal sealed class KokoroSpeech : ITextToSpeech, IAsyncDisposable
         finally
         {
             _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Splits a reply's tokens at punctuation, so long replies are not cut mid-word and the first, short segment starts
+    /// playing sooner. Any segment still over the model's limit is split further.
+    /// </summary>
+    internal static IEnumerable<int[]> Segments(int[] tokens)
+    {
+        foreach (int[] segment in SegmentationSystem.SplitToSegments(tokens, new DefaultSegmentationConfig()))
+        {
+            foreach (int[] part in segment.Chunk(KokoroModel.maxTokens))
+            {
+                yield return part;
+            }
         }
     }
 
@@ -296,6 +300,7 @@ internal sealed class KokoroSpeech : ITextToSpeech, IAsyncDisposable
 
     private void Unload()
     {
+        _voices.Clear();
         _model?.Dispose();
         _model = null;
         _options?.Dispose();

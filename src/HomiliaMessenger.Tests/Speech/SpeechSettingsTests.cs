@@ -31,10 +31,12 @@ public sealed class SpeechSettingsTests
             Assert.IsTrue(settings.HasSpeechModel);
             Assert.IsTrue(settings.SpeechEnabled);
             Assert.IsFalse(settings.CanDownloadSpeech);
-            await settings.ToggleSpeechModelCommand.ExecuteAsync(null);
+            settings.SpeechEnabled = false;
+            await WaitUntilAsync(() => !speech.Model.IsEnabled);
             Assert.IsFalse(settings.SpeechEnabled);
             Assert.IsTrue(settings.HasSpeechModel);
-            await settings.ToggleSpeechModelCommand.ExecuteAsync(null);
+            settings.SpeechEnabled = true;
+            await WaitUntilAsync(() => speech.Model.IsEnabled);
             Assert.IsTrue(settings.SpeechEnabled);
             await settings.RemoveSpeechModelCommand.ExecuteAsync(null);
             Assert.IsFalse(settings.HasSpeechModel);
@@ -45,6 +47,27 @@ public sealed class SpeechSettingsTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    [TestMethod]
+    public async Task Settings_UseKokoroReturnsToTheActualStateWhenItCannotChange()
+    {
+        FakeSpeech speech = new() { Model = new("Kokoro", 100, true, false), FailEnable = true };
+        SettingsViewModel settings = new(new ThemeService(new DesktopSettings(Path.GetTempPath())), new EmptyLocalModels(), speech);
+        await settings.InitializeAsync();
+
+        settings.SpeechEnabled = true;
+        await WaitUntilAsync(() => !settings.SpeechEnabled);
+
+        Assert.IsFalse(speech.Model.IsEnabled);
+        Assert.Contains("read-only", settings.SpeechStatus);
+
+        FakeSpeech missing = new() { Model = new("Kokoro", 100, false, false) };
+        SettingsViewModel withoutModel = new(new ThemeService(new DesktopSettings(Path.GetTempPath())), new EmptyLocalModels(), missing);
+        await withoutModel.InitializeAsync();
+        withoutModel.SpeechEnabled = true;
+        await WaitUntilAsync(() => !withoutModel.SpeechEnabled);
+        Assert.IsFalse(missing.Model.IsEnabled);
     }
 
     [TestMethod]
@@ -62,6 +85,16 @@ public sealed class SpeechSettingsTests
         speech.HoldDownload = false;
         await settings.DownloadSpeechCommand.ExecuteAsync(null);
         Assert.IsTrue(settings.SpeechEnabled);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        for (int i = 0; i < 500 && !condition(); i++)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.IsTrue(condition(), "Timed out waiting for the settings to update.");
     }
 
     private sealed class EmptyLocalModels : ILocalModelLibrary

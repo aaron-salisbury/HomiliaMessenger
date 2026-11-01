@@ -31,6 +31,7 @@ public partial class SettingsViewModel : BaseViewModel
     private readonly ILocalModelLibrary _localModels;
     private readonly ITextToSpeech? _speech;
     private CancellationTokenSource? _speechDownload;
+    private bool _refreshingSpeech;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanDownloadSpeech))]
@@ -100,10 +101,23 @@ public partial class SettingsViewModel : BaseViewModel
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Shows the speech model's actual state, which also puts the "Use Kokoro" box back if a change could not be made.
+    /// </summary>
     private void RefreshSpeech()
     {
         HasSpeechModel = _speech?.Model.IsDownloaded == true;
-        SpeechEnabled = _speech?.Model.IsAvailable == true;
+        _refreshingSpeech = true;
+
+        try
+        {
+            SpeechEnabled = _speech?.Model.IsAvailable == true;
+        }
+        finally
+        {
+            _refreshingSpeech = false;
+        }
+
         SpeechStatus = SpeechEnabled ? "Kokoro is ready. Choose each contact's voice on the Contacts page."
             : HasSpeechModel ? "Kokoro is downloaded. Enable it to choose voices and hear replies."
             : "Not downloaded. Speech is optional.";
@@ -158,17 +172,32 @@ public partial class SettingsViewModel : BaseViewModel
         _speechDownload?.Cancel();
     }
 
-    [RelayCommand]
-    private async Task ToggleSpeechModelAsync()
+    partial void OnSpeechEnabledChanged(bool value)
     {
+        if (!_refreshingSpeech)
+        {
+            _ = ApplySpeechEnabledAsync(value);
+        }
+    }
+
+    /// <summary>
+    /// Turns Kokoro on or off when the user ticks "Use Kokoro". If that cannot be done, the box returns to the model's
+    /// actual state rather than showing a change that did not happen.
+    /// </summary>
+    private async Task ApplySpeechEnabledAsync(bool enabled)
+    {
+        // Let the check box finish its own update before it may be put back.
+        await Task.Yield();
+
         if (_speech is null || !HasSpeechModel || IsSpeechDownloading)
         {
+            RefreshSpeech();
             return;
         }
 
         try
         {
-            await _speech.SetEnabledAsync(!SpeechEnabled);
+            await _speech.SetEnabledAsync(enabled);
             RefreshSpeech();
         }
         catch (Exception error)
