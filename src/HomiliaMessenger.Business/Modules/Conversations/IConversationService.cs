@@ -1,4 +1,5 @@
 using FluentValidation.Results;
+using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
 using System.Collections.Generic;
 using System.Threading;
@@ -11,6 +12,12 @@ namespace HomiliaMessenger.Business.Modules.Conversations;
 /// <see cref="Message"/> describe what was saved.
 /// </summary>
 public sealed record SendMessageResult(ValidationResult Validation, Conversation? Conversation, ChatMessage? Message);
+
+/// <summary>
+/// The outcome of asking a contact to reply. <see cref="Message"/> is the saved reply on success; <see cref="Problem"/>
+/// explains any other status.
+/// </summary>
+public sealed record ConversationReply(ReplyStatus Status, ChatMessage? Message, string? Problem);
 
 public interface IConversationService
 {
@@ -33,10 +40,11 @@ public interface IConversationService
     Task<SendMessageResult> SendAsync(ContactId contactId, string text, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Produces and saves the contact's reply to the conversation so far. Returns <see langword="null"/> when the
+    /// Asks the contact's agent to reply to the conversation so far, in character, and saves the reply. Contacts without
+    /// an assigned agent reply with simulated canned text. The status is <see cref="ReplyStatus.NotFound"/> when the
     /// conversation no longer exists, for example because it was deleted while the contact was replying.
     /// </summary>
-    Task<ChatMessage?> ReplyAsync(ConversationId conversationId, CancellationToken cancellationToken = default);
+    Task<ConversationReply> ReplyAsync(ConversationId conversationId, CancellationToken cancellationToken = default);
 
     Task<bool> DeleteAsync(ConversationId conversationId, CancellationToken cancellationToken = default);
 }

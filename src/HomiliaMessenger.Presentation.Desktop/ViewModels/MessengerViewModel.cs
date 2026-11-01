@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using HomiliaMessenger.Business.Base.Extensions;
+using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
 using HomiliaMessenger.Presentation.Desktop.Base.Controls.RibbonControls;
@@ -10,6 +11,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace HomiliaMessenger.Presentation.Desktop.ViewModels;
@@ -19,9 +21,9 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     private readonly IConversationService _conversations;
     private readonly IContactService _contacts;
 
-    // Conversations whose contact is replying. The value records whether the user wrote again meanwhile, in which case
-    // the contact replies once more when done, as a person catching up on a burst of messages would.
-    private readonly Dictionary<ConversationId, bool> _pendingReplies = [];
+    // Conversations whose contact is replying. Writing again meanwhile restarts the reply so that it answers everything
+    // sent so far, once, as a person reading a burst of messages would.
+    private readonly Dictionary<ConversationId, CancellationTokenSource> _pendingReplies = [];
 
     // Unsent composer text per contact, kept while switching between chats.
     private readonly Dictionary<ContactId, string> _drafts = [];
@@ -57,6 +59,13 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     private bool _isContactTyping;
 
     [ObservableProperty] private bool _hasMessages;
+
+    /// <summary>
+    /// Why the open chat's contact could not reply, shown in the thread until the next message is sent.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasReplyProblem))]
+    private string? _replyProblem;
     [ObservableProperty] private bool _hasConversations;
     [ObservableProperty] private bool _hasContacts;
     [ObservableProperty] private string _searchText = string.Empty;
@@ -81,6 +90,8 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     public Type RibbonControlType => typeof(MessengerRibbonControl);
 
     public bool HasActiveThread => ActiveContact is not null;
+
+    public bool HasReplyProblem => ReplyProblem is not null;
 
     public string ActiveSubtitle => IsContactTyping
         ? "typing…"
@@ -299,6 +310,12 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         }
 
         int version = ++_threadVersion;
+
+        if (!sameThread)
+        {
+            ReplyProblem = null;
+        }
+
         ActiveContact = contact;
         ActiveConversationId = conversationId;
         UpdateTyping();
@@ -351,6 +368,7 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
 
         ActiveContact = null;
         ActiveConversationId = null;
+        ReplyProblem = null;
         DraftText = string.Empty;
         Messages.Clear();
         HasMessages = false;
@@ -387,6 +405,7 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
 
         // Clear the composer right away, like a messenger does, and restore the text if sending fails.
         DraftText = string.Empty;
+        ReplyProblem = null;
         SendMessageResult result;
 
         try
@@ -496,32 +515,67 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
 
     private void StartReply(ConversationId conversationId)
     {
-        if (_pendingReplies.ContainsKey(conversationId))
-        {
-            _pendingReplies[conversationId] = true;
-            return;
-        }
+        CancelReply(conversationId);
 
-        _pendingReplies[conversationId] = false;
+        CancellationTokenSource pending = new();
+        _pendingReplies[conversationId] = pending;
         UpdateTyping();
-        _ = ReplyAsync(conversationId);
+        _ = ReplyAsync(conversationId, pending);
     }
 
-    private async Task ReplyAsync(ConversationId conversationId)
+    private void CancelReply(ConversationId conversationId)
+    {
+        if (_pendingReplies.Remove(conversationId, out CancellationTokenSource? superseded))
+        {
+            superseded.Cancel();
+        }
+    }
+
+    private async Task ReplyAsync(ConversationId conversationId, CancellationTokenSource pending)
     {
         ChatMessage? reply = null;
+        string? problem = null;
 
         try
         {
-            reply = await _conversations.ReplyAsync(conversationId);
+            ConversationReply result = await _conversations.ReplyAsync(conversationId, pending.Token);
+            reply = result.Message;
+
+            // A deleted conversation needs no explanation.
+            if (result.Status is not ReplyStatus.Success and not ReplyStatus.NotFound)
+            {
+                problem = result.Problem ?? "The contact could not reply.";
+            }
+        }
+        catch (OperationCanceledException) when (pending.IsCancellationRequested)
+        {
+            // Superseded by a newer reply, or the chat was deleted.
         }
         catch (Exception error)
         {
-            Status = "The contact could not reply: " + error.Message;
+            problem = "The contact could not reply: " + error.Message;
         }
 
-        bool wroteAgain = _pendingReplies.Remove(conversationId, out bool pending) && pending;
+        bool current = _pendingReplies.TryGetValue(conversationId, out CancellationTokenSource? active) && active == pending;
 
+        if (current)
+        {
+            _pendingReplies.Remove(conversationId);
+        }
+
+        pending.Dispose();
+
+        if (problem is not null && current)
+        {
+            Status = problem;
+
+            if (ActiveConversationId == conversationId)
+            {
+                ReplyProblem = problem;
+            }
+        }
+
+        // A reply that finished just before being superseded was already saved, so it is still shown.
         if (reply is not null)
         {
             if (ActiveConversationId == conversationId)
@@ -539,11 +593,6 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         }
 
         UpdateTyping();
-
-        if (wroteAgain && reply is not null)
-        {
-            StartReply(conversationId);
-        }
     }
 
     private void UpdateTyping()
@@ -585,6 +634,7 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
             return;
         }
 
+        CancelReply(item.Id);
         Conversations.Remove(item);
         VisibleConversations.Remove(item);
         HasConversations = Conversations.Count > 0;

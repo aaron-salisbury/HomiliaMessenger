@@ -38,6 +38,11 @@ public sealed record ChatMessage
     public MessageSender Sender { get; init; }
     public string Text { get; init; } = string.Empty;
     public DateTimeOffset SentAtUtc { get; init; }
+
+    /// <summary>
+    /// The agent and model that wrote a contact's reply; <see langword="null"/> for the user's messages.
+    /// </summary>
+    public AgentAssignment? Agent { get; init; }
 }
 
 /// <summary>

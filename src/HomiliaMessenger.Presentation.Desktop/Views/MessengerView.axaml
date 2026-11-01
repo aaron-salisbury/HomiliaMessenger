@@ -218,7 +218,7 @@
         </StackPanel>
 
         <!-- Thread -->
-        <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" IsVisible="{Binding HasActiveThread}">
+        <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto,Auto" IsVisible="{Binding HasActiveThread}">
 
             <!-- Thread header -->
             <Border Grid.Row="0" Padding="16,10" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="0,0,0,1">
@@ -292,8 +292,17 @@
                 </StackPanel>
             </ScrollViewer>
 
+            <!-- Why the contact could not reply -->
+            <Border Grid.Row="2" IsVisible="{Binding HasReplyProblem}" Margin="16,0,16,6" Padding="10,6" CornerRadius="8"
+                    Background="{DynamicResource SystemControlBackgroundBaseLowBrush}">
+                <Grid ColumnDefinitions="Auto,8,*">
+                    <i:MaterialIcon Grid.Column="0" Kind="AlertCircleOutline" Width="18" Height="18" Foreground="{StaticResource OrangeAccent}" VerticalAlignment="Top" />
+                    <SelectableTextBlock Grid.Column="2" Text="{Binding ReplyProblem}" TextWrapping="Wrap" FontSize="12" />
+                </Grid>
+            </Border>
+
             <!-- Composer -->
-            <Border Grid.Row="2" Padding="16,10" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="0,1,0,0">
+            <Border Grid.Row="3" Padding="16,10" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="0,1,0,0">
                 <Grid ColumnDefinitions="*,10,Auto">
                     <TextBox Grid.Column="0" x:Name="Composer" Text="{Binding DraftText}" AcceptsReturn="True" TextWrapping="Wrap"
                              MaxHeight="140" MinHeight="38" CornerRadius="19" Padding="14,9" VerticalContentAlignment="Center" MaxLength="4000"

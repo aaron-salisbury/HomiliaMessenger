@@ -1,16 +1,24 @@
+using HomiliaMessenger.Business.Modules.Contacts;
 using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace HomiliaMessenger.Business.Modules.Conversations;
+namespace HomiliaMessenger.Business.Modules.Agents;
 
 /// <summary>
-/// Stands in for an agent until providers are integrated: replies with random canned text after a short, human-feeling
-/// pause, so the full messaging flow can be exercised.
+/// Stands in for a real agent: replies with random canned text after a short, human-feeling pause. Contacts without an
+/// assigned agent use it, so the full messaging flow works without any model.
 /// </summary>
-internal sealed class SimulatedReplies
+internal sealed class SimulatedAgent : IConversationAgent
 {
+    internal const string PROVIDER = "Simulated";
+
+    /// <summary>
+    /// Recorded on replies from contacts without an assigned agent.
+    /// </summary>
+    internal static readonly AgentAssignment ASSIGNMENT = new(PROVIDER, "canned");
+
     private static readonly string[] CANNED_REPLIES =
     [
         "Ha, I was just thinking about that.",
@@ -45,11 +53,11 @@ internal sealed class SimulatedReplies
     private readonly Lock _lock = new();
     private int _lastIndex = -1;
 
-    public SimulatedReplies() : this(Random.Shared, TimeProvider.System, DEFAULT_MIN_DELAY, DEFAULT_MAX_DELAY)
+    public SimulatedAgent() : this(Random.Shared, TimeProvider.System, DEFAULT_MIN_DELAY, DEFAULT_MAX_DELAY)
     {
     }
 
-    internal SimulatedReplies(Random random, TimeProvider timeProvider, TimeSpan minDelay, TimeSpan maxDelay)
+    internal SimulatedAgent(Random random, TimeProvider timeProvider, TimeSpan minDelay, TimeSpan maxDelay)
     {
         _random = random ?? throw new ArgumentNullException(nameof(random));
         _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
@@ -60,6 +68,15 @@ internal sealed class SimulatedReplies
     }
 
     internal static IReadOnlyList<string> Replies => CANNED_REPLIES;
+
+    public string Provider => PROVIDER;
+
+    public async Task<AgentReply> ReplyAsync(AgentRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        return AgentReply.Success(await NextAsync(cancellationToken));
+    }
 
     /// <summary>
     /// Waits as if the contact were typing, then returns a canned reply that differs from the previous one.

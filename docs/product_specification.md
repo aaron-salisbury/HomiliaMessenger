@@ -78,15 +78,15 @@ What the agent is given about earlier turns. The initial approach is the most re
 - Business validation of contacts, with the result shown in the ribbon status.
 - A Settings page whose theme choice (System, Light, or Dark) persists across restarts.
 
-### Phase 2: Messenger (current)
+### Phase 2: Messenger
 
 - A messenger view: conversation list, chat thread with message bubbles, and a composer. It is built with the app's own controls; SukiUI is not adopted.
 - Persisted conversations per contact.
 - Simulated replies (random canned text) so the full messaging flow works before any agent is integrated.
 
-### Phase 3: Agent Integration
+### Phase 3: Agent Integration (current)
 
-- A Business conversation capability contract, with at least one provider implemented in Integrations.
+- A Business conversation capability contract, with at least one provider implemented in Integrations. The first provider runs small models on the device with ONNX Runtime GenAI (provider `Local`), so agents can be tried repeatedly without paid usage, a server, or a GPU, and the same approach can later run on Android. Models are downloaded on demand from Settings, not bundled.
 - Persona framing and conversation memory as described above.
 - Switching a contact's agent or model while keeping its conversation.
 - Explicit handling of expected provider states (unavailable, unauthorized, invalid response) instead of surfacing raw exceptions.
@@ -107,6 +107,6 @@ What the agent is given about earlier turns. The initial approach is the most re
 
 ## Persistence and Security
 
-- Application data lives in the per-user application data directory: the SQLite database (`HomiliaMessenger.db`), desktop preferences (`desktop-settings.json`), and rolling daily logs.
+- Application data lives in the per-user application data directory: the SQLite database (`HomiliaMessenger.db`), desktop preferences (`desktop-settings.json`), rolling daily logs, and downloaded local models (`Models`).
 - The schema changes only through versioned migrations recorded in `SchemaMigration`.
 - Secrets, once providers need them, are resolved through `ICredentialStore` and never stored in provider configuration or SQLite.

@@ -1,4 +1,5 @@
 using FluentValidation.Results;
+using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,12 +17,20 @@ public sealed class ConversationServiceTests
     public TestContext TestContext { get; set; } = null!;
 
     /// <summary>
-    /// A database whose simulated contacts reply after <paramref name="replyDelay"/>, instantly by default.
+    /// A database whose simulated contacts reply after <paramref name="replyDelay"/>, instantly by default, and that also
+    /// offers any <paramref name="agents"/>.
     /// </summary>
-    internal static Task<TestDatabase> CreateDatabaseAsync(TestContext testContext, TimeSpan replyDelay = default)
+    internal static Task<TestDatabase> CreateDatabaseAsync(TestContext testContext, TimeSpan replyDelay = default, params IConversationAgent[] agents)
     {
         return TestDatabase.CreateAsync(testContext, services =>
-            services.AddSingleton(new SimulatedReplies(new Random(7), TimeProvider.System, replyDelay, replyDelay)));
+        {
+            services.AddSingleton<IConversationAgent>(new SimulatedAgent(new Random(7), TimeProvider.System, replyDelay, replyDelay));
+
+            foreach (IConversationAgent agent in agents)
+            {
+                services.AddSingleton(agent);
+            }
+        });
     }
 
     internal static async Task<Contact> AddContactAsync(TestDatabase database, string name, TestContext testContext)
@@ -95,19 +104,22 @@ public sealed class ConversationServiceTests
         Contact walt = await AddContactAsync(database, "Walt", TestContext);
 
         SendMessageResult sent = await service.SendAsync(walt.Id, "How was your day?", TestContext.CancellationToken);
-        ChatMessage? reply = await service.ReplyAsync(sent.Conversation!.Id, TestContext.CancellationToken);
+        ConversationReply result = await service.ReplyAsync(sent.Conversation!.Id, TestContext.CancellationToken);
+        ChatMessage? reply = result.Message;
         IReadOnlyList<ChatMessage> messages = await service.ListMessagesAsync(sent.Conversation.Id, TestContext.CancellationToken);
         Conversation? conversation = await service.FindByContactAsync(walt.Id, TestContext.CancellationToken);
 
+        Assert.AreEqual(ReplyStatus.Success, result.Status);
         Assert.IsNotNull(reply);
         Assert.AreEqual(MessageSender.Contact, reply.Sender);
-        Assert.Contains(reply.Text, SimulatedReplies.Replies);
+        Assert.AreEqual(SimulatedAgent.ASSIGNMENT, reply.Agent);
+        Assert.Contains(reply.Text, SimulatedAgent.Replies);
         Assert.AreSequenceEqual(new[] { MessageSender.User, MessageSender.Contact }, messages.Select(message => message.Sender).ToArray());
         Assert.AreEqual(reply, conversation!.LastMessage);
     }
 
     [TestMethod]
-    public async Task ReplyAsync_ReturnsNullOnceTheConversationIsDeleted()
+    public async Task ReplyAsync_ReportsNotFoundOnceTheConversationIsDeleted()
     {
         using TestDatabase database = await CreateDatabaseAsync(TestContext);
         IConversationService service = database.Services.GetRequiredService<IConversationService>();
@@ -116,12 +128,13 @@ public sealed class ConversationServiceTests
         SendMessageResult sent = await service.SendAsync(walt.Id, "Hello", TestContext.CancellationToken);
         bool deleted = await service.DeleteAsync(sent.Conversation!.Id, TestContext.CancellationToken);
         bool deletedAgain = await service.DeleteAsync(sent.Conversation.Id, TestContext.CancellationToken);
-        ChatMessage? reply = await service.ReplyAsync(sent.Conversation.Id, TestContext.CancellationToken);
+        ConversationReply reply = await service.ReplyAsync(sent.Conversation.Id, TestContext.CancellationToken);
         IReadOnlyList<ChatMessage> messages = await service.ListMessagesAsync(sent.Conversation.Id, TestContext.CancellationToken);
 
         Assert.IsTrue(deleted);
         Assert.IsFalse(deletedAgain);
-        Assert.IsNull(reply);
+        Assert.AreEqual(ReplyStatus.NotFound, reply.Status);
+        Assert.IsNull(reply.Message);
         Assert.IsEmpty(messages);
     }
 
@@ -162,9 +175,9 @@ public sealed class ConversationServiceTests
     }
 
     [TestMethod]
-    public async Task SimulatedReplies_NeverRepeatTheSameReplyTwiceInARow()
+    public async Task SimulatedAgent_NeverRepeatsTheSameReplyTwiceInARow()
     {
-        SimulatedReplies replies = new(new Random(42), TimeProvider.System, TimeSpan.Zero, TimeSpan.Zero);
+        SimulatedAgent replies = new(new Random(42), TimeProvider.System, TimeSpan.Zero, TimeSpan.Zero);
         string previous = string.Empty;
 
         for (int i = 0; i < 200; i++)

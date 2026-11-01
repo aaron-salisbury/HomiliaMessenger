@@ -5,6 +5,7 @@ using HomiliaMessenger.Presentation.Desktop.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
@@ -70,6 +71,29 @@ public sealed class MessengerViewModelTests
         Assert.HasCount(1, messenger.Conversations);
         Assert.AreSame(messenger.Conversations[0], messenger.SelectedConversation);
         Assert.AreEqual(messenger.Messages[1].Text, messenger.Conversations[0].Preview);
+    }
+
+    [TestMethod]
+    public async Task WritingAgainWhileTheContactReplies_GetsOneReplyToBothMessages()
+    {
+        using TestDatabase database = await ConversationServiceTests.CreateDatabaseAsync(TestContext, TimeSpan.FromMilliseconds(400));
+        Contact walt = await ConversationServiceTests.AddContactAsync(database, "Walt", TestContext);
+        MessengerViewModel messenger = CreateViewModel(database);
+
+        await messenger.InitializeAsync();
+        await messenger.StartChatCommand.ExecuteAsync(walt);
+        messenger.DraftText = "Hey";
+        await messenger.SendCommand.ExecuteAsync(null);
+        await Task.Delay(100, TestContext.CancellationToken);
+        messenger.DraftText = "Are you there?";
+        await messenger.SendCommand.ExecuteAsync(null);
+        await WaitUntilAsync(() => messenger.Messages.Count == 3 && !messenger.IsContactTyping);
+        await Task.Delay(800, TestContext.CancellationToken);
+
+        IReadOnlyList<ChatMessage> stored = await database.Services.GetRequiredService<IConversationService>()
+            .ListMessagesAsync(messenger.ActiveConversationId!.Value, TestContext.CancellationToken);
+        Assert.AreSequenceEqual(new[] { MessageSender.User, MessageSender.User, MessageSender.Contact }, stored.Select(message => message.Sender).ToArray());
+        Assert.HasCount(3, messenger.Messages);
     }
 
     [TestMethod]

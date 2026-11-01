@@ -29,7 +29,8 @@ public sealed partial class MessageItem : ObservableObject
         Message = message;
         IsFirstInGroup = isFirstInGroup;
         TimeSeparator = timeSeparator;
-        SentAtToolTip = MessengerTime.ForToolTip(message.SentAtUtc);
+        string sentAt = MessengerTime.ForToolTip(message.SentAtUtc);
+        SentAtToolTip = message.Agent is { } agent ? $"{sentAt} · {agent.Provider} · {agent.Model}" : sentAt;
     }
 
     public ChatMessage Message { get; }

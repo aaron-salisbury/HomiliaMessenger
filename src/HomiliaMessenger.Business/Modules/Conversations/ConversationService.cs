@@ -1,8 +1,10 @@
 using FluentValidation;
 using FluentValidation.Results;
+using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -13,20 +15,21 @@ internal sealed class ConversationService : IConversationService
     private readonly IConversationStore _store;
     private readonly IContactService _contacts;
     private readonly IValidator<ChatMessage> _validator;
-    private readonly SimulatedReplies _replies;
+    private readonly IReadOnlyList<IConversationAgent> _agents;
     private readonly TimeProvider _timeProvider;
 
-    public ConversationService(IConversationStore store, IContactService contacts, IValidator<ChatMessage> validator, SimulatedReplies replies)
-        : this(store, contacts, validator, replies, TimeProvider.System)
+    public ConversationService(IConversationStore store, IContactService contacts, IValidator<ChatMessage> validator, IEnumerable<IConversationAgent> agents)
+        : this(store, contacts, validator, agents, TimeProvider.System)
     {
     }
 
-    internal ConversationService(IConversationStore store, IContactService contacts, IValidator<ChatMessage> validator, SimulatedReplies replies, TimeProvider timeProvider)
+    internal ConversationService(IConversationStore store, IContactService contacts, IValidator<ChatMessage> validator, IEnumerable<IConversationAgent> agents, TimeProvider timeProvider)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _contacts = contacts ?? throw new ArgumentNullException(nameof(contacts));
         _validator = validator ?? throw new ArgumentNullException(nameof(validator));
-        _replies = replies ?? throw new ArgumentNullException(nameof(replies));
+        ArgumentNullException.ThrowIfNull(agents);
+        _agents = [.. agents];
         _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
     }
 
@@ -93,14 +96,48 @@ internal sealed class ConversationService : IConversationService
         return new SendMessageResult(result, conversation with { LastMessage = message }, message);
     }
 
-    public async Task<ChatMessage?> ReplyAsync(ConversationId conversationId, CancellationToken cancellationToken = default)
+    public async Task<ConversationReply> ReplyAsync(ConversationId conversationId, CancellationToken cancellationToken = default)
     {
-        if (await _store.GetAsync(conversationId, cancellationToken) is null)
+        Conversation? conversation = await _store.GetAsync(conversationId, cancellationToken);
+        Contact? contact = conversation is null ? null : await _contacts.GetAsync(conversation.ContactId, cancellationToken);
+
+        if (conversation is null || contact is null)
         {
-            return null;
+            return new ConversationReply(ReplyStatus.NotFound, null, "The conversation no longer exists.");
         }
 
-        string text = await _replies.NextAsync(cancellationToken);
+        AgentAssignment assignment = contact.Agent ?? SimulatedAgent.ASSIGNMENT;
+
+        // Later registrations take precedence, as they do for single services.
+        IConversationAgent? agent = _agents.LastOrDefault(candidate => string.Equals(candidate.Provider, assignment.Provider.Trim(), StringComparison.OrdinalIgnoreCase));
+
+        if (agent is null)
+        {
+            string known = string.Join(", ", _agents.Select(candidate => candidate.Provider).Distinct(StringComparer.OrdinalIgnoreCase));
+            return new ConversationReply(ReplyStatus.Unavailable, null, $"There is no agent provider named \"{assignment.Provider}\". Available providers: {known}.");
+        }
+
+        IReadOnlyList<ChatMessage> messages = await _store.ListMessagesAsync(conversationId, cancellationToken);
+        DateOnly today = DateOnly.FromDateTime(_timeProvider.GetUtcNow().UtcDateTime);
+        AgentRequest request = PersonaFraming.Build(contact, messages, assignment.Model.Trim(), today);
+        AgentReply answer = await agent.ReplyAsync(request, cancellationToken);
+
+        if (answer.Status != ReplyStatus.Success)
+        {
+            return new ConversationReply(answer.Status, null, answer.Problem);
+        }
+
+        string? text = PersonaFraming.CleanReply(answer.Text, contact);
+
+        if (text is null)
+        {
+            return new ConversationReply(ReplyStatus.InvalidResponse, null, "The agent replied with nothing usable.");
+        }
+
+        if (text.Length > ChatMessageValidator.MAX_TEXT_LENGTH)
+        {
+            text = text[..ChatMessageValidator.MAX_TEXT_LENGTH];
+        }
 
         ChatMessage reply = new()
         {
@@ -108,10 +145,13 @@ internal sealed class ConversationService : IConversationService
             ConversationId = conversationId,
             Sender = MessageSender.Contact,
             Text = text,
-            SentAtUtc = _timeProvider.GetUtcNow()
+            SentAtUtc = _timeProvider.GetUtcNow(),
+            Agent = assignment
         };
 
-        return await _store.AddMessageAsync(reply, cancellationToken) ? reply : null;
+        return await _store.AddMessageAsync(reply, cancellationToken)
+            ? new ConversationReply(ReplyStatus.Success, reply, null)
+            : new ConversationReply(ReplyStatus.NotFound, null, "The conversation was deleted before the reply was saved.");
     }
 
     public Task<bool> DeleteAsync(ConversationId conversationId, CancellationToken cancellationToken = default)

@@ -1,4 +1,5 @@
 using FluentValidation;
+using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,7 +22,7 @@ public static class DependencyInjection
 
         services.AddScoped<IContactService, ContactService>();
 
-        services.AddSingleton<SimulatedReplies>();
+        services.AddSingleton<IConversationAgent, SimulatedAgent>();
         services.AddScoped<IConversationService, ConversationService>();
 
         return services;

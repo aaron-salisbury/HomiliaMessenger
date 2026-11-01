@@ -31,7 +31,7 @@ internal static class DependencyInjection
             .AddHttpClient();
 
         services.RegisterInternalDataServices(applicationDataDirectory)
-            .RegisterInternalIntegrationsServices()
+            .RegisterInternalIntegrationsServices(applicationDataDirectory)
             .RegisterInternalBusinessServices()
             .RegisterInternalPresentationServices(applicationDataDirectory);
 

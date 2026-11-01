@@ -5,6 +5,8 @@
 			 mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
 			 x:Class="HomiliaMessenger.Presentation.Desktop.Views.SettingsView"
              xmlns:vm="clr-namespace:HomiliaMessenger.Presentation.Desktop.ViewModels"
+             xmlns:m="clr-namespace:HomiliaMessenger.Presentation.Desktop.Models"
+             xmlns:i="using:Material.Icons.Avalonia"
              x:DataType="vm:SettingsViewModel">
 
 	<UserControl.Styles>
@@ -30,6 +32,44 @@
 								<RadioButton IsChecked="{Binding ThemeIsDark}" GroupName="Theme" Content="Dark" Command="{Binding SetThemeCommand}" CommandParameter="Dark" />
 							</StackPanel>
 						</StackPanel>
+					</StackPanel>
+
+					<StackPanel Spacing="8">
+						<TextBlock Text="Local Models" Classes="section-header" />
+						<TextBlock Text="{Binding LocalModelsHint}" TextWrapping="Wrap" Opacity="0.75" />
+
+						<ItemsControl ItemsSource="{Binding LocalModels}">
+							<ItemsControl.ItemTemplate>
+								<DataTemplate x:DataType="m:LocalModelItem">
+									<Border Margin="0,6,0,0" Padding="12" CornerRadius="8" Background="{DynamicResource SystemControlBackgroundBaseLowBrush}">
+										<Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
+											<TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding DisplayName}" FontWeight="SemiBold" />
+											<TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding SizeText}" FontSize="12" Opacity="0.7" />
+											<TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding Description}" TextWrapping="Wrap" Margin="0,4,0,0" />
+											<SelectableTextBlock Grid.Row="3" Grid.Column="0" Text="{Binding AssignmentHint}" FontSize="12" Opacity="0.7" Margin="0,4,0,0" />
+
+											<StackPanel Grid.Row="0" Grid.RowSpan="3" Grid.Column="1" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0" VerticalAlignment="Top">
+												<Button Command="{Binding DownloadCommand}" IsVisible="{Binding CanDownload}" Classes="accent">
+													<StackPanel Orientation="Horizontal" Spacing="6">
+														<i:MaterialIcon Kind="Download" />
+														<TextBlock Text="Download" />
+													</StackPanel>
+												</Button>
+												<Button Command="{Binding CancelCommand}" IsVisible="{Binding IsDownloading}" Content="Pause" />
+												<Button Command="{Binding DeleteCommand}" IsVisible="{Binding IsDownloaded}" ToolTip.Tip="Remove model">
+													<i:MaterialIcon Kind="TrashCanOutline" />
+												</Button>
+											</StackPanel>
+
+											<StackPanel Grid.Row="4" Grid.ColumnSpan="2" Spacing="4" Margin="0,8,0,0">
+												<ProgressBar Value="{Binding ProgressPercent}" Maximum="100" IsVisible="{Binding IsDownloading}" />
+												<TextBlock Text="{Binding Status}" FontSize="12" TextWrapping="Wrap" />
+											</StackPanel>
+										</Grid>
+									</Border>
+								</DataTemplate>
+							</ItemsControl.ItemTemplate>
+						</ItemsControl>
 					</StackPanel>
 
 					<StackPanel Spacing="8">
