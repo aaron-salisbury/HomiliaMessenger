@@ -35,28 +35,6 @@ The desktop app is the only host. Business capabilities must not depend on Avalo
 
 ## Core Concepts
 
-### Contact
-
-A persona the user can message. Contact details are deliberately limited to what shapes a conversation:
-
-| Field | Purpose |
-| --- | --- |
-| Given name, family name, nickname | Who the persona is and how they are shown. At least one is required. The nickname, when set, is the display name. |
-| Birthday | Required calendar date. The persona's age is derived from it, so personas age naturally over time. Personas must be at least 18 and no older than 150, judged against the current UTC date so the rule does not depend on the machine's time zone. |
-| Gender | Male or female, or not specified. |
-| Relationship | Free text: what the contact is to the user, such as "Grandfather" or "Colleague", so the persona always knows how the two are related. |
-| Personality | Temperament, values, humor, how they talk, and what they're guarded about. |
-| Background | Life story, relationships, and experiences they can draw on. |
-| Agent | The provider and model that speak for the contact, chosen from the models offered in Settings. Optional; contacts without one reply with simulated text. |
-| Photo | Optional JPEG or PNG avatar, 8 MiB or smaller. |
-| Favorite | Pins the contact to the top of the list. |
-
-Real-contact fields such as phone numbers, email addresses, postal addresses, organizations, social profiles, and vCard interchange are intentionally excluded.
-
-### User Profile
-
-Who the user is, entered once on the Profile page and told to every contact: name, birthday (contacts are told the age, not the date), gender, a free-text "about you", and a photo. Every field is optional. Together with each contact's relationship, it lets a persona know who it is talking to, for example that it is texting its grandson Aaron, an ER nurse in Denver.
-
 ### Agent Assignment
 
 A reference to an agent: a **provider** (a backend the app knows how to talk to, such as a local Ollama server or a hosted API) and a **model** offered by that provider. Following the conventions' vocabulary, a provider implementation in Integrations satisfies the Business conversation capability, and a user's configured provider instance is an integration. Until providers are integrated, the provider and model are free-text identifiers.
@@ -80,45 +58,6 @@ What the agent is given about earlier turns: the contact's memory notes plus the
 - Contacts with simulated replies keep no notes.
 
 Memory is stored with the conversation, so it carries over when the contact's agent changes.
-
-## Delivery Phases
-
-### Phase 1: Persona Contacts
-
-- Application foundation: solution layout, composition root, logging, SQLite persistence with migrations, and architecture tests.
-- A contacts master/detail view: searchable list, favorites first, and a persona editor with photo.
-- Add, edit, and delete contacts. Unsaved edits are protected by a discard confirmation.
-- Business validation of contacts, with the result shown in the ribbon status.
-- A Settings page whose theme choice (System, Light, or Dark) persists across restarts.
-
-### Phase 2: Messenger
-
-- A messenger view: conversation list, chat thread with message bubbles, and a composer. It is built with the app's own controls; SukiUI is not adopted.
-- Persisted conversations per contact.
-- Simulated replies (random canned text) so the full messaging flow works before any agent is integrated.
-
-### Phase 3: Agent Integration (current)
-
-- A Business conversation capability contract, with at least one provider implemented in Integrations. The first provider runs small models on the device with ONNX Runtime GenAI (provider `Local`), so agents can be tried repeatedly without paid usage, a server, or a GPU, and the same approach can later run on Android. Models are downloaded on demand from Settings, not bundled.
-- Persona framing and conversation memory as described above.
-- Switching a contact's agent or model while keeping its conversation.
-- Explicit handling of expected provider states (unavailable, unauthorized, invalid response) instead of surfacing raw exceptions.
-- Provider secrets (such as API keys) stored through the existing `ICredentialStore` boundary, with only an opaque `CredentialReference` persisted, never the secret itself.
-
-### Phase 4: Optional Voice
-
-- Optional local text-to-speech for persona replies using Kokoro, encapsulated in Integrations without a separate worker executable. Settings offers a verified model download and a persistent enable/disable choice; English voices ship with the app.
-- Once speech is available, each contact can have a saved voice. The editor filters choices to the contact's gender, when specified, but changing gender does not invalidate or clear an existing voice.
-- A speech toggle beside the reload/history control in the chat ribbon opts in to reading new replies while the normal text remains visible. It defaults off, is never persisted, and turns off when switching chats or leaving Messenger. Turning it off cancels playback and pending audio. Existing message history is never read automatically.
-- Optional speech-to-text for composing messages.
-- Both are opt-in messenger features and are never required to chat.
-
-## Out of Scope
-
-- Real human contacts, phone or email integration, and contact import or export (including vCard).
-- Accounts, cloud sync, or multi-device use.
-- Group conversations (may be reconsidered after Phase 3).
-- Navigation or theming frameworks beyond the app's current Avalonia shell (for example, SukiUI or a new main-menu strategy).
 
 ## Persistence and Security
 
