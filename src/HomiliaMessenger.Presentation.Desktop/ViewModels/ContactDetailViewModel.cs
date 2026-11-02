@@ -25,6 +25,7 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
     private readonly bool _trackChanges;
     private IReadOnlyList<SpeechVoice> _voices = [];
     private bool _refreshingVoices;
+    private bool _refreshingAgents;
     private string? _voiceId;
 
     [ObservableProperty] private string? _givenName;
@@ -39,6 +40,11 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string? _personality;
     [ObservableProperty] private string? _background;
     [ObservableProperty] private AgentOption _agent = AgentOption.None;
+
+    /// <summary>
+    /// No agent, then the models offered in Settings, as of the last refresh.
+    /// </summary>
+    [ObservableProperty] private IReadOnlyList<AgentOption> _agentOptions = [AgentOption.None];
     [ObservableProperty] private VoiceOption? _voice = VoiceOption.None;
     [ObservableProperty] private bool _isSpeechAvailable;
     [ObservableProperty] private IReadOnlyList<VoiceOption> _voiceOptions = [VoiceOption.None];
@@ -58,11 +64,6 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
     public ContactId Id => _id;
 
     public IReadOnlyList<GenderOption> GenderOptions => GenderOption.All;
-
-    /// <summary>
-    /// No agent, then the models offered in Settings.
-    /// </summary>
-    public IReadOnlyList<AgentOption> AgentOptions { get; }
 
     /// <summary>
     /// The persona's current age, derived from <see cref="Birthday"/> as of the UTC date (matching Business validation).
@@ -96,6 +97,34 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
 
         RefreshVoices(voices ?? [], isSpeechAvailable);
         _trackChanges = true;
+    }
+
+    /// <summary>
+    /// Offers the current models, such as one just added or downloaded in Settings, keeping the contact's agent and any
+    /// unsaved edits. Replacing the options is not itself an edit.
+    /// </summary>
+    public void RefreshAgentOptions(IReadOnlyList<AgentOption> agentOptions)
+    {
+        ArgumentNullException.ThrowIfNull(agentOptions);
+        AgentOption? previous = Agent;
+        AgentAssignment? current = previous?.Assignment;
+        _refreshingAgents = true;
+
+        try
+        {
+            // A model removed in Settings stays chosen, marked as removed, so the assignment is not lost; adding the
+            // model again restores it.
+            AgentOptions = current is null || agentOptions.Any(option => option.Assignment == current)
+                ? agentOptions
+                : [.. agentOptions, new AgentOption($"{previous!.Label.Replace(" (not downloaded)", string.Empty, StringComparison.Ordinal)} (removed)", current)];
+
+            // The combo box may clear its selection while its options are replaced; select the same agent again.
+            Agent = AgentOptions.FirstOrDefault(option => option.Assignment == current) ?? AgentOption.None;
+        }
+        finally
+        {
+            _refreshingAgents = false;
+        }
     }
 
     public void RefreshVoices(IReadOnlyList<SpeechVoice> voices, bool isAvailable)
@@ -146,7 +175,7 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
     {
         base.OnPropertyChanged(e);
 
-        if (_trackChanges && !_refreshingVoices && !(e.PropertyName == nameof(Voice) && Voice is null)
+        if (_trackChanges && !_refreshingVoices && !_refreshingAgents && !(e.PropertyName == nameof(Voice) && Voice is null)
             && e.PropertyName is not (nameof(IsDirty) or nameof(PhotoPreview) or nameof(PhotoDescription) or nameof(AgeDescription)))
         {
             IsDirty = true;
@@ -240,7 +269,7 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
             Relationship = Clean(Relationship),
             Personality = Clean(Personality),
             Background = Clean(Background),
-            Agent = Agent.Assignment,
+            Agent = Agent?.Assignment,
             VoiceId = _voiceId,
             IsFavorite = IsFavorite,
             Photo = _photo is null ? null : [.. _photo]

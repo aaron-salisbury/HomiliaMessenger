@@ -108,16 +108,17 @@ internal sealed class OnnxModelHost : IAsyncDisposable, IDisposable
     }
 
     /// <summary>
-    /// Releases the model loaded from <paramref name="modelDirectory"/>, waiting for any generation to finish, then runs
-    /// <paramref name="whileUnloaded"/> before any other generation can load it again.
+    /// Releases the model loaded from <paramref name="modelDirectory"/> (or any model, when it is <see langword="null"/>),
+    /// waiting for any generation to finish, then runs <paramref name="whileUnloaded"/> before any other generation can
+    /// load it again.
     /// </summary>
-    internal async Task UnloadAsync(string modelDirectory, Action? whileUnloaded = null)
+    internal async Task UnloadAsync(string? modelDirectory, Action? whileUnloaded = null)
     {
         await _gate.WaitAsync().ConfigureAwait(false);
 
         try
         {
-            if (string.Equals(_loadedDirectory, modelDirectory, StringComparison.OrdinalIgnoreCase))
+            if (modelDirectory is null || string.Equals(_loadedDirectory, modelDirectory, StringComparison.OrdinalIgnoreCase))
             {
                 UnloadCore();
             }

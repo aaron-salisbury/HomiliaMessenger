@@ -134,6 +134,7 @@ internal static partial class PersonaFraming
             builder.AppendLine($"- Keep in mind what you remember from earlier, and don't ask about things {userName ?? "they"} already told you.");
         }
 
+        builder.AppendLine($"- Use the language {name} really would, including swearing when it fits who they are. Write every word in full, never masked with asterisks or other symbols.");
         builder.Append("- Do not add notes, explanations, narration, or commentary about your reply.");
 
         return builder.ToString();
@@ -219,7 +220,8 @@ internal static partial class PersonaFraming
     /// <summary>
     /// Removes what is not part of the persona's message: a leading "Name:" label, any turns the model went on to write
     /// itself (from the first of <paramref name="request"/>'s stop texts), surrounding quotes, and trailing paragraphs of
-    /// commentary such as "(Note: ...)". Returns <see langword="null"/> when nothing is left.
+    /// commentary such as "(Note: ...)". Swear words the model masked with asterisks are written in full. Returns
+    /// <see langword="null"/> when nothing is left.
     /// </summary>
     internal static string? CleanReply(string? text, Contact contact, AgentRequest? request = null)
     {
@@ -248,6 +250,9 @@ internal static partial class PersonaFraming
 
         // Models sometimes follow the reply with a divider or heading and an explanation of it.
         cleaned = BeforeDivider(cleaned);
+
+        // Some models mask swear words whatever they are told; contacts speak uncensored.
+        cleaned = MaskedWords.Unmask(cleaned);
 
         IEnumerable<string> paragraphs = ParagraphBreak().Split(cleaned)
             .TakeWhile(paragraph => !Commentary().IsMatch(paragraph));

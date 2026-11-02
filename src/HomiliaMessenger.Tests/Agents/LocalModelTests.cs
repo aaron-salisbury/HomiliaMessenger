@@ -115,7 +115,7 @@ public sealed class LocalModelTests
         using TestFolder folder = new();
         LocalModelLibrary library = CreateLibrary(folder.Path, new FakeServer(), TinyModel());
         using OnnxModelHost host = new();
-        OnnxConversationAgent agent = new(library, host, NullLogger<OnnxConversationAgent>.Instance);
+        LocalConversationAgent agent = new(library, host, NullLogger<LocalConversationAgent>.Instance);
 
         AgentReply notDownloaded = await agent.ReplyAsync(new AgentRequest("tiny", "Be Walt.", []), TestContext.CancellationToken);
         AgentReply unknown = await agent.ReplyAsync(new AgentRequest("huge", "Be Walt.", []), TestContext.CancellationToken);
@@ -131,7 +131,7 @@ public sealed class LocalModelTests
     {
         AgentRequest request = new("tiny", "Be Walt.", [new AgentTurn(MessageSender.User, "Hi"), new AgentTurn(MessageSender.Contact, "Hey")]);
 
-        string json = JsonSerializer.Serialize(OnnxConversationAgent.ToMessages(request));
+        string json = JsonSerializer.Serialize(LocalConversationAgent.ToMessages(request));
 
         Assert.AreEqual("""[{"role":"system","content":"Be Walt."},{"role":"user","content":"Hi"},{"role":"assistant","content":"Hey"}]""", json);
     }
@@ -145,7 +145,7 @@ public sealed class LocalModelTests
     public async Task OnnxAgent_RepliesInCharacterWithPhi35Mini()
     {
         string appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HomiliaMessenger");
-        LocalModelLibrary library = new(Path.Combine(appData, "Models"), new FakeServer(), new OnnxModelHost(), NullLogger<LocalModelLibrary>.Instance);
+        LocalModelLibrary library = new(LocalModelCatalog.Models, Path.Combine(appData, "Models"), new FakeServer(), new OnnxModelHost(), NullLogger<LocalModelLibrary>.Instance);
 
         if (!library.IsDownloaded(library.Find(LocalModelCatalog.PHI_3_5_MINI)!))
         {
@@ -153,7 +153,7 @@ public sealed class LocalModelTests
         }
 
         using OnnxModelHost host = new();
-        OnnxConversationAgent agent = new(library, host, NullLogger<OnnxConversationAgent>.Instance);
+        LocalConversationAgent agent = new(library, host, NullLogger<LocalConversationAgent>.Instance);
         Contact walt = new() { Id = ContactId.New(), GivenName = "Walt", Birthday = new DateOnly(1948, 3, 14), Personality = "Gruff but warm grandfather." };
         AgentRequest request = new(LocalModelCatalog.PHI_3_5_MINI, $"You are {walt.DisplayName}, texting your grandkid. Reply in one short sentence.", [new AgentTurn(MessageSender.User, "Hey Grandpa, how's the knee?")]);
 
@@ -185,7 +185,7 @@ public sealed class LocalModelTests
     public async Task OnnxHost_StopsAGenerationInProgressWhenDisposed()
     {
         string appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HomiliaMessenger");
-        LocalModelLibrary library = new(Path.Combine(appData, "Models"), new FakeServer(), new OnnxModelHost(), NullLogger<LocalModelLibrary>.Instance);
+        LocalModelLibrary library = new(LocalModelCatalog.Models, Path.Combine(appData, "Models"), new FakeServer(), new OnnxModelHost(), NullLogger<LocalModelLibrary>.Instance);
         LocalModelDefinition model = library.Find(LocalModelCatalog.PHI_3_5_MINI)!;
 
         if (!library.IsDownloaded(model))

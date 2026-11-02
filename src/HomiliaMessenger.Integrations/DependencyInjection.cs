@@ -47,13 +47,16 @@ public static class DependencyInjection
         // Agent providers (and later speech providers) that satisfy Business capability contracts register here.
         string modelsDirectory = Path.Combine(applicationDataDirectory, MODELS_DIRECTORY_NAME);
         services.AddSingleton<OnnxModelHost>();
+        services.AddSingleton<LlamaModelHost>();
         services.AddSingleton(provider => new LocalModelLibrary(
             modelsDirectory,
             provider.GetRequiredService<IHttpClientFactory>(),
             provider.GetRequiredService<OnnxModelHost>(),
+            provider.GetRequiredService<LlamaModelHost>(),
+            provider.GetRequiredService<ICredentialStore>(),
             provider.GetRequiredService<ILogger<LocalModelLibrary>>()));
         services.AddSingleton<ILocalModelLibrary>(provider => provider.GetRequiredService<LocalModelLibrary>());
-        services.AddSingleton<IConversationAgent, OnnxConversationAgent>();
+        services.AddSingleton<IConversationAgent, LocalConversationAgent>();
         services.AddSingleton<ITextToSpeech>(provider => new KokoroSpeech(
             Path.Combine(applicationDataDirectory, "Speech", "Kokoro"),
             provider.GetRequiredService<IHttpClientFactory>(),

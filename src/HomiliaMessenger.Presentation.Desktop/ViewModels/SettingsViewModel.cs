@@ -58,12 +58,17 @@ public partial class SettingsViewModel : BaseViewModel
     /// </summary>
     public Func<string, string, Task<bool>>? ConfirmAsync { get; set; }
 
+    /// <summary>
+    /// Supplied by the view to show the add-model dialog. Returns the added model's name, or <see langword="null"/>.
+    /// </summary>
+    public Func<AddLocalModelViewModel, Task<string?>>? ShowAddModelAsync { get; set; }
+
     public SettingsViewModel(ThemeService themeService, ILocalModelLibrary localModels, ITextToSpeech? speech = null)
     {
         _themeService = themeService ?? throw new ArgumentNullException(nameof(themeService));
         _localModels = localModels ?? throw new ArgumentNullException(nameof(localModels));
         _speech = speech;
-        LocalModelsHint = "Run a model on this computer, without a GPU or an account. Download one, then choose it as a contact's agent on the Contacts page. Contacts without an agent reply with simulated text.";
+        LocalModelsHint = "Run a model on this computer, without a GPU or an account. Download one, or add any GGUF model from Hugging Face, then choose it as a contact's agent on the Contacts page. Contacts without an agent reply with simulated text.";
 
         AppDisplayName = AppInfo.AppDisplayName;
         ApplicationInfo = $"{AppInfo.AppDisplayName} - {AppInfo.Version}";
@@ -86,19 +91,51 @@ public partial class SettingsViewModel : BaseViewModel
         {
             foreach (LocalModel model in _localModels.List())
             {
-                LocalModels.Add(new LocalModelItem(model, _localModels, ConfirmWithViewAsync));
+                LocalModels.Add(CreateItem(model));
             }
         }
         else
         {
             // Files may have changed since the page was last shown.
-            foreach (LocalModelItem item in LocalModels.Where(item => !item.IsDownloading))
+            foreach (LocalModelItem item in LocalModels.Where(item => !item.IsDownloading).ToList())
             {
                 item.Refresh();
             }
         }
 
         return Task.CompletedTask;
+    }
+
+    private LocalModelItem CreateItem(LocalModel model)
+    {
+        LocalModelItem item = new(model, _localModels, ConfirmWithViewAsync);
+        item.Removed += (_, _) => LocalModels.Remove(item);
+        return item;
+    }
+
+    /// <summary>
+    /// Adds a GGUF model from Hugging Face, then starts downloading it.
+    /// </summary>
+    [RelayCommand]
+    private async Task AddModelAsync()
+    {
+        if (ShowAddModelAsync is null || await ShowAddModelAsync(new AddLocalModelViewModel(_localModels)) is not { } modelId)
+        {
+            return;
+        }
+
+        LocalModelItem? item = LocalModels.FirstOrDefault(existing => existing.Id == modelId);
+
+        if (item is null && _localModels.List().FirstOrDefault(model => model.Id == modelId) is { } added)
+        {
+            item = CreateItem(added);
+            LocalModels.Add(item);
+        }
+
+        if (item is not null && item.DownloadCommand.CanExecute(null))
+        {
+            await item.DownloadCommand.ExecuteAsync(null);
+        }
     }
 
     /// <summary>

@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using HomiliaMessenger.Business.Modules.Agents;
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -17,12 +18,12 @@ public sealed partial class LocalModelItem : ObservableObject
     private CancellationTokenSource? _download;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(CanDownload), nameof(SizeText))]
+    [NotifyPropertyChangedFor(nameof(CanDownload), nameof(CanRemove), nameof(SizeText))]
     [NotifyCanExecuteChangedFor(nameof(DownloadCommand), nameof(DeleteCommand))]
     private bool _isDownloaded;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(CanDownload))]
+    [NotifyPropertyChangedFor(nameof(CanDownload), nameof(CanRemove))]
     [NotifyCanExecuteChangedFor(nameof(DownloadCommand), nameof(DeleteCommand), nameof(CancelCommand))]
     private bool _isDownloading;
 
@@ -39,14 +40,25 @@ public sealed partial class LocalModelItem : ObservableObject
         Description = model.Description;
         License = model.License;
         DownloadBytes = model.DownloadBytes;
+        IsUserAdded = model.IsUserAdded;
         _isDownloaded = model.IsDownloaded;
     }
+
+    /// <summary>
+    /// Raised when the model is no longer offered, after the user removed a model they added.
+    /// </summary>
+    public event EventHandler? Removed;
 
     public string Id { get; }
     public string DisplayName { get; }
     public string Description { get; }
     public string License { get; }
     public long DownloadBytes { get; }
+
+    /// <summary>
+    /// Whether the user added it from Hugging Face; removing it also takes it off the list.
+    /// </summary>
+    public bool IsUserAdded { get; }
 
     public string SizeText => $"{FormatGigabytes(DownloadBytes)} · {License} license" + (IsDownloaded ? " · Downloaded" : string.Empty);
 
@@ -102,15 +114,19 @@ public sealed partial class LocalModelItem : ObservableObject
         _download?.Cancel();
     }
 
-    private bool CanDelete()
-    {
-        return IsDownloaded && !IsDownloading;
-    }
+    /// <summary>
+    /// A downloaded model can be removed to free its space; one the user added can be removed from the list at any time.
+    /// </summary>
+    public bool CanRemove => (IsDownloaded || IsUserAdded) && !IsDownloading;
 
-    [RelayCommand(CanExecute = nameof(CanDelete))]
+    [RelayCommand(CanExecute = nameof(CanRemove))]
     private async Task DeleteAsync()
     {
-        if (_confirmAsync is not null && !await _confirmAsync("Remove model", $"Remove {DisplayName} and free {FormatGigabytes(DownloadBytes)}? Contacts using it cannot reply until it is downloaded again."))
+        string question = IsUserAdded
+            ? $"Remove {DisplayName}? Its files are deleted and it is taken off this list; add it again from Hugging Face to use it. Contacts using it cannot reply until then."
+            : $"Remove {DisplayName} and free {FormatGigabytes(DownloadBytes)}? Contacts using it cannot reply until it is downloaded again.";
+
+        if (_confirmAsync is not null && !await _confirmAsync("Remove model", question))
         {
             return;
         }
@@ -130,14 +146,16 @@ public sealed partial class LocalModelItem : ObservableObject
 
     internal void Refresh()
     {
-        foreach (LocalModel model in _library.List())
+        LocalModel? model = _library.List().FirstOrDefault(model => model.Id == Id);
+
+        if (model is null)
         {
-            if (model.Id == Id)
-            {
-                IsDownloaded = model.IsDownloaded;
-                ProgressPercent = model.IsDownloaded ? 100 : ProgressPercent;
-            }
+            Removed?.Invoke(this, EventArgs.Empty);
+            return;
         }
+
+        IsDownloaded = model.IsDownloaded;
+        ProgressPercent = model.IsDownloaded ? 100 : ProgressPercent;
     }
 
     private static string FormatGigabytes(long bytes)

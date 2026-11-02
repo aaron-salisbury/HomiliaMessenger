@@ -1,21 +1,52 @@
+using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 namespace HomiliaMessenger.Integrations.LocalModels;
 
-internal sealed record LocalModelFile(string Name, long Size, string Sha256);
+/// <param name="Name">The file's path within its repository, which may include folders.</param>
+internal sealed record LocalModelFile(string Name, long Size, string Sha256)
+{
+    /// <summary>
+    /// The file's name in the model's folder on this device.
+    /// </summary>
+    public string LocalName => Path.GetFileName(Name);
+
+    /// <summary>
+    /// The file's path for a download URL, with each folder and the name escaped.
+    /// </summary>
+    public string UrlPath => string.Join('/', Name.Split('/').Select(Uri.EscapeDataString));
+}
 
 /// <summary>
-/// A model the application knows how to download and run with ONNX Runtime GenAI.
+/// How a model's files are run: ONNX Runtime GenAI, or llama.cpp for GGUF files.
+/// </summary>
+internal enum LocalModelFormat
+{
+    Onnx,
+    Gguf
+}
+
+/// <summary>
+/// A model the application knows how to download and run.
 /// </summary>
 /// <param name="ContextTokens">
 /// How many tokens of prompt and reply to keep in the model's cache. The cache is allocated up front, so this bounds the
-/// memory used beyond the model itself; longer chats are trimmed to fit.
+/// memory used beyond the model itself; longer chats are trimmed to fit. Zero lets the runtime choose from the model.
 /// </param>
 /// <param name="BaseUrl">Where the files are downloaded from, pinned to a specific revision so the hashes stay valid.</param>
-internal sealed record LocalModelDefinition(string Id, string DisplayName, string Description, string License, int ContextTokens, string BaseUrl, IReadOnlyList<LocalModelFile> Files)
+/// <param name="Repository">For a model the user added, the Hugging Face repository it came from.</param>
+internal sealed record LocalModelDefinition(string Id, string DisplayName, string Description, string License, int ContextTokens, string BaseUrl, IReadOnlyList<LocalModelFile> Files, LocalModelFormat Format = LocalModelFormat.Onnx, string? Repository = null)
 {
     public long DownloadBytes => Files.Sum(file => file.Size);
+
+    public bool IsUserAdded => Repository is not null;
+
+    /// <summary>
+    /// The file a runtime opens: the model folder for ONNX, or the first (or only) GGUF file.
+    /// </summary>
+    public string EntryFile => Files[0].LocalName;
 }
 
 /// <summary>

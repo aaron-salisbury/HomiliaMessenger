@@ -20,6 +20,7 @@ public partial class SettingsView : UserControl
             {
                 _attachedModel = model;
                 model.ConfirmAsync = ConfirmWithDialogAsync;
+                model.ShowAddModelAsync = ShowAddModelAsync;
             }
         };
 
@@ -30,8 +31,18 @@ public partial class SettingsView : UserControl
                 _attachedModel.ConfirmAsync = null;
             }
 
+            if (_attachedModel is not null && _attachedModel.ShowAddModelAsync == ShowAddModelAsync)
+            {
+                _attachedModel.ShowAddModelAsync = null;
+            }
+
             _attachedModel = null;
         };
+    }
+
+    private Task<string?> ShowAddModelAsync(AddLocalModelViewModel model)
+    {
+        return TopLevel.GetTopLevel(this) is Window owner ? AddLocalModelWindow.ShowAsync(owner, model) : Task.FromResult<string?>(null);
     }
 
     private Task<bool> ConfirmWithDialogAsync(string title, string message)
