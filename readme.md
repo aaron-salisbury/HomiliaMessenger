@@ -4,7 +4,7 @@
 
 Homilia Messenger is a desktop messenger for experimenting with conversations with AI agents. Every contact is an AI persona. You describe who they are, point them at an agent, and chat with them as if they were that person. You can change the agent or model behind a contact and carry on the same conversation.
 
-See the [product specification](docs/product_specification.md) for the full direction and delivery phases.
+See the [product specification](docs/product_specification.md) for the full direction.
 
 ## Current Features
 
