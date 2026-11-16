@@ -4,6 +4,7 @@ using FluentValidation.Results;
 using HomiliaMessenger.Business.Base.Extensions;
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
+using HomiliaMessenger.Business.Modules.ImageGeneration;
 using HomiliaMessenger.Business.Modules.Speech;
 using HomiliaMessenger.Presentation.Desktop.Base.Controls.RibbonControls;
 using HomiliaMessenger.Presentation.Desktop.Models;
@@ -21,6 +22,7 @@ public partial class ContactsViewModel : BaseViewModel, IRibbonProvider
     private readonly IContactService _contacts;
     private readonly ILocalModelLibrary _localModels;
     private readonly ITextToSpeech? _speech;
+    private readonly IPortraitService? _portraits;
     private bool _loaded;
     private bool _preserveDetail;
     private bool _syncingListSelection;
@@ -49,15 +51,23 @@ public partial class ContactsViewModel : BaseViewModel, IRibbonProvider
     /// </summary>
     public Func<Task<bool>>? ConfirmDiscardChangesAsync { get; set; }
 
+    /// <summary>
+    /// Raised when the contact editor asks to go to Settings, such as to download an image model. The editor and any
+    /// unsaved changes stay as they are.
+    /// </summary>
+    public event EventHandler? SettingsRequested;
+
     public Type RibbonControlType => typeof(ContactsRibbonControl);
 
-    public ContactsViewModel(IContactService contacts, ILocalModelLibrary localModels, ITextToSpeech? speech = null)
+    public ContactsViewModel(IContactService contacts, ILocalModelLibrary localModels, ITextToSpeech? speech = null, IPortraitService? portraits = null)
     {
         _contacts = contacts ?? throw new ArgumentNullException(nameof(contacts));
         _localModels = localModels ?? throw new ArgumentNullException(nameof(localModels));
         _speech = speech;
+        _portraits = portraits;
         _detail = CreateDetail(null);
         _detail.MessageRaised += Detail_MessageRaised;
+        _detail.SettingsRequested += Detail_SettingsRequested;
     }
 
     public override async Task InitializeAsync()
@@ -133,14 +143,16 @@ public partial class ContactsViewModel : BaseViewModel, IRibbonProvider
     /// </summary>
     private ContactDetailViewModel CreateDetail(Contact? contact)
     {
-        return new ContactDetailViewModel(contact, AgentOption.From(_localModels), _speech?.Voices, _speech?.Model.IsAvailable == true, _speech);
+        return new ContactDetailViewModel(contact, AgentOption.From(_localModels), _speech?.Voices, _speech?.Model.IsAvailable == true, _speech, _portraits);
     }
 
     private void ReplaceDetail(ContactDetailViewModel next)
     {
         ContactDetailViewModel previous = Detail;
         previous.MessageRaised -= Detail_MessageRaised;
+        previous.SettingsRequested -= Detail_SettingsRequested;
         next.MessageRaised += Detail_MessageRaised;
+        next.SettingsRequested += Detail_SettingsRequested;
 
         // Switch the binding to the new editor before disposing the old one, so the view never shows a disposed model.
         Detail = next;
@@ -150,6 +162,11 @@ public partial class ContactsViewModel : BaseViewModel, IRibbonProvider
     private void Detail_MessageRaised(object? sender, string message)
     {
         Status = message;
+    }
+
+    private void Detail_SettingsRequested(object? sender, EventArgs e)
+    {
+        SettingsRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private void SyncListSelection()

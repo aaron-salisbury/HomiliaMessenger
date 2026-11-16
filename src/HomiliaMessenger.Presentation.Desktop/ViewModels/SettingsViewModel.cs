@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.Input;
 using FluentValidation.Results;
 using HomiliaMessenger.Business.Base.Extensions;
 using HomiliaMessenger.Business.Modules.Agents;
+using HomiliaMessenger.Business.Modules.ImageGeneration;
 using HomiliaMessenger.Business.Modules.Memories;
 using HomiliaMessenger.Business.Modules.Speech;
 using HomiliaMessenger.Business.Modules.WebSearch;
@@ -88,6 +89,29 @@ public partial class SettingsViewModel : BaseViewModel
 
     public string EmbeddingModelsHint { get; }
 
+    private readonly IImageModelLibrary? _imageModels;
+    private readonly IImageGenerator? _imageGenerator;
+
+    public bool IsImageGenerationAvailable => _imageModels is not null;
+
+    /// <summary>
+    /// Models that draw contact photos, kept apart from the models contacts converse with. Kept for the view model's
+    /// lifetime so a download continues while the user is on another page.
+    /// </summary>
+    public ObservableCollection<ImageModelItem> ImageModels { get; } = [];
+
+    public string ImageModelsHint { get; } = "Generate contact photos from a description, on this computer. Download an image model, then choose Generate photo beside a contact's photo on the Contacts page. Optional; works without a GPU, using about 4 GB of memory while a photo is made.";
+
+    /// <summary>
+    /// Why photos cannot be generated in this build or on this system, when that is so; downloading a model would not help.
+    /// </summary>
+    [ObservableProperty] private string? _imageRuntimeProblem;
+
+    /// <summary>
+    /// Supplied by the view to show the add-image-model dialog. Returns the added model's name, or <see langword="null"/>.
+    /// </summary>
+    public Func<AddImageModelViewModel, Task<string?>>? ShowAddImageModelAsync { get; set; }
+
     /// <summary>
     /// Supplied by the view to ask the user to confirm an action, given a title and a message.
     /// </summary>
@@ -98,8 +122,10 @@ public partial class SettingsViewModel : BaseViewModel
     /// </summary>
     public Func<AddLocalModelViewModel, Task<string?>>? ShowAddModelAsync { get; set; }
 
-    public SettingsViewModel(ThemeService themeService, ILocalModelLibrary localModels, ITextToSpeech? speech = null, IEmbeddingModelLibrary? embeddingModels = null, IMemoryService? memories = null, IWebSearchService? webSearch = null)
+    public SettingsViewModel(ThemeService themeService, ILocalModelLibrary localModels, ITextToSpeech? speech = null, IEmbeddingModelLibrary? embeddingModels = null, IMemoryService? memories = null, IWebSearchService? webSearch = null, IImageModelLibrary? imageModels = null, IImageGenerator? imageGenerator = null)
     {
+        _imageModels = imageModels;
+        _imageGenerator = imageGenerator;
         _webSearch = webSearch;
         _themeService = themeService ?? throw new ArgumentNullException(nameof(themeService));
         _localModels = localModels ?? throw new ArgumentNullException(nameof(localModels));
@@ -144,6 +170,8 @@ public partial class SettingsViewModel : BaseViewModel
             }
         }
 
+        RefreshImageModels();
+
         if (_embeddingModels is not null)
         {
             if (EmbeddingModels.Count == 0)
@@ -177,6 +205,67 @@ public partial class SettingsViewModel : BaseViewModel
         if (_memories is not null)
         {
             _ = EmbedMemoriesAsync(_memories);
+        }
+    }
+
+    /// <summary>
+    /// Lists the image models, or shows their current state when they are already listed.
+    /// </summary>
+    private void RefreshImageModels()
+    {
+        if (_imageModels is null)
+        {
+            return;
+        }
+
+        ImageGeneratorAvailability? availability = _imageGenerator?.GetAvailability();
+        ImageRuntimeProblem = availability is { IsRuntimeIncluded: false } ? availability.Problem : null;
+
+        if (ImageModels.Count == 0)
+        {
+            foreach (ImageModel model in _imageModels.List())
+            {
+                ImageModels.Add(CreateImageItem(model));
+            }
+
+            return;
+        }
+
+        foreach (ImageModelItem item in ImageModels.Where(item => !item.IsDownloading).ToList())
+        {
+            item.Refresh();
+        }
+    }
+
+    private ImageModelItem CreateImageItem(ImageModel model)
+    {
+        ImageModelItem item = new(model, _imageModels!, ConfirmWithViewAsync, RefreshImageModels);
+        item.Removed += (_, _) => ImageModels.Remove(item);
+        return item;
+    }
+
+    /// <summary>
+    /// Adds a Stable Diffusion 1.x model from Hugging Face, then starts downloading it.
+    /// </summary>
+    [RelayCommand]
+    private async Task AddImageModelAsync()
+    {
+        if (_imageModels is null || ShowAddImageModelAsync is null || await ShowAddImageModelAsync(new AddImageModelViewModel(_imageModels)) is not { } modelId)
+        {
+            return;
+        }
+
+        ImageModelItem? item = ImageModels.FirstOrDefault(existing => existing.Id == modelId);
+
+        if (item is null && _imageModels.List().FirstOrDefault(model => model.Id == modelId) is { } added)
+        {
+            item = CreateImageItem(added);
+            ImageModels.Add(item);
+        }
+
+        if (item is not null && item.DownloadCommand.CanExecute(null))
+        {
+            await item.DownloadCommand.ExecuteAsync(null);
         }
     }
 

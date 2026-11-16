@@ -1,0 +1,127 @@
+<Project>
+  <!--
+    Includes the stable-diffusion.cpp CPU runtime used for local image generation, so users never install it themselves.
+
+    The pinned upstream release is downloaded once into obj/, checked against its SHA-256 hash, and the libraries the app
+    loads are copied to StableDiffusion/<rid>/ in the build and publish output, with their MIT notices. Image models are
+    separate downloads made from Settings; nothing here is committed to the repository.
+
+    stable-diffusion.cpp ships its own ggml, which conflicts with the ggml LLamaSharp loads for conversation models: the
+    Windows and Linux loaders bind a library to an already-loaded one of the same name, so whichever loaded second would
+    fail. The private ggml is therefore renamed to sdml (same length), in its file names and in the dependency names of
+    the libraries that load it; no code is changed. See NativeLibraryRenamer.cs.
+
+    Upgrading the runtime: change the release, commit, and hashes below, review the new include/stable-diffusion.h against
+    StableDiffusionNative.cs, and run the ImageModel tests with the real model.
+  -->
+  <PropertyGroup>
+    <StableDiffusionCommit>5dcfa79</StableDiffusionCommit>
+    <StableDiffusionReleaseUrl>https://github.com/leejet/stable-diffusion.cpp/releases/download/master-1104-5dcfa79/</StableDiffusionReleaseUrl>
+    <_StableDiffusionRid Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</_StableDiffusionRid>
+    <_StableDiffusionRid Condition="'$(_StableDiffusionRid)' == '' and $([MSBuild]::IsOSPlatform('Windows')) and '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'">win-x64</_StableDiffusionRid>
+    <_StableDiffusionRid Condition="'$(_StableDiffusionRid)' == '' and $([MSBuild]::IsOSPlatform('Linux')) and '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'">linux-x64</_StableDiffusionRid>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(_StableDiffusionRid)' == 'win-x64'">
+    <_StableDiffusionAsset>sd-master-5dcfa79-bin-win-cpu-x64.zip</_StableDiffusionAsset>
+    <_StableDiffusionSha256>B5297BEA319D6247E95E9A6834C190047AB0A493A29539B41F217E9CC440025A</_StableDiffusionSha256>
+  </PropertyGroup>
+
+  <!-- Built on Ubuntu 26.04: needs a recent libstdc++ (GLIBCXX_3.4.32) and libgomp. Not yet verified on Linux. -->
+  <PropertyGroup Condition="'$(_StableDiffusionRid)' == 'linux-x64'">
+    <_StableDiffusionAsset>sd-master-5dcfa79-bin-Linux-Ubuntu-26.04-x86_64.zip</_StableDiffusionAsset>
+    <_StableDiffusionSha256>4233A04E347238D2579771197C348659887DAD06FDD1A586E330C28D5A4527CE</_StableDiffusionSha256>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(_StableDiffusionAsset)' != ''">
+    <_StableDiffusionCache>$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)stable-diffusion\</_StableDiffusionCache>
+    <_StableDiffusionArchive>$(_StableDiffusionCache)$(_StableDiffusionAsset)</_StableDiffusionArchive>
+    <_StableDiffusionExtracted>$(_StableDiffusionCache)$(_StableDiffusionRid)-release\</_StableDiffusionExtracted>
+    <_StableDiffusionOutput>$(_StableDiffusionCache)$(_StableDiffusionRid)\</_StableDiffusionOutput>
+    <_StableDiffusionStamp>$(_StableDiffusionOutput)runtime.stamp</_StableDiffusionStamp>
+  </PropertyGroup>
+
+  <UsingTask TaskName="RenameNativeLibraries" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Libraries ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
+      <Renames ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
+      <OutputDirectory ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)NativeLibraryRenamer.cs" />
+    </Task>
+  </UsingTask>
+
+  <Target Name="PrepareStableDiffusionRuntime"
+          Condition="'$(_StableDiffusionAsset)' != '' and !Exists('$(_StableDiffusionStamp)')">
+    <MakeDir Directories="$(_StableDiffusionCache)" />
+
+    <DownloadFile Condition="!Exists('$(_StableDiffusionArchive)')"
+                  SourceUrl="$(StableDiffusionReleaseUrl)$(_StableDiffusionAsset)"
+                  DestinationFolder="$(_StableDiffusionCache)"
+                  Retries="2"
+                  ContinueOnError="true" />
+
+    <Error Condition="!Exists('$(_StableDiffusionArchive)') and '$(_IsPublishing)' == 'true'"
+           Text="Could not download the image generation runtime ($(_StableDiffusionAsset)); a published app must include it." />
+    <Warning Condition="!Exists('$(_StableDiffusionArchive)')"
+             Text="Could not download the image generation runtime ($(_StableDiffusionAsset)). This build will run without image generation; build again online to include it." />
+
+    <GetFileHash Condition="Exists('$(_StableDiffusionArchive)')" Files="$(_StableDiffusionArchive)" Algorithm="SHA256">
+      <Output TaskParameter="Hash" PropertyName="_StableDiffusionActualSha256" />
+    </GetFileHash>
+    <Delete Condition="Exists('$(_StableDiffusionArchive)') and '$(_StableDiffusionActualSha256.ToUpperInvariant())' != '$(_StableDiffusionSha256)'"
+            Files="$(_StableDiffusionArchive)" />
+    <Error Condition="'$(_StableDiffusionActualSha256)' != '' and '$(_StableDiffusionActualSha256.ToUpperInvariant())' != '$(_StableDiffusionSha256)'"
+           Text="The image generation runtime ($(_StableDiffusionAsset)) did not match its pinned SHA-256 hash and was deleted." />
+
+    <RemoveDir Condition="Exists('$(_StableDiffusionArchive)')" Directories="$(_StableDiffusionExtracted);$(_StableDiffusionOutput)" />
+    <Unzip Condition="Exists('$(_StableDiffusionArchive)')" SourceFiles="$(_StableDiffusionArchive)" DestinationFolder="$(_StableDiffusionExtracted)" />
+
+    <ItemGroup Condition="Exists('$(_StableDiffusionArchive)') and '$(_StableDiffusionRid)' == 'win-x64'">
+      <_StableDiffusionLibrary Include="$(_StableDiffusionExtracted)stable-diffusion.dll" TargetName="stable-diffusion.dll" />
+      <_StableDiffusionLibrary Include="$(_StableDiffusionExtracted)ggml.dll" TargetName="sdml.dll" />
+      <_StableDiffusionLibrary Include="$(_StableDiffusionExtracted)ggml-base.dll" TargetName="sdml-base.dll" />
+      <_StableDiffusionLibrary Include="$(_StableDiffusionExtracted)ggml-cpu-*.dll" />
+      <_StableDiffusionRename Include="ggml.dll" NewName="sdml.dll" />
+      <_StableDiffusionRename Include="ggml-base.dll" NewName="sdml-base.dll" />
+    </ItemGroup>
+
+    <ItemGroup Condition="Exists('$(_StableDiffusionArchive)') and '$(_StableDiffusionRid)' == 'linux-x64'">
+      <_StableDiffusionLibrary Include="$(_StableDiffusionExtracted)libstable-diffusion.so" TargetName="libstable-diffusion.so" />
+      <_StableDiffusionLibrary Include="$(_StableDiffusionExtracted)libggml.so.1" TargetName="libsdml.so.1" />
+      <_StableDiffusionLibrary Include="$(_StableDiffusionExtracted)libggml-base.so.1" TargetName="libsdml-base.so.1" />
+      <_StableDiffusionLibrary Include="$(_StableDiffusionExtracted)libggml-cpu-*.so" />
+      <_StableDiffusionRename Include="libggml.so.1" NewName="libsdml.so.1" />
+      <_StableDiffusionRename Include="libggml-base.so.1" NewName="libsdml-base.so.1" />
+    </ItemGroup>
+
+    <RenameNativeLibraries Condition="Exists('$(_StableDiffusionArchive)')"
+                           Libraries="@(_StableDiffusionLibrary)"
+                           Renames="@(_StableDiffusionRename)"
+                           OutputDirectory="$(_StableDiffusionOutput)" />
+    <Copy Condition="Exists('$(_StableDiffusionArchive)')"
+          SourceFiles="$(_StableDiffusionExtracted)stable-diffusion.cpp.txt;$(_StableDiffusionExtracted)ggml.txt"
+          DestinationFiles="$(_StableDiffusionOutput)LICENSE.stable-diffusion.cpp.txt;$(_StableDiffusionOutput)LICENSE.ggml.txt" />
+    <WriteLinesToFile Condition="Exists('$(_StableDiffusionArchive)')"
+                      File="$(_StableDiffusionStamp)"
+                      Lines="stable-diffusion.cpp $(StableDiffusionCommit) $(_StableDiffusionAsset) $(_StableDiffusionSha256)"
+                      Overwrite="true" />
+    <RemoveDir Directories="$(_StableDiffusionExtracted)" />
+  </Target>
+
+  <!-- Runs on every build, so the runtime reaches this project's output and, through project references, the app's. -->
+  <Target Name="IncludeStableDiffusionRuntime"
+          BeforeTargets="AssignTargetPaths"
+          DependsOnTargets="PrepareStableDiffusionRuntime"
+          Condition="'$(_StableDiffusionAsset)' != ''">
+    <ItemGroup Condition="Exists('$(_StableDiffusionStamp)')">
+      <_StableDiffusionRuntimeFile Include="$(_StableDiffusionOutput)*" Exclude="$(_StableDiffusionStamp)" />
+      <Content Include="@(_StableDiffusionRuntimeFile)"
+               Link="StableDiffusion\$(_StableDiffusionRid)\%(Filename)%(Extension)"
+               CopyToOutputDirectory="PreserveNewest"
+               CopyToPublishDirectory="PreserveNewest"
+               ExcludeFromSingleFile="true" />
+    </ItemGroup>
+  </Target>
+</Project>

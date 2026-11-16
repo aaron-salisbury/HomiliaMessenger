@@ -132,6 +132,25 @@ internal sealed class OnnxModelHost : IAsyncDisposable, IDisposable
     }
 
     /// <summary>
+    /// Releases any loaded model and keeps another from loading until <paramref name="whileUnloaded"/> finishes, so
+    /// memory set aside for other work (such as drawing an image) is not taken back partway through.
+    /// </summary>
+    internal async Task HoldUnloadedAsync(Func<Task> whileUnloaded)
+    {
+        await _gate.WaitAsync().ConfigureAwait(false);
+
+        try
+        {
+            UnloadCore();
+            await whileUnloaded().ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
     /// Stops any generation in progress and releases the model once it has stopped.
     /// </summary>
     public async ValueTask DisposeAsync()

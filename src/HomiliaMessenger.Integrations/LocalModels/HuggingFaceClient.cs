@@ -15,6 +15,12 @@ using System.Threading.Tasks;
 namespace HomiliaMessenger.Integrations.LocalModels;
 
 /// <summary>
+/// A Hugging Face repository at the revision it was read at, with its large files.
+/// </summary>
+/// <param name="PipelineTag">What the repository says its model does, such as <c>text-to-image</c>.</param>
+internal sealed record HuggingFaceRepository(string RepoId, string Revision, string? License, string? PipelineTag, bool IsGated, IReadOnlyList<HuggingFaceFile> Files);
+
+/// <summary>
 /// Finds GGUF models in Hugging Face repositories, through Hugging Face's public API, and holds the access token used for
 /// gated repositories.
 /// </summary>
@@ -113,32 +119,11 @@ internal sealed partial class HuggingFaceClient
                 return HuggingFaceLookup.Unsuccessful(HuggingFaceLookupStatus.NeedsToken, repoId, "This repository is gated. Accept its terms on Hugging Face, then save an access token here.");
             }
 
-            List<HuggingFaceFile> files = [];
-            string? next = $"{SITE}api/models/{repoId}/tree/{revision}?recursive=true";
+            (List<HuggingFaceFile> files, HuggingFaceLookup? listProblem) = await ListFilesAsync(client, repoId, revision, token, cancellationToken).ConfigureAwait(false);
 
-            // The file list comes in pages, linked from each response.
-            while (next is not null)
+            if (listProblem is not null)
             {
-                using HttpResponseMessage page = await SendAsync(client, next, token, cancellationToken).ConfigureAwait(false);
-
-                if (Unavailable(page, repoId, token) is { } listProblem)
-                {
-                    return listProblem;
-                }
-
-                using JsonDocument entries = JsonDocument.Parse(await page.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false));
-
-                foreach (JsonElement entry in entries.RootElement.EnumerateArray())
-                {
-                    if (entry.GetProperty("type").GetString() == "file"
-                        && entry.TryGetProperty("lfs", out JsonElement lfs) && lfs.ValueKind == JsonValueKind.Object
-                        && lfs.TryGetProperty("oid", out JsonElement oid))
-                    {
-                        files.Add(new HuggingFaceFile(entry.GetProperty("path").GetString()!, entry.GetProperty("size").GetInt64(), oid.GetString()!));
-                    }
-                }
-
-                next = NextPage(page);
+                return listProblem;
             }
 
             IReadOnlyList<GgufVariant> variants = Variants(files);
@@ -152,6 +137,125 @@ internal sealed partial class HuggingFaceClient
         {
             return HuggingFaceLookup.Unsuccessful(HuggingFaceLookupStatus.Failed, repoId, "Could not reach Hugging Face: " + error.Message);
         }
+    }
+
+    /// <summary>
+    /// The large (LFS) files of a repository at <paramref name="revision"/>, with their sizes and SHA-256 hashes, or the
+    /// problem that prevented listing them.
+    /// </summary>
+    private static async Task<(List<HuggingFaceFile> Files, HuggingFaceLookup? Problem)> ListFilesAsync(HttpClient client, string repoId, string revision, string? token, CancellationToken cancellationToken)
+    {
+        List<HuggingFaceFile> files = [];
+        string? next = $"{SITE}api/models/{repoId}/tree/{revision}?recursive=true";
+
+        // The file list comes in pages, linked from each response.
+        while (next is not null)
+        {
+            using HttpResponseMessage page = await SendAsync(client, next, token, cancellationToken).ConfigureAwait(false);
+
+            if (Unavailable(page, repoId, token) is { } problem)
+            {
+                return (files, problem);
+            }
+
+            using JsonDocument entries = JsonDocument.Parse(await page.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false));
+
+            foreach (JsonElement entry in entries.RootElement.EnumerateArray())
+            {
+                if (entry.GetProperty("type").GetString() == "file"
+                    && entry.TryGetProperty("lfs", out JsonElement lfs) && lfs.ValueKind == JsonValueKind.Object
+                    && lfs.TryGetProperty("oid", out JsonElement oid))
+                {
+                    files.Add(new HuggingFaceFile(entry.GetProperty("path").GetString()!, entry.GetProperty("size").GetInt64(), oid.GetString()!));
+                }
+            }
+
+            next = NextPage(page);
+        }
+
+        return (files, null);
+    }
+
+    /// <summary>
+    /// A repository's information and large files at its current revision, for models other than conversational ones,
+    /// or the problem that prevented reading them (as an unsuccessful lookup).
+    /// </summary>
+    internal async Task<(HuggingFaceRepository? Repository, HuggingFaceLookup? Problem)> GetRepositoryAsync(string repository, CancellationToken cancellationToken)
+    {
+        string? repoId = ParseRepository(repository);
+
+        if (repoId is null)
+        {
+            return (null, HuggingFaceLookup.Unsuccessful(HuggingFaceLookupStatus.NotFound, repository, "Enter a model's repository as owner/name, such as NishQ1/vora-create-sd15, or paste its address from huggingface.co."));
+        }
+
+        string? token = await GetTokenAsync(cancellationToken).ConfigureAwait(false);
+        HttpClient client = _httpClientFactory.CreateClient();
+
+        try
+        {
+            using HttpResponseMessage info = await SendAsync(client, $"{SITE}api/models/{repoId}", token, cancellationToken).ConfigureAwait(false);
+
+            if (Unavailable(info, repoId, token) is { } problem)
+            {
+                return (null, problem);
+            }
+
+            using JsonDocument model = JsonDocument.Parse(await info.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false));
+            JsonElement root = model.RootElement;
+            string revision = root.GetProperty("sha").GetString()!;
+            bool gated = root.TryGetProperty("gated", out JsonElement gate) && gate.ValueKind is not (JsonValueKind.False or JsonValueKind.Null);
+            string? license = root.TryGetProperty("cardData", out JsonElement card) && card.ValueKind == JsonValueKind.Object
+                && card.TryGetProperty("license", out JsonElement value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+            string? pipelineTag = root.TryGetProperty("pipeline_tag", out JsonElement pipeline) && pipeline.ValueKind == JsonValueKind.String ? pipeline.GetString() : null;
+
+            if (gated && token is null)
+            {
+                return (null, HuggingFaceLookup.Unsuccessful(HuggingFaceLookupStatus.NeedsToken, repoId,
+                    "This repository is gated. Accept its terms on Hugging Face, then save an access token under Local Models > Add from Hugging Face."));
+            }
+
+            (List<HuggingFaceFile> files, HuggingFaceLookup? listProblem) = await ListFilesAsync(client, repoId, revision, token, cancellationToken).ConfigureAwait(false);
+
+            return listProblem is not null ? (null, listProblem) : (new HuggingFaceRepository(repoId, revision, license, pipelineTag, gated, files), null);
+        }
+        catch (Exception error) when (error is HttpRequestException or JsonException or KeyNotFoundException or InvalidOperationException
+            || (error is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            return (null, HuggingFaceLookup.Unsuccessful(HuggingFaceLookupStatus.Failed, repoId, "Could not reach Hugging Face: " + error.Message));
+        }
+    }
+
+    /// <summary>
+    /// Reads the first <paramref name="bytes"/> bytes of a file in a repository with a range request, such as a model's
+    /// header, without downloading the rest. A server that ignores the range is cut off after that many bytes.
+    /// </summary>
+    internal async Task<byte[]> ReadStartAsync(string repoId, string revision, string path, int bytes, CancellationToken cancellationToken)
+    {
+        string? token = await GetTokenAsync(cancellationToken).ConfigureAwait(false);
+        string url = $"{SITE}{repoId}/resolve/{revision}/{string.Join('/', path.Split('/').Select(Uri.EscapeDataString))}";
+        using HttpRequestMessage request = new(HttpMethod.Get, url);
+        request.Headers.Range = new RangeHeaderValue(0, bytes - 1);
+
+        if (token is not null)
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
+
+        using HttpResponseMessage response = await _httpClientFactory.CreateClient().SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+
+        await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        byte[] buffer = new byte[bytes];
+        int total = 0;
+        int read;
+
+        while (total < bytes && (read = await stream.ReadAsync(buffer.AsMemory(total, bytes - total), cancellationToken).ConfigureAwait(false)) > 0)
+        {
+            total += read;
+        }
+
+        return total == bytes ? buffer : buffer[..total];
     }
 
     /// <summary>

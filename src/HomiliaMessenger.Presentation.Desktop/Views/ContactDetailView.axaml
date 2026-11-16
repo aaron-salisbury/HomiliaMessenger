@@ -88,6 +88,11 @@
             <Button Name="FavoriteButton" Command="{Binding FlipFavoriteCommand}" Classes="noBackground" ToolTip.Tip="Favorite">
                 <i:MaterialIcon Kind="{Binding IsFavorite, Converter={StaticResource BooleanToMaterialIconKindConverter}, ConverterParameter=Star|StarOutline}" Width="30" Height="30" />
             </Button>
+            <!-- Generate photo -->
+            <Button Click="GeneratePhoto_Click" Classes="noBackground" ToolTip.Tip="Generate photo" VerticalAlignment="Center"
+                    IsVisible="{Binding CanGeneratePhoto}" AutomationProperties.Name="Generate photo">
+                <i:MaterialIcon Kind="AutoFix" Width="22" Height="22" Opacity="0.7" />
+            </Button>
             <!-- Remove photo -->
             <Button Command="{Binding RemovePhotoCommand}" Classes="noBackground" ToolTip.Tip="Remove photo" VerticalAlignment="Center">
                 <i:MaterialIcon Kind="ImageRemoveOutline" Width="22" Height="22" Opacity="0.7" />

@@ -15,6 +15,29 @@ public partial class ContactDetailView : UserControl
         InitializeComponent();
     }
 
+    private async void GeneratePhoto_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ContactDetailViewModel model || TopLevel.GetTopLevel(this) is not Window owner
+            || model.CreatePhotoGenerator() is not { } generator)
+        {
+            return;
+        }
+
+        // async void handler: any escaping exception would crash the app and lose unsaved edits.
+        try
+        {
+            using (generator)
+            {
+                await GeneratePhotoWindow.ShowAsync(owner, generator);
+                model.AcceptGeneratedPhoto(generator);
+            }
+        }
+        catch (Exception error)
+        {
+            model.ReportPhotoError(error);
+        }
+    }
+
     private async void ChoosePhoto_Click(object? sender, RoutedEventArgs e)
     {
         if (DataContext is not ContactDetailViewModel model)

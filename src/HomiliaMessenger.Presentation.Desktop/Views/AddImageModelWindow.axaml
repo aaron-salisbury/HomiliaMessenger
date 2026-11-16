@@ -1,0 +1,93 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="660" d:DesignHeight="700"
+        x:Class="HomiliaMessenger.Presentation.Desktop.Views.AddImageModelWindow"
+        xmlns:vm="clr-namespace:HomiliaMessenger.Presentation.Desktop.ViewModels"
+        x:DataType="vm:AddImageModelViewModel"
+        xmlns:i="using:Material.Icons.Avalonia"
+        Width="660" Height="700" MinWidth="500" MinHeight="480"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" CanMinimize="False"
+        Title="Add an image model from Hugging Face">
+
+    <Grid RowDefinitions="Auto,Auto,Auto,*,Auto,Auto" Margin="24,20,24,20">
+
+        <StackPanel Grid.Row="0" Spacing="6" Margin="0,0,0,14">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+                <i:MaterialIcon Kind="ImageAutoAdjust" Width="22" Height="22" Opacity="0.8" />
+                <TextBlock Text="Add an image model from Hugging Face" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock TextWrapping="Wrap" FontSize="12" Opacity="0.75"
+                       Text="For experimenting. Only Stable Diffusion 1.x models in GGUF format, with the text encoder and VAE in the same file, can run here. Each file's header is read to check what it holds; nothing else is downloaded until you add one." />
+        </StackPanel>
+
+        <Grid Grid.Row="1" ColumnDefinitions="*,8,Auto">
+            <TextBox Grid.Column="0" Text="{Binding Repository}" PlaceholderText="owner/name, such as NishQ1/vora-create-sd15, or its address"
+                     AutomationProperties.Name="Repository" />
+            <Button Grid.Column="2" Content="Look up" Command="{Binding LookUpCommand}" IsDefault="True" />
+        </Grid>
+
+        <StackPanel Grid.Row="2" Spacing="6" Margin="0,10,0,0">
+            <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsBusy}" />
+            <SelectableTextBlock Text="{Binding Status}" TextWrapping="Wrap" FontSize="12" />
+            <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding RepositoryUrl, Converter={x:Static ObjectConverters.IsNotNull}}">
+                <TextBlock Text="{Binding RepositoryDetails}" FontSize="12" Opacity="0.75" VerticalAlignment="Center" TextWrapping="Wrap" />
+                <HyperlinkButton Content="Model page" NavigateUri="{Binding RepositoryUrl}" FontSize="12" Padding="0" VerticalAlignment="Center" />
+            </StackPanel>
+        </StackPanel>
+
+        <ListBox Grid.Row="3" Margin="0,12,0,0" ItemsSource="{Binding Files}" SelectedItem="{Binding SelectedFile}"
+                 IsVisible="{Binding HasFiles}" AutomationProperties.Name="Model files">
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:ImageModelFileOption">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding Details}" FontSize="12" Opacity="0.75" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding Note}" IsVisible="{Binding HasNote}" FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource SystemControlErrorTextForegroundBrush}" />
+                    </StackPanel>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <!-- Settings for a supported file: chosen by the user from the model card, never guessed -->
+        <Border Grid.Row="4" IsVisible="{Binding HasSupportedSelection}" Margin="0,12,0,0" Padding="12" CornerRadius="8"
+                Background="{DynamicResource SystemControlBackgroundBaseLowBrush}">
+            <StackPanel Spacing="8">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <i:MaterialIcon Kind="AlertOutline" Width="18" Height="18" />
+                    <TextBlock Text="Compatibility unverified" FontWeight="SemiBold" VerticalAlignment="Center" />
+                </StackPanel>
+                <TextBlock TextWrapping="Wrap" FontSize="12"
+                           Text="This file looks like a complete Stable Diffusion 1.x model, but it has not been tested with this app. Enter the settings its model card recommends; the defaults suit an ordinary checkpoint. Photos are 512×512." />
+                <TextBlock Text="{Binding SuggestionHint}" IsVisible="{Binding SuggestionHint, Converter={x:Static ObjectConverters.IsNotNull}}"
+                           TextWrapping="Wrap" FontSize="12" FontStyle="Italic" />
+                <Grid ColumnDefinitions="Auto,Auto,16,Auto,Auto,16,Auto,Auto" HorizontalAlignment="Left">
+                    <TextBlock Grid.Column="0" Text="Sampler" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <ComboBox Grid.Column="1" ItemsSource="{Binding Samplers}" SelectedItem="{Binding Sampler}" MinWidth="130"
+                              AutomationProperties.Name="Sampler" />
+                    <TextBlock Grid.Column="3" Text="Steps" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <NumericUpDown Grid.Column="4" Value="{Binding Steps}" Minimum="1" Maximum="100" Increment="1" FormatString="0" Width="110"
+                                   AutomationProperties.Name="Steps" />
+                    <TextBlock Grid.Column="6" Text="CFG" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <NumericUpDown Grid.Column="7" Value="{Binding GuidanceScale}" Minimum="1" Maximum="30" Increment="0.5" FormatString="0.0" Width="110"
+                                   AutomationProperties.Name="Guidance scale" />
+                </Grid>
+                <CheckBox IsChecked="{Binding AcceptsUnverified}"
+                          Content="I understand this model may not work, and that its license (shown above) applies to its use." />
+            </StackPanel>
+        </Border>
+
+        <StackPanel Grid.Row="5" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Content="Cancel" Click="Cancel_Click" IsCancel="True" />
+            <Button Classes="accent" Command="{Binding AddCommand}">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <i:MaterialIcon Kind="Download" />
+                    <TextBlock Text="Add and download" />
+                </StackPanel>
+            </Button>
+        </StackPanel>
+
+    </Grid>
+</Window>

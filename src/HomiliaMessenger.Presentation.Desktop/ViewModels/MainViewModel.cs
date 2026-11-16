@@ -41,6 +41,7 @@ public partial class MainViewModel : BaseViewModel
         _profileViewModel = profileViewModel ?? throw new ArgumentNullException(nameof(profileViewModel));
 
         _settingsViewModel = settingsViewModel ?? throw new ArgumentNullException(nameof(settingsViewModel));
+        _contactsViewModel.SettingsRequested += async (_, _) => await SettingsCommand.ExecuteAsync(null);
 
         List<MenuPaneItemTemplate> paneItemTemplates =
         [
