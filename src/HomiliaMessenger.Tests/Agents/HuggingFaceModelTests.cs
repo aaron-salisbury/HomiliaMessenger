@@ -1,6 +1,5 @@
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
-using HomiliaMessenger.Business.Modules.Conversations;
 using HomiliaMessenger.Business.Modules.Credentials;
 using HomiliaMessenger.Integrations.LocalModels;
 using HomiliaMessenger.Presentation.Desktop.ViewModels;
@@ -22,7 +21,7 @@ using System.Threading.Tasks;
 namespace HomiliaMessenger.Tests.Agents;
 
 [TestClass]
-public sealed class HuggingFaceModelTests
+public sealed partial class HuggingFaceModelTests
 {
     private const string REPO = "Qwen/Tiny-Chat-GGUF";
     private const string REVISION = "abc123";
@@ -35,6 +34,18 @@ public sealed class HuggingFaceModelTests
     [DataRow("Qwen/Qwen2.5-1.5B-Instruct-GGUF", "Qwen/Qwen2.5-1.5B-Instruct-GGUF")]
     [DataRow("  https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/tree/main ", "bartowski/Llama-3.2-3B-Instruct-GGUF")]
     [DataRow("huggingface.co/owner/name", "owner/name")]
+    [DataRow("https://huggingface.co/Owner/Some-Model", "Owner/Some-Model")]
+    [DataRow("https://www.huggingface.co/Owner/Some-Model?library=gguf#files", "Owner/Some-Model")]
+    [DataRow("https://hf.co/Owner/Some-Model", "Owner/Some-Model")]
+    [DataRow("https://huggingface.co/Owner/Some-Model/blob/main/model-Q4_K_M.gguf", "Owner/Some-Model")]
+    [DataRow("Owner/Some-Model-v1.2", "Owner/Some-Model-v1.2")]
+    [DataRow("https://huggingface.co/datasets/owner/name", null)]
+    [DataRow("https://huggingface.co/spaces/owner/name", null)]
+    [DataRow("https://huggingface.co/models?search=gguf", null)]
+    [DataRow("https://example.com/owner/name", null)]
+    [DataRow("owner/na--me", null)]
+    [DataRow("owner/name with spaces", null)]
+    [DataRow("", null)]
     [DataRow("just-a-name", null)]
     [DataRow("owner/../etc", null)]
     public void ParseRepository_AcceptsANameOrAddress(string text, string? expected)
@@ -65,12 +76,14 @@ public sealed class HuggingFaceModelTests
             new("model-Q2_K.gguf", 300, "d"),
             new("model-Q6_K-00001-of-00003.gguf", 300, "e"),
             new("mmproj-model-f16.gguf", 100, "f"),
-            new("README.md", 10, "g")
+            new("README.md", 10, "g"),
+            new("model-v3.2-Q5_K_M/model-v3.2-Q5_K_M-00001-of-00002.gguf", 600, "h"),
+            new("model-v3.2-Q5_K_M/model-v3.2-Q5_K_M-00002-of-00002.gguf", 600, "i")
         ];
 
         IReadOnlyList<GgufVariant> variants = HuggingFaceClient.Variants(files);
 
-        Assert.AreSequenceEqual(new[] { "Q2_K", "Q4_K_M", "Q8_0" }, variants.Select(variant => variant.Label).ToArray());
+        Assert.AreSequenceEqual(new[] { "Q2_K", "Q4_K_M", "Q8_0", "Q5_K_M" }, variants.Select(variant => variant.Label).ToArray());
         Assert.IsTrue(variants.Single(variant => variant.Label == "Q4_K_M").IsRecommended);
         Assert.ContainsSingle(variant => variant.IsRecommended, variants);
         GgufVariant split = variants.Single(variant => variant.Label == "Q8_0");
@@ -349,6 +362,12 @@ public sealed class HuggingFaceModelTests
         public List<string?> Authorizations { get; } = [];
         public TimeSpan Delay { get; set; }
 
+        /// <summary>
+        /// A request that is held open until canceled; <see cref="Stalled"/> completes when it arrives.
+        /// </summary>
+        public string? Stall { get; set; }
+        public TaskCompletionSource Stalled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public static HuggingFace WithTinyRepository(bool gated = false)
         {
             HuggingFace server = new();
@@ -373,6 +392,12 @@ public sealed class HuggingFaceModelTests
                 await Task.Delay(Delay, cancellationToken);
             }
 
+            if (Stall is not null && request.RequestUri!.OriginalString == HuggingFaceClient.SITE + Stall)
+            {
+                Stalled.TrySetResult();
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+
             return Respond(request);
         }
 
@@ -381,7 +406,7 @@ public sealed class HuggingFaceModelTests
             string path = request.RequestUri!.OriginalString[HuggingFaceClient.SITE.Length..];
             Requested.Add(path);
             Authorizations.Add(request.Headers.Authorization?.ToString());
-            bool gated = Responses.TryGetValue($"api/models/{REPO}", out var info) && info.Body.Contains("\"manual\"");
+            bool gated = Responses.TryGetValue($"api/models/{REPO}", out (HttpStatusCode Status, string Body, string? Link) info) && info.Body.Contains("\"manual\"");
 
             // A gated repository describes itself to anyone, but lists and serves its files only with a token.
             if (gated && request.Headers.Authorization is null && path != $"api/models/{REPO}")
@@ -394,7 +419,7 @@ public sealed class HuggingFaceModelTests
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(file) };
             }
 
-            if (Responses.TryGetValue(path, out var response))
+            if (Responses.TryGetValue(path, out (HttpStatusCode Status, string Body, string? Link) response))
             {
                 HttpResponseMessage message = new(response.Status) { Content = new StringContent(response.Body) };
 
