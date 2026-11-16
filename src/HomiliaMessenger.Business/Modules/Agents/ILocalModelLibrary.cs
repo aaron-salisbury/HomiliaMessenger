@@ -79,10 +79,28 @@ public enum HuggingFaceLookupStatus
     NeedsToken,
 
     /// <summary>
-    /// The repository exists but has no GGUF model files.
+    /// The repository exists but has no GGUF model files. <see cref="HuggingFaceLookup.Conversions"/> lists other
+    /// repositories that offer it in GGUF format, when any were found.
     /// </summary>
     NoModels,
     Failed
+}
+
+/// <summary>
+/// Another repository that offers a model in GGUF format, found when the repository looked up had no GGUF files.
+/// </summary>
+/// <param name="RepoId">The conversion's repository, as <c>owner/name</c>; look it up to choose a download.</param>
+/// <param name="Url">The conversion's page on Hugging Face.</param>
+/// <param name="IsVerified">
+/// Whether Hugging Face records it as a quantization of the model looked up. Otherwise it only has a similar name, and
+/// may be a different model.
+/// </param>
+/// <param name="Quantizations">The GGUF variants its file names offer, such as <c>Q4_K_M</c>.</param>
+/// <param name="Parameters">The model's parameter count, when Hugging Face reports it.</param>
+/// <param name="IsGated">Whether its terms must be accepted on Hugging Face, and an access token saved, before downloading.</param>
+public sealed record HuggingFaceConversion(string RepoId, string Url, bool IsVerified, IReadOnlyList<string> Quantizations, long? Parameters, long Downloads, bool IsGated)
+{
+    public string Publisher => RepoId[..RepoId.IndexOf('/')];
 }
 
 /// <summary>
@@ -91,6 +109,16 @@ public enum HuggingFaceLookupStatus
 /// <param name="Revision">The commit the files belong to; downloads are pinned to it so the hashes stay valid.</param>
 public sealed record HuggingFaceLookup(HuggingFaceLookupStatus Status, string RepoId, string? Revision, string? License, IReadOnlyList<GgufVariant> Variants, string? Problem)
 {
+    /// <summary>
+    /// GGUF conversions of the model, most downloaded first, when the repository has no GGUF files of its own.
+    /// </summary>
+    public IReadOnlyList<HuggingFaceConversion> Conversions { get; init; } = [];
+
+    /// <summary>
+    /// Whether more conversions exist on Hugging Face than <see cref="Conversions"/> lists.
+    /// </summary>
+    public bool HasMoreConversions { get; init; }
+
     public static HuggingFaceLookup Unsuccessful(HuggingFaceLookupStatus status, string repoId, string problem)
     {
         return new(status, repoId, null, null, [], problem);
@@ -130,7 +158,8 @@ public interface ILocalModelLibrary
     Task<bool> DeleteAsync(string modelId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Lists the GGUF models in a Hugging Face repository, given as <c>owner/name</c> or its URL.
+    /// Lists the GGUF models in a Hugging Face repository, given as <c>owner/name</c> or its URL. When it has none, finds
+    /// repositories that offer the same model in GGUF format, without downloading anything.
     /// </summary>
     Task<HuggingFaceLookup> LookUpAsync(string repository, CancellationToken cancellationToken = default);
 

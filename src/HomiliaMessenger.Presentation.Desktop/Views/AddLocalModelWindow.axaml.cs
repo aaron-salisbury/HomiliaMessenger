@@ -36,6 +36,7 @@ public partial class AddLocalModelWindow : Window
         try
         {
             dialog.Opened += async (_, _) => await model.InitializeAsync();
+            dialog.Closed += (_, _) => model.CancelLookUp();
             return await dialog.ShowDialog<string?>(owner);
         }
         finally

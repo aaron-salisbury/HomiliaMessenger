@@ -2,12 +2,12 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="600" d:DesignHeight="560"
+        mc:Ignorable="d" d:DesignWidth="640" d:DesignHeight="640"
         x:Class="HomiliaMessenger.Presentation.Desktop.Views.AddLocalModelWindow"
         xmlns:vm="clr-namespace:HomiliaMessenger.Presentation.Desktop.ViewModels"
         x:DataType="vm:AddLocalModelViewModel"
         xmlns:i="using:Material.Icons.Avalonia"
-        Width="600" Height="560" MinWidth="480" MinHeight="420"
+        Width="640" Height="640" MinWidth="480" MinHeight="420"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False" CanMinimize="False"
         Title="Add a model from Hugging Face">
 
@@ -19,11 +19,11 @@
                 <TextBlock Text="Add a model from Hugging Face" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
             </StackPanel>
             <TextBlock TextWrapping="Wrap" FontSize="12" Opacity="0.75"
-                       Text="Models in GGUF format run on this computer with llama.cpp. Most chat models on Hugging Face have a GGUF version, often in a repository whose name ends in -GGUF. Models up to about 4B parameters suit most laptops." />
+                       Text="Models run on this computer with llama.cpp, which uses the GGUF format. Enter any model on Hugging Face: if its repository has no GGUF downloads, GGUF conversions of it are found for you. Models up to about 4B parameters suit most laptops." />
         </StackPanel>
 
         <Grid Grid.Row="1" ColumnDefinitions="*,8,Auto">
-            <TextBox Grid.Column="0" Text="{Binding Repository}" PlaceholderText="owner/name, such as Qwen/Qwen2.5-1.5B-Instruct-GGUF, or its address"
+            <TextBox Grid.Column="0" Text="{Binding Repository}" PlaceholderText="owner/name, such as Qwen/Qwen2.5-1.5B-Instruct, or its address"
                      AutomationProperties.Name="Repository" />
             <Button Grid.Column="2" Content="Look up" Command="{Binding LookUpCommand}" IsDefault="True" />
         </Grid>
@@ -48,15 +48,50 @@
             </StackPanel>
         </Border>
 
+        <!-- Conversions of a model whose repository has no GGUF files -->
+        <Grid Grid.Row="4" RowDefinitions="*,Auto" Margin="0,12,0,0" IsVisible="{Binding ShowsConversions}">
+            <ListBox Grid.Row="0" x:Name="ConversionList" ItemsSource="{Binding Conversions}" AutomationProperties.Name="GGUF conversions">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:GgufConversionOption">
+                        <Grid ColumnDefinitions="*,8,Auto" RowDefinitions="Auto,Auto,Auto,Auto">
+                            <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding Publisher}" Opacity="0.75" />
+                            </StackPanel>
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding Quantizations}" FontSize="12" TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding Details}" FontSize="12" Opacity="0.75" TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="3" Grid.Column="0" IsVisible="{Binding IsUnconfirmed}" FontSize="12" TextWrapping="Wrap"
+                                       Text="Similar name only; not confirmed to be the same model." Foreground="{DynamicResource SystemControlErrorTextForegroundBrush}" />
+                            <StackPanel Grid.Row="0" Grid.RowSpan="4" Grid.Column="2" Spacing="4" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                <Button Content="Show downloads" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Command="{Binding #ConversionList.((vm:AddLocalModelViewModel)DataContext).ChooseConversionCommand}" CommandParameter="{Binding}" />
+                                <HyperlinkButton Content="View on Hugging Face" NavigateUri="{Binding Url}" FontSize="12" HorizontalAlignment="Center" />
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+            <TextBlock Grid.Row="1" Text="{Binding MoreConversions}" IsVisible="{Binding MoreConversions, Converter={x:Static ObjectConverters.IsNotNull}}"
+                       TextWrapping="Wrap" FontSize="12" Opacity="0.75" Margin="0,6,0,0" />
+        </Grid>
+
         <!-- Variants -->
-        <Grid Grid.Row="4" RowDefinitions="Auto,*" Margin="0,12,0,0" IsVisible="{Binding HasVariants}">
-            <TextBlock Grid.Row="0" Text="{Binding License}" TextWrapping="Wrap" FontSize="12" Opacity="0.75" Margin="0,0,0,6" />
-            <ListBox Grid.Row="1" ItemsSource="{Binding Variants}" SelectedItem="{Binding SelectedVariant}" AutomationProperties.Name="Variants">
+        <Grid Grid.Row="4" RowDefinitions="Auto,Auto,*" Margin="0,12,0,0" IsVisible="{Binding HasVariants}">
+            <Button Grid.Row="0" Command="{Binding ShowConversionsCommand}" IsVisible="{Binding CanGoBackToConversions}" Classes="noBackground" Padding="0" Margin="0,0,0,6">
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                    <i:MaterialIcon Kind="ArrowLeft" />
+                    <TextBlock Text="Back to the other conversions" FontSize="12" />
+                </StackPanel>
+            </Button>
+            <TextBlock Grid.Row="1" Text="{Binding License}" TextWrapping="Wrap" FontSize="12" Opacity="0.75" Margin="0,0,0,6" />
+            <ListBox Grid.Row="2" ItemsSource="{Binding Variants}" SelectedItem="{Binding SelectedVariant}" AutomationProperties.Name="Variants">
                 <ListBox.ItemTemplate>
                     <DataTemplate x:DataType="vm:GgufVariantOption">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Grid.Column="0" Text="{Binding Label}" FontWeight="SemiBold" />
-                            <TextBlock Grid.Column="1" Text="{Binding Details}" Opacity="0.75" />
+                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding Label}" FontWeight="SemiBold" />
+                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Details}" Opacity="0.75" />
+                            <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Text="{Binding Guidance}" IsVisible="{Binding HasGuidance}"
+                                       FontSize="12" Opacity="0.75" TextWrapping="Wrap" />
                         </Grid>
                     </DataTemplate>
                 </ListBox.ItemTemplate>
