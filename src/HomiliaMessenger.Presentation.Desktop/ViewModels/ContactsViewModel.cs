@@ -133,7 +133,7 @@ public partial class ContactsViewModel : BaseViewModel, IRibbonProvider
     /// </summary>
     private ContactDetailViewModel CreateDetail(Contact? contact)
     {
-        return new ContactDetailViewModel(contact, AgentOption.From(_localModels), _speech?.Voices, _speech?.Model.IsAvailable == true);
+        return new ContactDetailViewModel(contact, AgentOption.From(_localModels), _speech?.Voices, _speech?.Model.IsAvailable == true, _speech);
     }
 
     private void ReplaceDetail(ContactDetailViewModel next)

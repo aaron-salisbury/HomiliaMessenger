@@ -225,8 +225,9 @@
             <TextBlock Text="Pick a chat, or start a new one with the pencil button." Opacity="0.6" TextAlignment="Center" />
         </StackPanel>
 
-        <!-- Thread -->
-        <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto,Auto" IsVisible="{Binding HasActiveThread}">
+        <!-- Thread. Messages and composer stay in a centered, phone-like column (sized in code-behind) so a wide window
+             does not pull the two sides of the conversation apart. -->
+        <Grid Grid.Column="1" x:Name="ThreadGrid" RowDefinitions="Auto,*,Auto,Auto" IsVisible="{Binding HasActiveThread}">
 
             <!-- Thread header -->
             <Border Grid.Row="0" Padding="16,10" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="0,0,0,1">
@@ -261,7 +262,7 @@
 
             <!-- Messages -->
             <ScrollViewer Grid.Row="1" x:Name="MessagesScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                <StackPanel Margin="16,8,16,12">
+                <StackPanel x:Name="MessagesPanel" Margin="16,8,16,12">
                     <ItemsControl ItemsSource="{Binding Messages}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="m:MessageItem">
@@ -334,7 +335,7 @@
             </ScrollViewer>
 
             <!-- Why the contact could not reply -->
-            <Border Grid.Row="2" IsVisible="{Binding HasReplyProblem}" Margin="16,0,16,6" Padding="10,6" CornerRadius="8"
+            <Border Grid.Row="2" x:Name="ReplyProblemBorder" IsVisible="{Binding HasReplyProblem}" Margin="16,0,16,6" Padding="10,6" CornerRadius="8"
                     Background="{DynamicResource SystemControlBackgroundBaseLowBrush}">
                 <Grid ColumnDefinitions="Auto,8,*">
                     <i:MaterialIcon Grid.Column="0" Kind="AlertCircleOutline" Width="18" Height="18" Foreground="{StaticResource OrangeAccent}" VerticalAlignment="Top" />
@@ -344,7 +345,7 @@
 
             <!-- Composer -->
             <Border Grid.Row="3" Padding="16,10" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="0,1,0,0">
-                <Grid ColumnDefinitions="*,10,Auto">
+                <Grid x:Name="ComposerGrid" ColumnDefinitions="*,10,Auto">
                     <TextBox Grid.Column="0" x:Name="Composer" Text="{Binding DraftText}" AcceptsReturn="True" TextWrapping="Wrap"
                              MaxHeight="140" MinHeight="38" CornerRadius="19" Padding="14,9" VerticalContentAlignment="Center" MaxLength="4000"
                              PlaceholderText="{Binding ActiveContact.DisplayName, StringFormat='Message {0}'}" AutomationProperties.Name="Message" />

@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -6,6 +7,7 @@ using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Presentation.Desktop.Base.Extensions;
 using HomiliaMessenger.Presentation.Desktop.Models;
 using HomiliaMessenger.Presentation.Desktop.ViewModels;
+using System;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Threading.Tasks;
@@ -14,6 +16,10 @@ namespace HomiliaMessenger.Presentation.Desktop.Views;
 
 public partial class MessengerView : UserControl
 {
+    // The chat column keeps a portrait shape: never wider than the thread is tall, but never cramped either.
+    private const double MIN_CHAT_WIDTH = 480;
+    private const double CHAT_ASPECT = 0.85;
+
     private MessengerViewModel? _attachedModel;
 
     public MessengerView()
@@ -22,6 +28,7 @@ public partial class MessengerView : UserControl
 
         // Tunnel so Enter is seen before the multi-line text box turns it into a new line.
         Composer.AddHandler(KeyDownEvent, Composer_KeyDown, RoutingStrategies.Tunnel);
+        ThreadGrid.SizeChanged += (_, e) => SizeChatColumn(e.NewSize);
 
         AttachedToVisualTree += async (_, _) =>
         {
@@ -99,6 +106,17 @@ public partial class MessengerView : UserControl
                 Dispatcher.UIThread.Post(() => Composer.Focus(), DispatcherPriority.Background);
                 break;
         }
+    }
+
+    private void SizeChatColumn(Size thread)
+    {
+        // Pad the sides rather than centering, so the two sides of the conversation still sit at the column's edges.
+        double width = Math.Max(MIN_CHAT_WIDTH, thread.Height * CHAT_ASPECT);
+        double side = Math.Max(16, (thread.Width - width) / 2);
+
+        MessagesPanel.Margin = new Thickness(side, 8, side, 12);
+        ReplyProblemBorder.Margin = new Thickness(side, 0, side, 6);
+        ComposerGrid.Margin = new Thickness(side - 16, 0, side - 16, 0);
     }
 
     private void ScrollToEnd()

@@ -1,14 +1,15 @@
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Speech;
-using HomiliaMessenger.Tests.Speech;
 using HomiliaMessenger.Presentation.Desktop.Base.Converters;
 using HomiliaMessenger.Presentation.Desktop.Models;
 using HomiliaMessenger.Presentation.Desktop.ViewModels;
+using HomiliaMessenger.Tests.Speech;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace HomiliaMessenger.Tests.Contacts;
 
@@ -187,6 +188,37 @@ public sealed class ContactDetailViewModelTests
         Assert.AreEqual("af_bella", detail.ToContact().VoiceId);
         Assert.Contains("Bella", detail.VoiceDescription);
         Assert.IsTrue(detail.IsDirty);
+    }
+
+    [TestMethod]
+    public async Task VoiceSample_PlaysTheSelectedVoiceWithoutEditingAndStopsWhenTheVoiceChanges()
+    {
+        FakeSpeech speech = new() { HoldPlayback = true };
+        using ContactDetailViewModel detail = new(new Contact { Id = ContactId.New(), GivenName = "Rose", Gender = Gender.Female },
+            null, speech.Voices, true, speech);
+
+        Assert.IsFalse(detail.PlayVoiceSampleCommand.CanExecute(null));
+        detail.Voice = detail.VoiceOptions.Single(option => option.Id == "af_heart");
+        detail.AcceptChanges();
+        Assert.IsTrue(detail.PlayVoiceSampleCommand.CanExecute(null));
+
+        Task playing = detail.PlayVoiceSampleCommand.ExecuteAsync(null);
+        Assert.IsTrue(detail.IsPlayingSample);
+        Assert.AreEqual("af_heart", speech.Spoken.Single().Voice);
+        Assert.Contains("Rose", speech.Spoken.Single().Text);
+
+        Assert.IsTrue(detail.PlayVoiceSampleCommand.CanExecute(null), "The button must stay usable to stop playback.");
+        await detail.PlayVoiceSampleCommand.ExecuteAsync(null);
+        await speech.Canceled.Task;
+        await playing;
+        Assert.IsFalse(detail.IsPlayingSample);
+
+        playing = detail.PlayVoiceSampleCommand.ExecuteAsync(null);
+        Assert.IsTrue(detail.IsPlayingSample);
+        detail.Voice = VoiceOption.None;
+        await playing;
+        Assert.IsFalse(detail.IsPlayingSample);
+        Assert.IsFalse(detail.PlayVoiceSampleCommand.CanExecute(null));
     }
 
     [TestMethod]

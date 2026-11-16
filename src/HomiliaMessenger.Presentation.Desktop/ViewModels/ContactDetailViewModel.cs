@@ -10,6 +10,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace HomiliaMessenger.Presentation.Desktop.ViewModels;
@@ -27,6 +28,8 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
     private bool _refreshingVoices;
     private bool _refreshingAgents;
     private string? _voiceId;
+    private readonly ITextToSpeech? _speech;
+    private CancellationTokenSource? _sample;
 
     [ObservableProperty] private string? _givenName;
     [ObservableProperty] private string? _familyName;
@@ -45,7 +48,14 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
     /// No agent, then the models offered in Settings, as of the last refresh.
     /// </summary>
     [ObservableProperty] private IReadOnlyList<AgentOption> _agentOptions = [AgentOption.None];
-    [ObservableProperty] private VoiceOption? _voice = VoiceOption.None;
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(PlayVoiceSampleCommand))]
+    private VoiceOption? _voice = VoiceOption.None;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VoiceSampleHint))]
+    private bool _isPlayingSample;
+
+    public string VoiceSampleHint => IsPlayingSample ? "Stop sample" : "Play a sample of this voice";
     [ObservableProperty] private bool _isSpeechAvailable;
     [ObservableProperty] private IReadOnlyList<VoiceOption> _voiceOptions = [VoiceOption.None];
 
@@ -74,8 +84,9 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
 
     /// <param name="contact">The contact to edit, or <see langword="null"/> for a new one.</param>
     /// <param name="agentOptions">The agents to choose from; when omitted, only no agent.</param>
-    public ContactDetailViewModel(Contact? contact = null, IReadOnlyList<AgentOption>? agentOptions = null, IReadOnlyList<SpeechVoice>? voices = null, bool isSpeechAvailable = false)
+    public ContactDetailViewModel(Contact? contact = null, IReadOnlyList<AgentOption>? agentOptions = null, IReadOnlyList<SpeechVoice>? voices = null, bool isSpeechAvailable = false, ITextToSpeech? speech = null)
     {
+        _speech = speech;
         _id = contact?.Id ?? ContactId.New();
         AgentOptions = agentOptions ?? [AgentOption.None];
         _voiceId = contact?.VoiceId;
@@ -154,6 +165,8 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
 
     partial void OnVoiceChanged(VoiceOption? value)
     {
+        StopVoiceSample();
+
         // Replacing the options here, while the combo box is still applying the user's choice, could clear it. The
         // options depend only on gender, so only the description needs updating.
         if (!_refreshingVoices && value is not null)
@@ -161,6 +174,69 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
             _voiceId = value.Id;
             OnPropertyChanged(nameof(VoiceDescription));
         }
+    }
+
+    private bool CanPlayVoiceSample()
+    {
+        return _speech is not null && Voice?.Id is not null;
+    }
+
+    /// <summary>
+    /// Plays a short sample of the selected voice, or stops the one already playing.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanPlayVoiceSample), AllowConcurrentExecutions = true)]
+    private async Task PlayVoiceSampleAsync()
+    {
+        if (IsPlayingSample)
+        {
+            StopVoiceSample();
+            return;
+        }
+
+        if (_speech is null || Voice?.Id is not { } voiceId)
+        {
+            return;
+        }
+
+        CancellationTokenSource sample = new();
+        _sample = sample;
+        IsPlayingSample = true;
+
+        try
+        {
+            string name = Clean(Nickname) ?? Clean(GivenName) ?? "your contact";
+            SpeechResult result = await _speech.SpeakAsync($"Hi, it's {name}. This is how I sound.", voiceId, sample.Token);
+            if (!result.IsSuccessful && ReferenceEquals(sample, _sample))
+            {
+                MessageRaised?.Invoke(this, "Could not play the voice: " + (result.Problem ?? "unknown problem"));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Stopped, another voice chosen, or the editor closed.
+        }
+        catch (Exception error)
+        {
+            MessageRaised?.Invoke(this, "Could not play the voice: " + error.Message);
+        }
+        finally
+        {
+            if (ReferenceEquals(sample, _sample))
+            {
+                _sample = null;
+                IsPlayingSample = false;
+            }
+
+            sample.Dispose();
+        }
+    }
+
+    private void StopVoiceSample()
+    {
+        CancellationTokenSource? sample = _sample;
+        _sample = null;
+        IsPlayingSample = false;
+        sample?.Cancel();
     }
 
     /// <summary>
@@ -176,7 +252,8 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
         base.OnPropertyChanged(e);
 
         if (_trackChanges && !_refreshingVoices && !_refreshingAgents && !(e.PropertyName == nameof(Voice) && Voice is null)
-            && e.PropertyName is not (nameof(IsDirty) or nameof(PhotoPreview) or nameof(PhotoDescription) or nameof(AgeDescription)))
+            && e.PropertyName is not (nameof(IsDirty) or nameof(PhotoPreview) or nameof(PhotoDescription) or nameof(AgeDescription) or nameof(IsPlayingSample)
+                or nameof(VoiceSampleHint)))
         {
             IsDirty = true;
         }
@@ -290,6 +367,7 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
 
         if (disposing)
         {
+            StopVoiceSample();
             PhotoPreview?.Dispose();
         }
 
