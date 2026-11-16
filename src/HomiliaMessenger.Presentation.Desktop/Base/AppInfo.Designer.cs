@@ -106,7 +106,7 @@ namespace HomiliaMessenger.Presentation.Desktop.Base {
         }
 
         /// <summary>
-        ///   Looks up a localized string similar to https://github.com/aaron-salisbury/HomiliaMessenger/blob/main/readme.md.
+        ///   Looks up a localized string similar to https://github.com/aaron-salisbury/HomiliaMessenger/blob/main/privacy-policy.md.
         /// </summary>
         internal static string PrivacyURL {
             get {

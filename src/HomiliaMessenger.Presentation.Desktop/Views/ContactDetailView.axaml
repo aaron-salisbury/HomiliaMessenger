@@ -152,6 +152,11 @@
                        Text="Choose a voice for spoken replies. Turn speech on in the chat ribbon when you want to listen." />
             <ComboBox Grid.Row="2" Grid.Column="1" ItemsSource="{Binding VoiceOptions}" SelectedItem="{Binding Voice, Mode=TwoWay}"
                       HorizontalAlignment="Stretch" AutomationProperties.Name="Voice" />
+            <Button Grid.Row="2" Grid.Column="2" HorizontalAlignment="Left" VerticalAlignment="Center" Classes="noBackground"
+                    Command="{Binding PlayVoiceSampleCommand}" ToolTip.Tip="{Binding VoiceSampleHint}"
+                    AutomationProperties.Name="{Binding VoiceSampleHint}">
+                <i:MaterialIcon Kind="{Binding IsPlayingSample, Converter={StaticResource BooleanToMaterialIconKindConverter}, ConverterParameter=Stop|Play}" Width="22" Height="22" />
+            </Button>
             <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding VoiceDescription}" Classes="section-hint" />
         </Grid>
 
