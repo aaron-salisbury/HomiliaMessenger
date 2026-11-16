@@ -26,6 +26,9 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     private readonly ITextToSpeech? _speech;
     private CancellationTokenSource? _speechSession;
 
+    // Replies are spoken one after another, in the order they are shown, never over each other.
+    private Task _speechQueue = Task.CompletedTask;
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SpeechToggleHint))]
     private bool _isSpeechOn;
@@ -33,12 +36,15 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     [NotifyPropertyChangedFor(nameof(CanVoiceReplies))]
     private bool _isSpeechAvailable;
 
-    public bool CanVoiceReplies => IsSpeechAvailable && !string.IsNullOrWhiteSpace(ActiveContact?.VoiceId);
+    public bool CanVoiceReplies => IsSpeechAvailable && ActiveContacts().Any(contact => !string.IsNullOrWhiteSpace(contact.VoiceId));
     public string SpeechToggleHint => IsSpeechOn ? "Turn spoken replies off" : "Turn spoken replies on";
 
-    // Conversations whose contact is replying. Writing again meanwhile restarts the reply so that it answers everything
-    // sent so far, once, as a person reading a burst of messages would.
+    // Conversations whose contact is replying, or whose group is taking turns. Writing again meanwhile restarts the
+    // reply so that it answers everything sent so far, once, as a person reading a burst of messages would.
     private readonly Dictionary<ConversationId, CancellationTokenSource> _pendingReplies = [];
+
+    // Which of a group's contacts is writing, while one is.
+    private readonly Dictionary<ConversationId, ContactId> _groupSpeakers = [];
 
     // Conversations whose contact is looking something up online before replying.
     private readonly HashSet<ConversationId> _searching = [];
@@ -46,10 +52,23 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     // Conversations whose memories are being updated, so updates do not overlap.
     private readonly HashSet<ConversationId> _updatingMemory = [];
 
-    // Unsent composer text per contact, kept while switching between chats.
-    private readonly Dictionary<ContactId, string> _drafts = [];
+    // Unsent composer text per chat, kept while switching between chats: by contact for a direct chat (which may not be
+    // saved yet), and by conversation for a group.
+    private readonly Dictionary<Guid, string> _drafts = [];
+
+    // Group initiation choices not yet saved, by group, and a gate so saves run one at a time: only the latest choice is
+    // written, and an older save finishing late never overrides a newer choice.
+    private readonly Dictionary<ConversationId, GroupInitiation> _unsavedInitiation = [];
+
+    // Each group's initiation setting as last saved here, which is what a failed save falls back to showing.
+    private readonly Dictionary<ConversationId, GroupInitiation> _savedInitiation = [];
+
+    // Rounds started by opening a group, which turning its initiation off stops.
+    private readonly HashSet<ConversationId> _openingRounds = [];
+    private readonly SemaphoreSlim _initiationGate = new(1, 1);
 
     private bool _syncingListSelection;
+    private bool _syncingInitiation;
     private int _threadVersion;
 
     /// <summary>
@@ -59,15 +78,23 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     [ObservableProperty] private ConversationListItem? _selectedConversation;
 
     /// <summary>
-    /// Who the open thread is with, or <see langword="null"/> when no thread is open.
+    /// Who the open direct chat is with, or <see langword="null"/> when no direct chat is open.
     /// </summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasActiveThread), nameof(ActiveSubtitle), nameof(CanVoiceReplies))]
-    [NotifyCanExecuteChangedFor(nameof(SendCommand))]
+    [NotifyPropertyChangedFor(nameof(HasActiveThread), nameof(ActiveSubtitle), nameof(CanVoiceReplies), nameof(ActiveTitle), nameof(ActivePhoto), nameof(CanInvite), nameof(ComposerPlaceholder), nameof(EmptyThreadHint), nameof(TypingContact))]
+    [NotifyCanExecuteChangedFor(nameof(SendCommand), nameof(InviteContactCommand))]
     private Contact? _activeContact;
 
     /// <summary>
-    /// The open thread's conversation, or <see langword="null"/> for a new chat that has no messages yet.
+    /// The open group, or <see langword="null"/> when no group is open.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasActiveThread), nameof(IsGroupThread), nameof(ActiveSubtitle), nameof(CanVoiceReplies), nameof(ActiveTitle), nameof(ActivePhoto), nameof(ActiveSecondPhoto), nameof(CanInvite), nameof(ComposerPlaceholder), nameof(EmptyThreadHint), nameof(TypingContact))]
+    [NotifyCanExecuteChangedFor(nameof(SendCommand), nameof(InviteContactCommand))]
+    private Conversation? _activeGroup;
+
+    /// <summary>
+    /// The open thread's conversation, or <see langword="null"/> for a new direct chat that has no messages yet.
     /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasConversation))]
@@ -79,8 +106,16 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     private string _draftText = string.Empty;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ActiveSubtitle))]
+    [NotifyPropertyChangedFor(nameof(ActiveSubtitle), nameof(TypingContact))]
     private bool _isContactTyping;
+
+    /// <summary>
+    /// Whether the open chat's reply, or its group's round, can be stopped: while it is under way, including while a
+    /// group decides who writes next.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(StopRepliesCommand))]
+    private bool _canStopReplies;
 
     /// <summary>
     /// Whether the open chat's contact is looking something up online before replying.
@@ -88,6 +123,11 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ActiveSubtitle))]
     private bool _isContactSearching;
+
+    /// <summary>
+    /// Whether the open group's contacts may start conversations when it is opened.
+    /// </summary>
+    [ObservableProperty] private bool _isGroupInitiationOn;
 
     [ObservableProperty] private bool _hasMessages;
 
@@ -114,6 +154,16 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     public ObservableCollection<Contact> VisibleContacts { get; } = [];
 
     /// <summary>
+    /// The open group's contacts, in the order they joined.
+    /// </summary>
+    public ObservableCollection<Contact> GroupContacts { get; } = [];
+
+    /// <summary>
+    /// Contacts who can be invited to make a group with the open direct chat's contact.
+    /// </summary>
+    public ObservableCollection<Contact> InviteCandidates { get; } = [];
+
+    /// <summary>
     /// Supplied by the view to ask the user to confirm an action, given a title and a message.
     /// </summary>
     public Func<string, string, Task<bool>>? ConfirmAsync { get; set; }
@@ -125,18 +175,64 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
 
     public Type RibbonControlType => typeof(MessengerRibbonControl);
 
-    public bool HasActiveThread => ActiveContact is not null;
+    public bool HasActiveThread => ActiveContact is not null || ActiveGroup is not null;
+
+    /// <summary>
+    /// Whether the open chat's reply, or its group's round of turns, is still under way, including while a group decides
+    /// who writes next.
+    /// </summary>
+    internal bool IsReplyPending => ActiveConversationId is { } id && _pendingReplies.ContainsKey(id);
+
+    public bool IsGroupThread => ActiveGroup is not null;
 
     public bool HasReplyProblem => ReplyProblem is not null;
 
     /// <summary>
-    /// Whether the open chat has a saved conversation, and so memories to show.
+    /// Whether the open direct chat has a saved conversation, and so memories to show.
     /// </summary>
-    public bool HasConversation => ActiveConversationId is not null;
+    public bool HasConversation => ActiveConversationId is not null && ActiveContact is not null;
 
-    public string ActiveSubtitle => IsContactTyping
-        ? IsContactSearching ? "looking something up…" : "typing…"
-        : ActiveContact?.Agent is { } agent ? $"{agent.Provider} · {agent.Model}" : "Simulated replies";
+    /// <summary>
+    /// Whether another contact can be invited: from a direct chat, which starts a new group and leaves the chat as it
+    /// is. A group already has as many contacts as a group may (<see cref="GroupConversations.MAX_CONTACTS"/>).
+    /// </summary>
+    public bool CanInvite => ActiveContact is not null && GroupConversations.MAX_CONTACTS > 1;
+
+    public string ActiveTitle => ActiveGroup is { } group ? GroupConversations.DisplayName(group, GroupContacts) : ActiveContact?.DisplayName ?? string.Empty;
+
+    public byte[]? ActivePhoto => ActiveContact?.Photo ?? GroupContacts.FirstOrDefault()?.Photo;
+
+    public byte[]? ActiveSecondPhoto => IsGroupThread ? GroupContacts.Skip(1).FirstOrDefault()?.Photo : null;
+
+    public string ComposerPlaceholder => IsGroupThread ? "Message the group" : $"Message {ActiveContact?.DisplayName}";
+
+    public string EmptyThreadHint => IsGroupThread ? "Say hello to the group." : $"Say hello to {ActiveContact?.DisplayName}.";
+
+    /// <summary>
+    /// The contact shown typing: the open chat's contact, or whichever of the group's contacts is writing.
+    /// </summary>
+    public Contact? TypingContact => ActiveGroup is { } group
+        ? _groupSpeakers.TryGetValue(group.Id, out ContactId speaker) ? GroupContacts.FirstOrDefault(contact => contact.Id == speaker) : null
+        : ActiveContact;
+
+    public string ActiveSubtitle
+    {
+        get
+        {
+            if (IsContactTyping)
+            {
+                string activity = IsContactSearching ? "looking something up…" : "typing…";
+                return IsGroupThread && TypingContact is { } typing ? $"{typing.DisplayName} is {activity}" : activity;
+            }
+
+            if (IsGroupThread)
+            {
+                return "You, " + string.Join(", ", GroupContacts.Select(contact => contact.DisplayName));
+            }
+
+            return ActiveContact?.Agent is { } agent ? $"{agent.Provider} · {agent.Model}" : "Simulated replies";
+        }
+    }
 
     public MessengerViewModel(IConversationService conversations, IContactService contacts, IMemoryService memories, ITextToSpeech? speech = null)
     {
@@ -154,6 +250,120 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         }
     }
 
+    partial void OnActiveGroupChanged(Conversation? oldValue, Conversation? newValue)
+    {
+        if (oldValue?.Id != newValue?.Id)
+        {
+            StopSpeech();
+        }
+
+        _syncingInitiation = true;
+
+        try
+        {
+            IsGroupInitiationOn = newValue?.Initiation == GroupInitiation.Occasional;
+        }
+        finally
+        {
+            _syncingInitiation = false;
+        }
+    }
+
+    partial void OnIsGroupInitiationOnChanged(bool value)
+    {
+        if (!_syncingInitiation && ActiveGroup is { } group)
+        {
+            _unsavedInitiation[group.Id] = value ? GroupInitiation.Occasional : GroupInitiation.Off;
+
+            // A contact starting a conversation right now, unprompted, stops too.
+            if (!value && _openingRounds.Contains(group.Id))
+            {
+                CancelReply(group.Id);
+                UpdateTyping();
+            }
+
+            _ = SaveInitiationAsync(group.Id);
+        }
+    }
+
+    private async Task SaveInitiationAsync(ConversationId groupId)
+    {
+        await _initiationGate.WaitAsync();
+
+        try
+        {
+            // A choice already saved by an earlier call, which took the latest, needs no second write.
+            if (!_unsavedInitiation.Remove(groupId, out GroupInitiation initiation))
+            {
+                return;
+            }
+
+            if (!await _conversations.SetInitiationAsync(groupId, initiation))
+            {
+                Status = "Could not save the group setting: the group no longer exists.";
+                ShowSavedInitiation(groupId);
+                return;
+            }
+
+            _savedInitiation[groupId] = initiation;
+
+            if (_unsavedInitiation.ContainsKey(groupId))
+            {
+                // Saved, but the user has changed it again since: that newer choice is saved and shown next.
+                return;
+            }
+
+            if (ActiveGroup?.Id == groupId)
+            {
+                ActiveGroup = ActiveGroup with { Initiation = initiation };
+            }
+
+            if (Conversations.FirstOrDefault(item => item.Id == groupId) is { } item)
+            {
+                item.Conversation = item.Conversation with { Initiation = initiation };
+            }
+
+            Status = initiation == GroupInitiation.Off
+                ? "The group will wait for you to write first."
+                : "The group may now and then start a conversation when you open it.";
+        }
+        catch (Exception error)
+        {
+            Status = "Could not save the group setting: " + error.Message;
+            ShowSavedInitiation(groupId);
+        }
+        finally
+        {
+            _initiationGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// After a choice could not be saved, shows the group's setting as it is saved, unless the user has made another
+    /// choice since, which is still to be saved.
+    /// </summary>
+    private void ShowSavedInitiation(ConversationId groupId)
+    {
+        if (ActiveGroup?.Id != groupId || _unsavedInitiation.ContainsKey(groupId))
+        {
+            return;
+        }
+
+        GroupInitiation saved = _savedInitiation.TryGetValue(groupId, out GroupInitiation latest) ? latest : ActiveGroup.Initiation;
+        ActiveGroup = ActiveGroup with { Initiation = saved };
+
+        _syncingInitiation = true;
+
+        try
+        {
+            IsGroupInitiationOn = saved == GroupInitiation.Occasional;
+        }
+        finally
+        {
+            _syncingInitiation = false;
+        }
+    }
+
     partial void OnIsSpeechOnChanged(bool value)
     {
         _speechSession?.Cancel();
@@ -164,6 +374,21 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     public void StopSpeech()
     {
         IsSpeechOn = false;
+    }
+
+    /// <summary>
+    /// Called when the messenger is no longer on screen: stops speech, and any group's turn-taking, since a group's
+    /// contacts only talk while the user has it open.
+    /// </summary>
+    public void Suspend()
+    {
+        StopSpeech();
+
+        if (ActiveGroup is { } group)
+        {
+            CancelReply(group.Id);
+            UpdateTyping();
+        }
     }
 
     [RelayCommand]
@@ -180,11 +405,44 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         }
     }
 
-    private async Task VoiceReplyAsync(ChatMessage reply, string voiceId, CancellationTokenSource session)
+    /// <summary>
+    /// Speaks <paramref name="reply"/> in its sender's own voice, after any reply still being spoken. Contacts without a
+    /// voice are skipped, and the conversation never waits for speech.
+    /// </summary>
+    private void Voice(ChatMessage reply)
+    {
+        if (!IsSpeechOn || _speech is null || _speechSession is not { } session)
+        {
+            return;
+        }
+
+        ContactId? senderId = ActiveGroup?.SenderOf(reply) ?? ActiveContact?.Id;
+        Contact? sender = ActiveContacts().FirstOrDefault(contact => contact.Id == senderId);
+
+        if (sender?.VoiceId is not { Length: > 0 } voiceId)
+        {
+            return;
+        }
+
+        Task previous = _speechQueue;
+        _speechQueue = SpeakInTurnAsync(previous, reply.Text, voiceId, session);
+    }
+
+    private async Task SpeakInTurnAsync(Task previous, string text, string voiceId, CancellationTokenSource session)
+    {
+        await previous;
+
+        if (!session.IsCancellationRequested)
+        {
+            await VoiceReplyAsync(text, voiceId, session);
+        }
+    }
+
+    private async Task VoiceReplyAsync(string text, string voiceId, CancellationTokenSource session)
     {
         try
         {
-            SpeechResult result = await _speech!.SpeakAsync(reply.Text, voiceId, session.Token);
+            SpeechResult result = await _speech!.SpeakAsync(text, voiceId, session.Token);
             if (!result.IsSuccessful && ReferenceEquals(session, _speechSession))
             {
                 Status = result.Problem ?? "Could not voice the reply.";
@@ -195,6 +453,10 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         {
             // Speech was switched off, the chat changed, or its view closed.
         }
+        catch (ObjectDisposedException)
+        {
+            // Speech was switched off while this reply waited its turn.
+        }
         catch (Exception error)
         {
             if (ReferenceEquals(session, _speechSession))
@@ -203,6 +465,14 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
                 StopSpeech();
             }
         }
+    }
+
+    /// <summary>
+    /// The open chat's contacts: the direct chat's contact, or the group's.
+    /// </summary>
+    private IEnumerable<Contact> ActiveContacts()
+    {
+        return ActiveContact is { } contact ? [contact] : GroupContacts;
     }
 
     /// <summary>
@@ -246,9 +516,9 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
 
             foreach (Conversation conversation in conversations)
             {
-                if (contactsById.TryGetValue(conversation.ContactId, out Contact? contact))
+                if (ContactsOf(conversation, contactsById) is { } members)
                 {
-                    Conversations.Add(new ConversationListItem(conversation, contact) { IsTyping = _pendingReplies.ContainsKey(conversation.Id) });
+                    Conversations.Add(new ConversationListItem(conversation, members) { IsTyping = IsTyping(conversation.Id) });
                 }
             }
 
@@ -272,11 +542,45 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     }
 
     /// <summary>
-    /// Brings the open thread up to date after a reload: closes it if its contact was deleted, and otherwise reloads it
-    /// so edits to the contact (such as a new photo) show.
+    /// A conversation's contacts, or <see langword="null"/> when any of them no longer exists.
+    /// </summary>
+    private static IReadOnlyList<Contact>? ContactsOf(Conversation conversation, Dictionary<ContactId, Contact> contactsById)
+    {
+        List<Contact> members = [];
+
+        foreach (ContactId id in conversation.ContactIds)
+        {
+            if (!contactsById.TryGetValue(id, out Contact? contact))
+            {
+                return null;
+            }
+
+            members.Add(contact);
+        }
+
+        return members.Count == 0 ? null : members;
+    }
+
+    /// <summary>
+    /// Brings the open thread up to date after a reload: closes it if its contact (or a group's contact) was deleted, and
+    /// otherwise reloads it so edits to the contacts (such as a new photo) show.
     /// </summary>
     private async Task RefreshActiveThreadAsync(Dictionary<ContactId, Contact> contactsById, IReadOnlyList<Conversation> conversations)
     {
+        if (ActiveGroup is { } group)
+        {
+            Conversation? stored = conversations.FirstOrDefault(item => item.Id == group.Id);
+
+            if (stored is null || ContactsOf(stored, contactsById) is not { } members)
+            {
+                CloseThread();
+                return;
+            }
+
+            await OpenGroupAsync(stored, members, reloadSameThread: true);
+            return;
+        }
+
         if (ActiveContact is null)
         {
             return;
@@ -322,7 +626,8 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         string query = SearchText.Trim();
 
         return query.Length == 0
-            || item.Contact.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || item.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || item.Contacts.Any(contact => contact.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase))
             || item.Conversation.LastMessage?.Text.Contains(query, StringComparison.OrdinalIgnoreCase) == true;
     }
 
@@ -337,6 +642,23 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
             {
                 VisibleContacts.Add(contact);
             }
+        }
+
+        FillInviteCandidates();
+    }
+
+    private void FillInviteCandidates()
+    {
+        InviteCandidates.Clear();
+
+        if (ActiveContact is not { } current)
+        {
+            return;
+        }
+
+        foreach (Contact contact in Contacts.Where(contact => contact.Id != current.Id))
+        {
+            InviteCandidates.Add(contact);
         }
     }
 
@@ -361,7 +683,7 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
             return;
         }
 
-        _ = OpenThreadAsync(value.Contact, value.Id);
+        _ = value.IsGroup ? OpenGroupAsync(value.Conversation, value.Contacts) : OpenThreadAsync(value.Contact, value.Id);
     }
 
     /// <summary>
@@ -378,7 +700,7 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
 
         ContactSearchText = string.Empty;
 
-        ConversationListItem? listed = Conversations.FirstOrDefault(item => item.Contact.Id == contact.Id);
+        ConversationListItem? listed = Conversations.FirstOrDefault(item => !item.IsGroup && item.Contact.Id == contact.Id);
 
         if (listed is not null)
         {
@@ -399,18 +721,81 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         }
     }
 
+    /// <summary>
+    /// Starts a group with the open direct chat's contact and <paramref name="invited"/>, and opens it. The direct chat,
+    /// and what its contact remembers from it, is left as it is. If the two already have a group, that group opens.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanInvite))]
+    private async Task InviteContactAsync(Contact? invited)
+    {
+        if (ActiveContact is not { } current || invited is null || invited.Id == current.Id)
+        {
+            return;
+        }
+
+        GroupCreationResult result;
+
+        try
+        {
+            result = await _conversations.CreateGroupAsync([current.Id, invited.Id]);
+        }
+        catch (Exception error)
+        {
+            Status = "Could not start the group: " + error.Message;
+            return;
+        }
+
+        if (!result.Validation.IsValid || result.Group is not { } group)
+        {
+            Status = result.Validation.ToStringPretty("Group");
+            return;
+        }
+
+        IReadOnlyList<Contact> members = [current, invited];
+        ConversationListItem? item = Conversations.FirstOrDefault(existing => existing.Id == group.Id);
+
+        if (item is null)
+        {
+            item = new ConversationListItem(group, members);
+            Conversations.Insert(0, item);
+            HasConversations = true;
+            Status = CountStatus();
+        }
+
+        SearchText = string.Empty;
+        FilterConversations();
+        await OpenGroupAsync(item.Conversation, item.Contacts);
+    }
+
+    private string? DraftFor(ConversationId? conversationId)
+    {
+        return ActiveContact is { } contact ? _drafts.GetValueOrDefault(contact.Id.Value) : conversationId is { } id ? _drafts.GetValueOrDefault(id.Value) : null;
+    }
+
+    /// <summary>
+    /// Remembers the open chat's unsent text, and leaves it: a group stops taking turns once the user leaves it.
+    /// </summary>
+    private void LeaveActiveThread()
+    {
+        if (ActiveContact is { } contact)
+        {
+            _drafts[contact.Id.Value] = DraftText;
+        }
+        else if (ActiveGroup is { } group)
+        {
+            _drafts[group.Id.Value] = DraftText;
+            CancelReply(group.Id);
+        }
+    }
+
     private async Task OpenThreadAsync(Contact contact, ConversationId? conversationId, bool reloadSameThread = false)
     {
         bool sameThread = ActiveContact?.Id == contact.Id;
 
         if (!sameThread)
         {
-            if (ActiveContact is not null)
-            {
-                _drafts[ActiveContact.Id] = DraftText;
-            }
-
-            DraftText = _drafts.GetValueOrDefault(contact.Id, string.Empty);
+            LeaveActiveThread();
+            DraftText = _drafts.GetValueOrDefault(contact.Id.Value, string.Empty);
         }
         else if (!reloadSameThread && ActiveConversationId == conversationId)
         {
@@ -424,8 +809,11 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
             ReplyProblem = null;
         }
 
+        ActiveGroup = null;
+        GroupContacts.Clear();
         ActiveContact = contact;
         ActiveConversationId = conversationId;
+        FillInviteCandidates();
         UpdateTyping();
         SyncListSelection();
 
@@ -440,41 +828,106 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
             return;
         }
 
+        await LoadMessagesAsync(conversationId.Value, version, null);
+    }
+
+    /// <summary>
+    /// Opens <paramref name="group"/>. Opening it (or coming back to it) may let one of its contacts start a conversation,
+    /// now and then: the group decides, within its cooldown.
+    /// </summary>
+    private async Task OpenGroupAsync(Conversation group, IReadOnlyList<Contact> members, bool reloadSameThread = false)
+    {
+        bool sameThread = ActiveGroup?.Id == group.Id;
+
+        if (sameThread && !reloadSameThread)
+        {
+            return;
+        }
+
+        if (!sameThread)
+        {
+            LeaveActiveThread();
+            DraftText = _drafts.GetValueOrDefault(group.Id.Value, string.Empty);
+            ReplyProblem = null;
+        }
+
+        int version = ++_threadVersion;
+
+        ActiveContact = null;
+        GroupContacts.Clear();
+
+        foreach (Contact member in members)
+        {
+            GroupContacts.Add(member);
+        }
+
+        ActiveGroup = group;
+        ActiveConversationId = group.Id;
+        InviteCandidates.Clear();
+        OnPropertyChanged(nameof(ActiveTitle));
+        OnPropertyChanged(nameof(ActivePhoto));
+        OnPropertyChanged(nameof(ActiveSecondPhoto));
+        OnPropertyChanged(nameof(ActiveSubtitle));
+        OnPropertyChanged(nameof(CanVoiceReplies));
+        UpdateTyping();
+        SyncListSelection();
+
+        if (!sameThread)
+        {
+            Messages.Clear();
+            HasMessages = false;
+        }
+
+        if (await LoadMessagesAsync(group.Id, version, group) && !_pendingReplies.ContainsKey(group.Id))
+        {
+            StartGroupRound(group.Id, GroupTrigger.Opened);
+        }
+    }
+
+    /// <returns>Whether the messages loaded and the thread is still open.</returns>
+    private async Task<bool> LoadMessagesAsync(ConversationId conversationId, int version, Conversation? group)
+    {
         try
         {
-            IReadOnlyList<ChatMessage> messages = await _conversations.ListMessagesAsync(conversationId.Value);
+            IReadOnlyList<ChatMessage> messages = await _conversations.ListMessagesAsync(conversationId);
 
             // The user may have switched chats while the messages loaded.
             if (version != _threadVersion)
             {
-                return;
+                return false;
             }
+
+            // Messages shown while these loaded (one the user sent, or a reply) may be newer than what was read; they
+            // are kept, after the loaded ones, in the order they were sent.
+            HashSet<MessageId> loaded = [.. messages.Select(message => message.Id)];
+            List<ChatMessage> shownSince = [.. Messages.Select(item => item.Message).Where(message => message.ConversationId == conversationId && !loaded.Contains(message.Id))];
 
             Messages.Clear();
 
-            foreach (ChatMessage message in messages)
+            foreach (ChatMessage message in messages.Concat(shownSince).OrderBy(message => message.SentAtUtc))
             {
-                AppendMessage(message);
+                AppendMessage(message, group);
             }
 
             HasMessages = Messages.Count > 0;
+            return true;
         }
         catch (Exception error)
         {
             Status = "Could not load messages: " + error.Message;
+            return false;
         }
     }
 
     private void CloseThread()
     {
         _threadVersion++;
-
-        if (ActiveContact is not null)
-        {
-            _drafts[ActiveContact.Id] = DraftText;
-        }
+        LeaveActiveThread();
 
         ActiveContact = null;
+        ActiveGroup = null;
+        GroupContacts.Clear();
+        InviteCandidates.Clear();
         ActiveConversationId = null;
         ReplyProblem = null;
         DraftText = string.Empty;
@@ -484,7 +937,7 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         SyncListSelection();
     }
 
-    private void AppendMessage(ChatMessage message)
+    private void AppendMessage(ChatMessage message, Conversation? group = null)
     {
         // A reply saved just before a reload is already in the reloaded thread.
         if (Messages.Any(item => item.Id == message.Id))
@@ -492,18 +945,29 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
             return;
         }
 
-        Messages.Add(MessageItem.Follow(Messages.LastOrDefault(), message, DateTimeOffset.Now));
+        group ??= ActiveGroup;
+        Contact? sender = group is not null
+            ? GroupContacts.FirstOrDefault(contact => contact.Id == group.SenderOf(message))
+            : ActiveContact;
+
+        Messages.Add(MessageItem.Follow(Messages.LastOrDefault(), message, DateTimeOffset.Now, sender, namesSender: group is not null));
         HasMessages = true;
     }
 
     private bool CanSend()
     {
-        return ActiveContact is not null && !string.IsNullOrWhiteSpace(DraftText);
+        return HasActiveThread && !string.IsNullOrWhiteSpace(DraftText);
     }
 
     [RelayCommand(CanExecute = nameof(CanSend))]
     private async Task SendAsync()
     {
+        if (ActiveGroup is { } group)
+        {
+            await SendToGroupAsync(group);
+            return;
+        }
+
         if (ActiveContact is not { } contact || string.IsNullOrWhiteSpace(DraftText))
         {
             return;
@@ -523,14 +987,14 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         catch (Exception error)
         {
             Status = "Could not send: " + error.Message;
-            RestoreDraft(contact, text);
+            RestoreDraft(contact.Id.Value, text);
             return;
         }
 
         if (!result.Validation.IsValid || result.Conversation is null || result.Message is null)
         {
             Status = result.Validation.ToStringPretty("Send");
-            RestoreDraft(contact, text);
+            RestoreDraft(contact.Id.Value, text);
             return;
         }
 
@@ -540,32 +1004,82 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
             AppendMessage(result.Message);
         }
 
-        UpsertListItem(result.Conversation, contact);
+        UpsertListItem(result.Conversation, [contact]);
         StartReply(result.Conversation.Id);
     }
 
-    private void RestoreDraft(Contact contact, string text)
+    private async Task SendToGroupAsync(Conversation group)
     {
-        if (ActiveContact?.Id == contact.Id)
+        if (string.IsNullOrWhiteSpace(DraftText))
+        {
+            return;
+        }
+
+        string text = DraftText.Trim();
+        DraftText = string.Empty;
+        ReplyProblem = null;
+
+        // Whatever the group was saying is set aside: the contacts now answer this, as a new round.
+        CancelReply(group.Id);
+        UpdateTyping();
+
+        SendMessageResult result;
+
+        try
+        {
+            result = await _conversations.SendAsync(group.Id, text);
+        }
+        catch (Exception error)
+        {
+            Status = "Could not send: " + error.Message;
+            RestoreDraft(group.Id.Value, text);
+            return;
+        }
+
+        if (!result.Validation.IsValid || result.Conversation is null || result.Message is null)
+        {
+            Status = result.Validation.ToStringPretty("Send");
+            RestoreDraft(group.Id.Value, text);
+            return;
+        }
+
+        if (ActiveGroup?.Id == group.Id)
+        {
+            AppendMessage(result.Message);
+        }
+
+        UpsertListItem(result.Conversation, [.. GroupContacts]);
+
+        if (ActiveGroup?.Id == group.Id)
+        {
+            StartGroupRound(group.Id, GroupTrigger.UserMessage);
+        }
+    }
+
+    private void RestoreDraft(Guid key, string text)
+    {
+        bool open = ActiveContact?.Id.Value == key || ActiveGroup?.Id.Value == key;
+
+        if (open)
         {
             if (string.IsNullOrEmpty(DraftText))
             {
                 DraftText = text;
             }
         }
-        else if (string.IsNullOrEmpty(_drafts.GetValueOrDefault(contact.Id)))
+        else if (string.IsNullOrEmpty(_drafts.GetValueOrDefault(key)))
         {
-            _drafts[contact.Id] = text;
+            _drafts[key] = text;
         }
     }
 
-    private void UpsertListItem(Conversation conversation, Contact contact)
+    private void UpsertListItem(Conversation conversation, IReadOnlyList<Contact> members)
     {
         ConversationListItem? item = Conversations.FirstOrDefault(existing => existing.Id == conversation.Id);
 
         if (item is null)
         {
-            item = new ConversationListItem(conversation, contact);
+            item = new ConversationListItem(conversation, members);
             Conversations.Insert(0, item);
             HasConversations = true;
 
@@ -639,6 +1153,22 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         }
 
         _searching.Remove(conversationId);
+        _groupSpeakers.Remove(conversationId);
+        _openingRounds.Remove(conversationId);
+    }
+
+    /// <summary>
+    /// Stops the open chat's contact replying, or its group taking turns, until the user writes again.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanStopReplies))]
+    private void StopReplies()
+    {
+        if (ActiveConversationId is { } conversationId)
+        {
+            CancelReply(conversationId);
+            UpdateTyping();
+            Status = "Stopped.";
+        }
     }
 
     private async Task ReplyAsync(ConversationId conversationId, CancellationTokenSource pending)
@@ -668,47 +1198,17 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
             problem = "The contact could not reply: " + error.Message;
         }
 
-        bool current = _pendingReplies.TryGetValue(conversationId, out CancellationTokenSource? active) && active == pending;
-
-        if (current)
-        {
-            _pendingReplies.Remove(conversationId);
-            _searching.Remove(conversationId);
-        }
-
-        pending.Dispose();
+        bool current = FinishPending(conversationId, pending);
 
         if (problem is not null && current)
         {
-            Status = problem;
-
-            if (ActiveConversationId == conversationId)
-            {
-                ReplyProblem = problem;
-            }
+            ShowProblem(conversationId, problem);
         }
 
         // A reply that finished just before being superseded was already saved, so it is still shown.
         if (reply is not null)
         {
-            if (ActiveConversationId == conversationId)
-            {
-                AppendMessage(reply);
-                // Spoken even when a newer reply has been asked for, since it is shown; replies are voiced in turn.
-                if (IsSpeechOn && CanVoiceReplies && ActiveContact?.VoiceId is { } voiceId && _speechSession is { } session)
-                {
-                    _ = VoiceReplyAsync(reply, voiceId, session);
-                }
-            }
-
-            ConversationListItem? item = Conversations.FirstOrDefault(existing => existing.Id == conversationId);
-
-            if (item is not null)
-            {
-                item.Conversation = item.Conversation with { LastMessage = reply };
-                MoveToTop(item);
-            }
-
+            ShowReply(conversationId, reply);
             _ = UpdateMemoryAsync(conversationId);
         }
 
@@ -716,8 +1216,156 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     }
 
     /// <summary>
-    /// Learns lasting facts from older messages as the contact's memories, in the background after a reply. A reply asked
-    /// for meanwhile waits its turn for the model.
+    /// Starts a round of the group taking turns: after the user writes, or when the user opens the group. Each turn, the
+    /// group decides who writes next, if anyone; the round ends when it decides to wait for the user, after at most a few
+    /// messages, or as soon as the user writes again, stops it, or leaves the group.
+    /// </summary>
+    private void StartGroupRound(ConversationId conversationId, GroupTrigger trigger)
+    {
+        CancelReply(conversationId);
+
+        CancellationTokenSource pending = new();
+        _pendingReplies[conversationId] = pending;
+
+        if (trigger == GroupTrigger.Opened)
+        {
+            _openingRounds.Add(conversationId);
+        }
+
+        UpdateTyping();
+        _ = RunGroupRoundAsync(conversationId, trigger, pending);
+    }
+
+    private async Task RunGroupRoundAsync(ConversationId conversationId, GroupTrigger trigger, CancellationTokenSource pending)
+    {
+        GroupCycle cycle = new(trigger);
+        bool replied = false;
+        string? problem = null;
+
+        try
+        {
+            while (!pending.IsCancellationRequested && ActiveGroup?.Id == conversationId)
+            {
+                GroupTurn? turn = await _conversations.PlanGroupTurnAsync(conversationId, cycle, pending.Token);
+
+                // Only an open group talks; one left meanwhile has been canceled.
+                if (turn is null || pending.IsCancellationRequested || ActiveGroup?.Id != conversationId)
+                {
+                    break;
+                }
+
+                _groupSpeakers[conversationId] = turn.Speaker;
+                UpdateTyping();
+
+                Progress<ReplyActivity> activity = new(stage => ShowActivity(conversationId, pending, stage));
+                ConversationReply result = await _conversations.ReplyInGroupAsync(conversationId, turn, activity, pending.Token);
+
+                if (result.Message is { } reply)
+                {
+                    replied = true;
+                    ShowReply(conversationId, reply);
+                }
+
+                if (result.Status == ReplyStatus.NotFound)
+                {
+                    // The group was deleted.
+                    break;
+                }
+
+                _groupSpeakers.Remove(conversationId);
+                _searching.Remove(conversationId);
+
+                if (result.Status != ReplyStatus.Success)
+                {
+                    // Shown now, while the others may still answer; this contact is not asked again this round.
+                    string name = GroupContacts.FirstOrDefault(contact => contact.Id == turn.Speaker)?.DisplayName ?? "A contact";
+                    problem = result.Problem ?? $"{name} could not reply.";
+                    ShowProblem(conversationId, problem);
+                    UpdateTyping();
+                    cycle = cycle.AfterFailure(turn);
+                    continue;
+                }
+
+                cycle = cycle.After(turn);
+            }
+        }
+        catch (OperationCanceledException) when (pending.IsCancellationRequested)
+        {
+            // The user wrote again, stopped the group, or left it.
+        }
+        catch (Exception error)
+        {
+            problem = "The group could not reply: " + error.Message;
+        }
+
+        bool current = FinishPending(conversationId, pending);
+
+        if (problem is not null && current)
+        {
+            ShowProblem(conversationId, problem);
+        }
+
+        if (replied)
+        {
+            _ = UpdateMemoryAsync(conversationId);
+        }
+
+        UpdateTyping();
+    }
+
+    /// <summary>
+    /// Ends a reply or round that has finished, returning whether it was still the current one.
+    /// </summary>
+    private bool FinishPending(ConversationId conversationId, CancellationTokenSource pending)
+    {
+        bool current = _pendingReplies.TryGetValue(conversationId, out CancellationTokenSource? active) && active == pending;
+
+        if (current)
+        {
+            _pendingReplies.Remove(conversationId);
+            _searching.Remove(conversationId);
+            _groupSpeakers.Remove(conversationId);
+            _openingRounds.Remove(conversationId);
+        }
+
+        pending.Dispose();
+        return current;
+    }
+
+    private void ShowProblem(ConversationId conversationId, string problem)
+    {
+        Status = problem;
+
+        if (ActiveConversationId == conversationId)
+        {
+            ReplyProblem = problem;
+        }
+    }
+
+    /// <summary>
+    /// Shows a saved reply in its thread, if open (and speaks it, when speech is on), and in the chat list.
+    /// </summary>
+    private void ShowReply(ConversationId conversationId, ChatMessage reply)
+    {
+        if (ActiveConversationId == conversationId)
+        {
+            AppendMessage(reply);
+            // Spoken even when a newer reply has been asked for, since it is shown; replies are voiced in turn.
+            Voice(reply);
+        }
+
+        ConversationListItem? item = Conversations.FirstOrDefault(existing => existing.Id == conversationId);
+
+        if (item is not null)
+        {
+            item.Conversation = item.Conversation with { LastMessage = reply };
+            MoveToTop(item);
+        }
+    }
+
+    /// <summary>
+    /// Learns lasting facts from older messages as the contacts' memories, in the background after a reply. A reply
+    /// asked for meanwhile waits its turn for the model.
     /// </summary>
     private async Task UpdateMemoryAsync(ConversationId conversationId)
     {
@@ -731,7 +1379,7 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
             if (await _conversations.UpdateMemoryAsync(conversationId) is { } updated
                 && Conversations.FirstOrDefault(existing => existing.Id == conversationId) is { } item)
             {
-                item.Conversation = item.Conversation with { MemoryThrough = updated.MemoryThrough };
+                item.Conversation = item.Conversation with { Participants = updated.Participants };
             }
         }
         catch (Exception)
@@ -749,9 +1397,24 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     /// afterwards the changed memories are embedded in the background so they can be found by meaning.
     /// </summary>
     [RelayCommand(CanExecute = nameof(HasConversation))]
-    private async Task EditMemoryAsync()
+    private Task EditMemoryAsync()
     {
-        if (ShowMemoryEditorAsync is null || ActiveContact is not { } contact || ActiveConversationId is not { } conversationId)
+        return ActiveContact is { } contact ? EditMemoryOfAsync(contact) : Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Shows what one of the open group's contacts remembers. Each contact's memories are their own, whichever chat they
+    /// were learned in.
+    /// </summary>
+    [RelayCommand]
+    private Task EditGroupMemoryAsync(Contact? contact)
+    {
+        return contact is not null && IsGroupThread ? EditMemoryOfAsync(contact) : Task.CompletedTask;
+    }
+
+    private async Task EditMemoryOfAsync(Contact contact)
+    {
+        if (ShowMemoryEditorAsync is null || ActiveConversationId is not { } conversationId)
         {
             return;
         }
@@ -798,14 +1461,33 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         UpdateTyping();
     }
 
+    /// <summary>
+    /// Whether someone in the conversation is writing: its contact replying, or one of a group's contacts taking their
+    /// turn (a group deciding whether anyone writes shows nothing).
+    /// </summary>
+    private bool IsTyping(ConversationId conversationId)
+    {
+        if (!_pendingReplies.ContainsKey(conversationId))
+        {
+            return false;
+        }
+
+        bool isGroup = ActiveGroup?.Id == conversationId || Conversations.FirstOrDefault(item => item.Id == conversationId)?.IsGroup == true;
+
+        return !isGroup || _groupSpeakers.ContainsKey(conversationId);
+    }
+
     private void UpdateTyping()
     {
-        IsContactTyping = ActiveConversationId is { } active && _pendingReplies.ContainsKey(active);
+        IsContactTyping = ActiveConversationId is { } active && IsTyping(active);
+        CanStopReplies = IsReplyPending;
         IsContactSearching = IsContactTyping && _searching.Contains(ActiveConversationId!.Value);
+        OnPropertyChanged(nameof(TypingContact));
+        OnPropertyChanged(nameof(ActiveSubtitle));
 
         foreach (ConversationListItem item in Conversations)
         {
-            item.IsTyping = _pendingReplies.ContainsKey(item.Id);
+            item.IsTyping = IsTyping(item.Id);
         }
     }
 
@@ -823,7 +1505,11 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
             return;
         }
 
-        if (ConfirmAsync is not null && !await ConfirmAsync("Delete chat", $"Delete your chat with {item.Contact.DisplayName}? This cannot be undone."))
+        string question = item.IsGroup
+            ? $"Delete the group {item.Title}? What its contacts learned in it is forgotten. Your own chats with them are kept. This cannot be undone."
+            : $"Delete your chat with {item.Contact.DisplayName}? This cannot be undone.";
+
+        if (ConfirmAsync is not null && !await ConfirmAsync(item.IsGroup ? "Delete group" : "Delete chat", question))
         {
             return;
         }
@@ -848,9 +1534,9 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
             CloseThread();
         }
 
-        _drafts.Remove(item.Contact.Id);
+        _drafts.Remove(item.IsGroup ? item.Id.Value : item.Contact.Id.Value);
 
-        Status = "Chat deleted.";
+        Status = item.IsGroup ? "Group deleted." : "Chat deleted.";
     }
 
     private string CountStatus()

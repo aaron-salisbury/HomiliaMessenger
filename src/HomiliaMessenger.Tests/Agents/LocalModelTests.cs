@@ -1,7 +1,9 @@
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
+using HomiliaMessenger.Business.Modules.Profile;
 using HomiliaMessenger.Integrations.LocalModels;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
@@ -166,6 +168,92 @@ public sealed class LocalModelTests
         Assert.IsLessThan(TimeSpan.FromSeconds(60), stopwatch.Elapsed);
     }
 
+    /// <summary>
+    /// Two contacts on the same model, as in a group, take turns on one loaded copy of it: each reply has its own persona
+    /// and prompt, a reply canceled partway leaves the model usable for the next contact, and the weights are loaded
+    /// once. Runs the real Phi-3.5 mini model when it has been downloaded on this machine.
+    /// </summary>
+    [TestMethod]
+    [TestCategory("LocalModel")]
+    public async Task OnnxAgent_ContactsOnTheSameModelShareOneLoadedCopy()
+    {
+        string appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HomiliaMessenger");
+        LocalModelLibrary library = new(LocalModelCatalog.Models, Path.Combine(appData, "Models"), new FakeServer(), new OnnxModelHost(), NullLogger<LocalModelLibrary>.Instance);
+
+        if (!library.IsDownloaded(library.Find(LocalModelCatalog.PHI_3_5_MINI)!))
+        {
+            Assert.Inconclusive("Phi-3.5 mini is not downloaded on this machine.");
+        }
+
+        using OnnxModelHost host = new();
+        LocalConversationAgent agent = new(library, host, NullLogger<LocalConversationAgent>.Instance);
+        AgentRequest marcus = new(LocalModelCatalog.PHI_3_5_MINI, "You are Marcus, a gruff motorcycle mechanic in a group chat. Reply in one short sentence.", [new AgentTurn(MessageSender.User, "Aaron: How's the shop, Marcus?")]);
+        AgentRequest elena = new(LocalModelCatalog.PHI_3_5_MINI, "You are Elena, a cheerful chemistry teacher in a group chat. Reply in one short sentence.", [new AgentTurn(MessageSender.User, "Aaron: How was class, Elena?")]);
+
+        AgentReply first = await agent.ReplyAsync(marcus, TestContext.CancellationToken);
+
+        // Elena's reply is canceled partway, as when the user writes again mid-round.
+        using (CancellationTokenSource cancel = new(TimeSpan.FromMilliseconds(300)))
+        {
+            await Assert.ThrowsAsync<OperationCanceledException>(() => agent.ReplyAsync(elena, cancel.Token));
+        }
+
+        AgentReply second = await agent.ReplyAsync(elena, TestContext.CancellationToken);
+        AgentReply third = await agent.ReplyAsync(marcus, TestContext.CancellationToken);
+        TestContext.WriteLine($"Marcus: {first.Text}\nElena: {second.Text}\nMarcus: {third.Text}");
+
+        Assert.AreEqual(ReplyStatus.Success, first.Status, first.Problem);
+        Assert.AreEqual(ReplyStatus.Success, second.Status, second.Problem);
+        Assert.AreEqual(ReplyStatus.Success, third.Status, third.Problem);
+        Assert.AreEqual(1, host.LoadCount, "The model's weights were loaded once for both contacts.");
+    }
+
+    /// <summary>
+    /// A round of a group with two personas on the real Phi-3.5 mini model, through the whole conversation flow: each
+    /// message is the speaker's own, never written as someone else. Runs when the model has been downloaded.
+    /// </summary>
+    [TestMethod]
+    [TestCategory("LocalModel")]
+    public async Task GroupRound_WithPhi35Mini_GivesEachContactTheirOwnMessages()
+    {
+        string appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HomiliaMessenger");
+        LocalModelLibrary library = new(LocalModelCatalog.Models, Path.Combine(appData, "Models"), new FakeServer(), new OnnxModelHost(), NullLogger<LocalModelLibrary>.Instance);
+
+        if (!library.IsDownloaded(library.Find(LocalModelCatalog.PHI_3_5_MINI)!))
+        {
+            Assert.Inconclusive("Phi-3.5 mini is not downloaded on this machine.");
+        }
+
+        using OnnxModelHost host = new();
+        LocalConversationAgent agent = new(library, host, NullLogger<LocalConversationAgent>.Instance);
+        using TestDatabase database = await Conversations.GroupTestKit.CreateDatabaseAsync(TestContext, agents: agent);
+        IConversationService service = database.Services.GetRequiredService<IConversationService>();
+        await database.Services.GetRequiredService<IUserProfileService>().SaveAsync(new UserProfile { Name = "Aaron" }, TestContext.CancellationToken);
+        Contact marcus = await SaveLocalContactAsync(database, "Marcus", "Gruff, dry-humored motorcycle mechanic.", "Coworker");
+        Contact elena = await SaveLocalContactAsync(database, "Elena", "Talkative, curious high school chemistry teacher.", "Sister");
+        GroupCreationResult group = await service.CreateGroupAsync([marcus.Id, elena.Id], TestContext.CancellationToken);
+
+        await service.SendAsync(group.Group!.Id, "What are you two doing this weekend?", TestContext.CancellationToken);
+        IReadOnlyList<ChatMessage> replies = await Conversations.GroupTestKit.RunRoundAsync(service, group.Group.Id, GroupTrigger.UserMessage, TestContext.CancellationToken);
+
+        foreach (ChatMessage reply in replies)
+        {
+            TestContext.WriteLine($"{(reply.SenderContactId == marcus.Id ? "Marcus" : "Elena")}: {reply.Text}");
+        }
+
+        Assert.IsGreaterThanOrEqualTo(2, replies.Count);
+        Assert.IsTrue(replies.All(reply => !reply.Text.StartsWith("Marcus:", StringComparison.Ordinal) && !reply.Text.StartsWith("Elena:", StringComparison.Ordinal) && !reply.Text.StartsWith("Aaron:", StringComparison.Ordinal)));
+        Assert.AreEqual(1, host.LoadCount);
+    }
+
+    private async Task<Contact> SaveLocalContactAsync(TestDatabase database, string name, string personality, string relationship)
+    {
+        Contact contact = new() { Id = ContactId.New(), GivenName = name, Birthday = new DateOnly(1985, 5, 5), Personality = personality, Relationship = relationship, Agent = new AgentAssignment(LocalModelLibrary.PROVIDER, LocalModelCatalog.PHI_3_5_MINI) };
+        await database.Services.GetRequiredService<IContactService>().SaveAsync(contact, TestContext.CancellationToken);
+
+        return contact;
+    }
+
     [TestMethod]
     public async Task OnnxHost_ReportsAMissingModelFolder()
     {
@@ -174,6 +262,7 @@ public sealed class LocalModelTests
 
         await Assert.ThrowsExactlyAsync<DirectoryNotFoundException>(() =>
             host.GenerateAsync(missing, 512, [new ChatTemplateMessage("user", "Hi")], new AgentRequest("tiny", string.Empty, []), new GenerationSettings(), TestContext.CancellationToken));
+        Assert.AreEqual(0, host.LoadCount);
     }
 
     /// <summary>

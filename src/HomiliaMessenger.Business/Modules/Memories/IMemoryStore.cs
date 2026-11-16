@@ -21,17 +21,19 @@ public interface IMemoryStore
     Task<Memory?> GetAsync(MemoryId id, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Adds a memory to a conversation, owned by the conversation's contact (whatever <see cref="Memory.ContactId"/>
-    /// says). Returns <see langword="false"/> when the conversation does not exist.
+    /// Adds a memory to a conversation. In a direct conversation it is owned by the conversation's contact (whatever
+    /// <see cref="Memory.ContactId"/> says); in a group, by <see cref="Memory.ContactId"/>, who must take part in it.
+    /// Returns <see langword="false"/> when the conversation does not exist or the contact does not take part.
     /// </summary>
     Task<bool> AddAsync(Memory memory, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Adds the memories listed from a batch of messages and moves the conversation's memory checkpoint to
-    /// <paramref name="through"/>, together, only if the checkpoint is still <paramref name="expectedThrough"/>. Returns
-    /// <see langword="false"/>, saving nothing, when it moved meanwhile or the conversation does not exist.
+    /// Adds the memories <paramref name="contactId"/> listed from a batch of a conversation's messages, and moves that
+    /// contact's memory checkpoint in the conversation to <paramref name="through"/>, together, only if the checkpoint
+    /// is still <paramref name="expectedThrough"/>. Returns <see langword="false"/>, saving nothing, when it moved
+    /// meanwhile, or the conversation no longer exists or the contact does not take part in it.
     /// </summary>
-    Task<bool> AddExtractedAsync(ConversationId conversationId, IReadOnlyList<Memory> memories, MessageId through, MessageId? expectedThrough, CancellationToken cancellationToken = default);
+    Task<bool> AddExtractedAsync(ConversationId conversationId, ContactId contactId, IReadOnlyList<Memory> memories, MessageId through, MessageId? expectedThrough, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Replaces a memory's text, only if it is still <paramref name="expectedText"/>, and discards its vector, which

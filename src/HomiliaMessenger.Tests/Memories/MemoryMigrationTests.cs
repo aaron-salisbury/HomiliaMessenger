@@ -133,7 +133,7 @@ public sealed class MemoryMigrationTests
 
     private static IEnumerable<Migration> AllMigrations()
     {
-        return [.. LegacyMigrations(), new AddContactMemoriesMigration(), new AddWebSearchMigration()];
+        return [.. LegacyMigrations(), new AddContactMemoriesMigration(), new AddWebSearchMigration(), new AddGroupConversationsMigration()];
     }
 
     private async Task SeedLegacyConversationAsync(ApplicationDatabase database)

@@ -21,6 +21,12 @@ public sealed record SendMessageResult(ValidationResult Validation, Conversation
 public sealed record ConversationReply(ReplyStatus Status, ChatMessage? Message, string? Problem);
 
 /// <summary>
+/// The outcome of creating a group. When <see cref="Validation"/> is valid, <see cref="Group"/> is the group, which
+/// <see cref="IsExisting"/> says the same contacts already had.
+/// </summary>
+public sealed record GroupCreationResult(ValidationResult Validation, Conversation? Group, bool IsExisting);
+
+/// <summary>
 /// What a contact is doing on the way to a reply, for showing in the conversation.
 /// </summary>
 public enum ReplyActivity
@@ -43,7 +49,42 @@ public interface IConversationService
     /// </summary>
     Task<IReadOnlyList<Conversation>> ListAsync(CancellationToken cancellationToken = default);
 
+    Task<Conversation?> GetAsync(ConversationId conversationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The contact's direct conversation, if they have one.
+    /// </summary>
     Task<Conversation?> FindByContactAsync(ContactId contactId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Starts a group with the user and <paramref name="contactIds"/> (between <see cref="GroupConversations.MIN_CONTACTS"/>
+    /// and <see cref="GroupConversations.MAX_CONTACTS"/> contacts). The contacts' direct conversations are left as they
+    /// are. When the same contacts already have a group, that group is returned instead of starting another.
+    /// </summary>
+    Task<GroupCreationResult> CreateGroupAsync(IReadOnlyList<ContactId> contactIds, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Validates and saves a message from the user to an existing conversation, direct or group.
+    /// </summary>
+    Task<SendMessageResult> SendAsync(ConversationId conversationId, string text, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Decides who in a group writes next in <paramref name="cycle"/>, or <see langword="null"/> when the group should
+    /// now wait for the user. A round opened with <see cref="GroupTrigger.Opened"/> uses up the group's chance to start a
+    /// conversation, whether or not a contact takes it. Call it only while the user has the group open.
+    /// </summary>
+    Task<GroupTurn?> PlanGroupTurnAsync(ConversationId conversationId, GroupCycle cycle, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Asks <paramref name="turn"/>'s contact to write their next message in the group, with their own persona, agent,
+    /// and memories, and saves it as theirs.
+    /// </summary>
+    Task<ConversationReply> ReplyInGroupAsync(ConversationId conversationId, GroupTurn turn, IProgress<ReplyActivity>? activity = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets whether a group's contacts may start conversations when it is opened.
+    /// </summary>
+    Task<bool> SetInitiationAsync(ConversationId conversationId, GroupInitiation initiation, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Lists a conversation's messages, oldest first.
@@ -96,9 +137,30 @@ public interface IConversationStore
     Task<IReadOnlyList<ChatMessage>> ListMessagesAsync(ConversationId conversationId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Adds a message to its conversation. Returns <see langword="false"/> when the conversation does not exist.
+    /// Adds a message to its conversation. Returns <see langword="false"/> when the conversation does not exist, when
+    /// the message's sender is a contact who does not take part in it, or, with <paramref name="onlyIfFirst"/>, when the
+    /// conversation already has a message.
     /// </summary>
-    Task<bool> AddMessageAsync(ChatMessage message, CancellationToken cancellationToken = default);
+    /// <param name="onlyIfFirst">Adds the message only as the conversation's first, checked and added in one step.</param>
+    Task<bool> AddMessageAsync(ChatMessage message, CancellationToken cancellationToken = default, bool onlyIfFirst = false);
 
     Task<bool> DeleteAsync(ConversationId id, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Saves a new group with its participants, together, and returns it; or, when the same contacts already have a
+    /// group (even one saved a moment before), saves nothing and returns that group. Returns <see langword="null"/> when
+    /// any of its contacts no longer exists.
+    /// </summary>
+    Task<Conversation?> AddGroupAsync(Conversation group, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets whether a group's contacts may start conversations. Returns <see langword="false"/> when it is not a group.
+    /// </summary>
+    Task<bool> SetInitiationAsync(ConversationId id, GroupInitiation initiation, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Records that the group had its chance to start a conversation at <paramref name="at"/>, only if that was last
+    /// recorded as <paramref name="expected"/>, so two openings at once cannot both take it.
+    /// </summary>
+    Task<bool> ClaimInitiationAsync(ConversationId id, DateTimeOffset at, DateTimeOffset? expected, CancellationToken cancellationToken = default);
 }

@@ -72,6 +72,12 @@
             <Setter Property="Margin" Value="0,8,0,1" />
         </Style>
 
+        <!-- The front photo of a group's pair sits on a ring of the background, so the two photos read as separate. -->
+        <Style Selector="Ellipse.groupFront">
+            <Setter Property="Stroke" Value="{DynamicResource SystemRegionColor}" />
+            <Setter Property="StrokeThickness" Value="2" />
+        </Style>
+
         <Style Selector="TextBlock.preview.typing">
             <Setter Property="FontStyle" Value="Italic" />
         </Style>
@@ -200,13 +206,26 @@
                                     </ContextMenu>
                                 </Grid.ContextMenu>
 
-                                <Ellipse Grid.Column="0" VerticalAlignment="Center" Width="50" Height="50">
+                                <Ellipse Grid.Column="0" VerticalAlignment="Center" Width="50" Height="50" IsVisible="{Binding !IsGroup}">
                                     <Ellipse.Fill>
                                         <ImageBrush Source="{Binding Contact.Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
                                     </Ellipse.Fill>
                                 </Ellipse>
+                                <!-- A group's contacts, their photos overlapping. -->
+                                <Panel Grid.Column="0" Width="50" Height="50" VerticalAlignment="Center" IsVisible="{Binding IsGroup}">
+                                    <Ellipse Width="34" Height="34" HorizontalAlignment="Left" VerticalAlignment="Top">
+                                        <Ellipse.Fill>
+                                            <ImageBrush Source="{Binding Contact.Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                                        </Ellipse.Fill>
+                                    </Ellipse>
+                                    <Ellipse Classes="groupFront" Width="34" Height="34" HorizontalAlignment="Right" VerticalAlignment="Bottom">
+                                        <Ellipse.Fill>
+                                            <ImageBrush Source="{Binding SecondContact.Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                                        </Ellipse.Fill>
+                                    </Ellipse>
+                                </Panel>
                                 <StackPanel Grid.Column="2" VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding Contact.DisplayName}" TextTrimming="CharacterEllipsis" FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" FontWeight="SemiBold" />
                                     <TextBlock Classes="preview" Classes.typing="{Binding IsTyping}" Text="{Binding Preview}"
                                                TextTrimming="CharacterEllipsis" MaxLines="1" FontSize="12" Opacity="0.75" />
                                 </StackPanel>
@@ -222,7 +241,7 @@
         <!-- No open chat -->
         <StackPanel Grid.Column="1" IsVisible="{Binding !HasActiveThread}" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10">
             <i:MaterialIcon Kind="ForumOutline" Width="64" Height="64" Opacity="0.35" />
-            <TextBlock Text="Pick a chat, or start a new one with the pencil button." Opacity="0.6" TextAlignment="Center" />
+            <TextBlock Text="Pick a chat, or start a new one with the pencil button. To make a group, invite someone from a chat." Opacity="0.6" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="360" />
         </StackPanel>
 
         <!-- Thread. Messages and composer stay in a centered, phone-like column (sized in code-behind) so a wide window
@@ -231,17 +250,108 @@
 
             <!-- Thread header -->
             <Border Grid.Row="0" Padding="16,10" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="0,0,0,1">
-                <Grid ColumnDefinitions="40,12,*,Auto">
-                    <Ellipse Grid.Column="0" Width="40" Height="40">
+                <Grid ColumnDefinitions="40,12,*,Auto,Auto,Auto,Auto">
+                    <Ellipse Grid.Column="0" Width="40" Height="40" IsVisible="{Binding !IsGroupThread}">
                         <Ellipse.Fill>
-                            <ImageBrush Source="{Binding ActiveContact.Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                            <ImageBrush Source="{Binding ActivePhoto, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
                         </Ellipse.Fill>
                     </Ellipse>
+                    <Panel Grid.Column="0" Width="40" Height="40" IsVisible="{Binding IsGroupThread}">
+                        <Ellipse Width="28" Height="28" HorizontalAlignment="Left" VerticalAlignment="Top">
+                            <Ellipse.Fill>
+                                <ImageBrush Source="{Binding ActivePhoto, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                            </Ellipse.Fill>
+                        </Ellipse>
+                        <Ellipse Classes="groupFront" Width="28" Height="28" HorizontalAlignment="Right" VerticalAlignment="Bottom">
+                            <Ellipse.Fill>
+                                <ImageBrush Source="{Binding ActiveSecondPhoto, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                            </Ellipse.Fill>
+                        </Ellipse>
+                    </Panel>
                     <StackPanel Grid.Column="2" VerticalAlignment="Center">
-                        <TextBlock Text="{Binding ActiveContact.DisplayName}" FontWeight="SemiBold" FontSize="16" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding ActiveTitle}" FontWeight="SemiBold" FontSize="16" TextTrimming="CharacterEllipsis" />
                         <TextBlock Text="{Binding ActiveSubtitle}" FontSize="12" Opacity="0.65" TextTrimming="CharacterEllipsis" />
                     </StackPanel>
-                    <Button Grid.Column="3" Classes="noBackground" Command="{Binding EditMemoryCommand}" IsVisible="{Binding HasConversation}"
+
+                    <!-- Stops a reply, or a group's turn-taking, in progress. -->
+                    <Button Grid.Column="3" Classes="noBackground" Command="{Binding StopRepliesCommand}" IsVisible="{Binding CanStopReplies}"
+                            VerticalAlignment="Center" Opacity="0.7" ToolTip.Tip="Stop replying" AutomationProperties.Name="Stop replying">
+                        <i:MaterialIcon Kind="StopCircleOutline" Width="22" Height="22" />
+                    </Button>
+
+                    <!-- Invite another contact: starts a new group, leaving this chat as it is. -->
+                    <Button Grid.Column="4" x:Name="InviteButton" Classes="noBackground" IsVisible="{Binding CanInvite}"
+                            VerticalAlignment="Center" Opacity="0.7" ToolTip.Tip="Invite a contact to a new group" AutomationProperties.Name="Invite contact">
+                        <i:MaterialIcon Kind="AccountPlusOutline" Width="22" Height="22" />
+                        <Button.Flyout>
+                            <Flyout Placement="BottomEdgeAlignedRight">
+                                <StackPanel Width="280" Spacing="8">
+                                    <TextBlock Text="Invite to a new group" FontWeight="SemiBold" FontSize="15" />
+                                    <TextBlock Text="{Binding ActiveContact.DisplayName, StringFormat='Starts a group with you, {0}, and who you choose. This chat stays as it is.'}"
+                                               TextWrapping="Wrap" FontSize="12" Opacity="0.7" />
+                                    <TextBlock Text="There is no one else to invite yet. Add another persona on the Contacts page." IsVisible="{Binding !InviteCandidates.Count}"
+                                               TextWrapping="Wrap" Opacity="0.7" />
+                                    <ListBox ItemsSource="{Binding InviteCandidates}" MaxHeight="320" Background="Transparent"
+                                             SelectionChanged="InvitePicker_SelectionChanged">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate x:DataType="contacts:Contact">
+                                                <Grid ColumnDefinitions="36,10,*">
+                                                    <Ellipse Grid.Column="0" Width="36" Height="36">
+                                                        <Ellipse.Fill>
+                                                            <ImageBrush Source="{Binding Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                                                        </Ellipse.Fill>
+                                                    </Ellipse>
+                                                    <TextBlock Grid.Column="2" Text="{Binding DisplayName}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </StackPanel>
+                            </Flyout>
+                        </Button.Flyout>
+                    </Button>
+
+                    <!-- A group's contacts, what each remembers, and whether they may start conversations. -->
+                    <Button Grid.Column="5" Classes="noBackground" IsVisible="{Binding IsGroupThread}"
+                            VerticalAlignment="Center" Opacity="0.7" ToolTip.Tip="Group members" AutomationProperties.Name="Group members">
+                        <i:MaterialIcon Kind="AccountGroupOutline" Width="22" Height="22" />
+                        <Button.Flyout>
+                            <Flyout Placement="BottomEdgeAlignedRight">
+                                <StackPanel Width="300" Spacing="8">
+                                    <TextBlock Text="In this group" FontWeight="SemiBold" FontSize="15" />
+                                    <ItemsControl ItemsSource="{Binding GroupContacts}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="contacts:Contact">
+                                                <Grid ColumnDefinitions="36,10,*,Auto" Margin="0,4">
+                                                    <Ellipse Grid.Column="0" Width="36" Height="36">
+                                                        <Ellipse.Fill>
+                                                            <ImageBrush Source="{Binding Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                                                        </Ellipse.Fill>
+                                                    </Ellipse>
+                                                    <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" FontWeight="SemiBold" />
+                                                        <TextBlock Text="{Binding Relationship}" FontSize="12" Opacity="0.65" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding Agent.Model, FallbackValue='Simulated replies', TargetNullValue='Simulated replies'}" FontSize="11" Opacity="0.55" TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                    <Button Grid.Column="3" Classes="noBackground" VerticalAlignment="Center" Opacity="0.7"
+                                                            Command="{Binding $parent[ItemsControl].((vm:MessengerViewModel)DataContext).EditGroupMemoryCommand}" CommandParameter="{Binding}"
+                                                            ToolTip.Tip="{Binding DisplayName, StringFormat='What {0} remembers'}" AutomationProperties.Name="Memory">
+                                                        <i:MaterialIcon Kind="NoteTextOutline" Width="20" Height="20" />
+                                                    </Button>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock Text="Each keeps their own personality, model, voice, and memories. What you tell one in private stays theirs."
+                                               TextWrapping="Wrap" FontSize="12" Opacity="0.7" />
+                                    <ToggleSwitch IsChecked="{Binding IsGroupInitiationOn}" OnContent="Occasionally start conversations" OffContent="Wait for me to write first"
+                                                  ToolTip.Tip="Whether, now and then, someone in the group starts a conversation when you open it" />
+                                </StackPanel>
+                            </Flyout>
+                        </Button.Flyout>
+                    </Button>
+
+                    <Button Grid.Column="6" Classes="noBackground" Command="{Binding EditMemoryCommand}" IsVisible="{Binding HasConversation}"
                             VerticalAlignment="Center" Opacity="0.7"
                             ToolTip.Tip="{Binding ActiveContact.DisplayName, StringFormat='What {0} remembers'}" AutomationProperties.Name="Memory">
                         <i:MaterialIcon Kind="NoteTextOutline" Width="22" Height="22" />
@@ -253,11 +363,11 @@
             <StackPanel Grid.Row="1" IsVisible="{Binding !HasMessages}" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10">
                 <Ellipse Width="96" Height="96" HorizontalAlignment="Center">
                     <Ellipse.Fill>
-                        <ImageBrush Source="{Binding ActiveContact.Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=200, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                        <ImageBrush Source="{Binding ActivePhoto, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=200, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
                     </Ellipse.Fill>
                 </Ellipse>
-                <TextBlock Text="{Binding ActiveContact.DisplayName}" FontWeight="SemiBold" FontSize="18" HorizontalAlignment="Center" />
-                <TextBlock Text="{Binding ActiveContact.DisplayName, StringFormat='Say hello to {0}.'}" Opacity="0.6" HorizontalAlignment="Center" />
+                <TextBlock Text="{Binding ActiveTitle}" FontWeight="SemiBold" FontSize="18" HorizontalAlignment="Center" />
+                <TextBlock Text="{Binding EmptyThreadHint}" Opacity="0.6" HorizontalAlignment="Center" />
             </StackPanel>
 
             <!-- Messages -->
@@ -269,12 +379,14 @@
                                 <StackPanel Classes="message" Classes.first="{Binding IsFirstInGroup}">
                                     <TextBlock Text="{Binding TimeSeparator}" IsVisible="{Binding HasTimeSeparator}"
                                                HorizontalAlignment="Center" FontSize="11" Opacity="0.55" Margin="0,10,0,6" />
+                                    <!-- In a group, who wrote each run of messages. -->
+                                    <TextBlock Text="{Binding SenderName}" IsVisible="{Binding ShowsSenderName}" FontSize="11" Opacity="0.65" Margin="48,0,0,2" />
                                     <Grid ColumnDefinitions="Auto,*">
                                         <!-- Reserves the avatar column for every contact bubble so a group's bubbles line up. -->
                                         <Panel Grid.Column="0" Width="28" Margin="0,0,8,0" VerticalAlignment="Bottom" IsVisible="{Binding !IsFromUser}">
                                             <Ellipse Width="28" Height="28" IsVisible="{Binding ShowsAvatar}">
                                                 <Ellipse.Fill>
-                                                    <ImageBrush Source="{Binding $parent[ItemsControl].((vm:MessengerViewModel)DataContext).ActiveContact.Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                                                    <ImageBrush Source="{Binding SenderPhoto, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
                                                 </Ellipse.Fill>
                                             </Ellipse>
                                         </Panel>
@@ -320,10 +432,10 @@
                     <Grid ColumnDefinitions="Auto,*" Margin="0,8,0,0" IsVisible="{Binding IsContactTyping}">
                         <Ellipse Grid.Column="0" Width="28" Height="28" Margin="0,0,8,0" VerticalAlignment="Bottom">
                             <Ellipse.Fill>
-                                <ImageBrush Source="{Binding ActiveContact.Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                                <ImageBrush Source="{Binding TypingContact.Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
                             </Ellipse.Fill>
                         </Ellipse>
-                        <Border Grid.Column="1" Classes="bubble first last" Padding="14,12" ToolTip.Tip="{Binding ActiveContact.DisplayName, StringFormat='{}{0} is typing'}">
+                        <Border Grid.Column="1" Classes="bubble first last" Padding="14,12" ToolTip.Tip="{Binding TypingContact.DisplayName, StringFormat='{}{0} is typing'}">
                             <StackPanel Orientation="Horizontal" Spacing="4">
                                 <Ellipse Classes="typingDot" />
                                 <Ellipse Classes="typingDot second" />
@@ -348,7 +460,7 @@
                 <Grid x:Name="ComposerGrid" ColumnDefinitions="*,10,Auto">
                     <TextBox Grid.Column="0" x:Name="Composer" Text="{Binding DraftText}" AcceptsReturn="True" TextWrapping="Wrap"
                              MaxHeight="140" MinHeight="38" CornerRadius="19" Padding="14,9" VerticalContentAlignment="Center" MaxLength="4000"
-                             PlaceholderText="{Binding ActiveContact.DisplayName, StringFormat='Message {0}'}" AutomationProperties.Name="Message" />
+                             PlaceholderText="{Binding ComposerPlaceholder}" AutomationProperties.Name="Message" />
                     <Button Grid.Column="2" Classes="accent" Command="{Binding SendCommand}" Width="38" Height="38" Padding="0" CornerRadius="19"
                             VerticalAlignment="Bottom" ToolTip.Tip="Send (Enter). Shift+Enter for a new line." AutomationProperties.Name="Send">
                         <i:MaterialIcon Kind="Send" Width="18" Height="18" />

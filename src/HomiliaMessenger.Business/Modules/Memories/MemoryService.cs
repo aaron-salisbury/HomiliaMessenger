@@ -54,11 +54,42 @@ internal sealed class MemoryService : IMemoryService
             return Failed("Conversation", "The conversation no longer exists.");
         }
 
+        if (conversation.ContactId is not { } contactId)
+        {
+            return Failed("Contact", "Choose which of the group's contacts should remember it.");
+        }
+
+        return await AddAsync(conversation, contactId, text, cancellationToken);
+    }
+
+    public async Task<MemorySaveResult> AddAsync(ConversationId conversationId, ContactId contactId, string text, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        Conversation? conversation = await _conversations.GetAsync(conversationId, cancellationToken);
+
+        if (conversation is null)
+        {
+            return Failed("Conversation", "The conversation no longer exists.");
+        }
+
+        if (!conversation.ContactIds.Contains(contactId))
+        {
+            return Failed("Contact", "That contact is not in this conversation.");
+        }
+
+        return await AddAsync(conversation, contactId, text, cancellationToken);
+    }
+
+    private async Task<MemorySaveResult> AddAsync(Conversation conversation, ContactId contactId, string text, CancellationToken cancellationToken)
+    {
+        ConversationId conversationId = conversation.Id;
+
         DateTimeOffset now = _timeProvider.GetUtcNow();
         Memory memory = new()
         {
             Id = MemoryId.New(),
-            ContactId = conversation.ContactId,
+            ContactId = contactId,
             ConversationId = conversationId,
             Text = Clean(text),
             Origin = MemoryOrigin.Manual,
@@ -73,7 +104,7 @@ internal sealed class MemoryService : IMemoryService
             return new MemorySaveResult(result, null);
         }
 
-        IReadOnlyList<Memory> existing = await _store.ListAsync(conversation.ContactId, cancellationToken);
+        IReadOnlyList<Memory> existing = await _store.ListAsync(contactId, cancellationToken);
 
         if (existing.Any(known => MemoryNotes.IsSameFact(known.Text, memory.Text)))
         {

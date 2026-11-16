@@ -134,7 +134,11 @@ internal static class MemoryNotes
     /// messages alone, the facts that mattered were kept every time. The cost is that a plan the contact proposed is
     /// only remembered when the user's reply restates it, or the user adds it as a memory.
     /// </remarks>
-    internal static AgentRequest ExtractRequest(Contact contact, UserProfile user, IReadOnlyList<string> known, IEnumerable<ChatMessage> folding, string model)
+    /// <param name="others">
+    /// The other contacts in a group the messages were sent in, who also read them; empty for a direct conversation.
+    /// Only the user's messages are given either way, so nothing another contact said is ever learned as a fact.
+    /// </param>
+    internal static AgentRequest ExtractRequest(Contact contact, UserProfile user, IReadOnlyList<string> known, IEnumerable<ChatMessage> folding, string model, IReadOnlyList<Contact>? others = null)
     {
         ArgumentNullException.ThrowIfNull(contact);
         ArgumentNullException.ThrowIfNull(user);
@@ -143,9 +147,12 @@ internal static class MemoryNotes
 
         string name = contact.DisplayName;
         string userName = string.IsNullOrWhiteSpace(user.Name) ? "the user" : user.Name.Trim();
+        string where = others is { Count: > 0 }
+            ? $"in a group chat with {name} and {string.Join(" and ", others.Select(other => other.DisplayName))}"
+            : $"to {name}";
 
         string instructions = $"""
-            You read messages {userName} sent to {name}, and list the lasting facts {name} should remember later.
+            You read messages {userName} sent {where}, and list the lasting facts {name} should remember later.
 
             Lasting facts are things that will still matter weeks from now: people and pets and their names, places, work, important dates, life events, and plans or promises.
             Leave out passing remarks, such as the weather, meals, or how a day went, and anything already known.
