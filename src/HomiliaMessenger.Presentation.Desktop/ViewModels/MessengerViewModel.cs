@@ -40,6 +40,9 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     // sent so far, once, as a person reading a burst of messages would.
     private readonly Dictionary<ConversationId, CancellationTokenSource> _pendingReplies = [];
 
+    // Conversations whose contact is looking something up online before replying.
+    private readonly HashSet<ConversationId> _searching = [];
+
     // Conversations whose memories are being updated, so updates do not overlap.
     private readonly HashSet<ConversationId> _updatingMemory = [];
 
@@ -78,6 +81,13 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ActiveSubtitle))]
     private bool _isContactTyping;
+
+    /// <summary>
+    /// Whether the open chat's contact is looking something up online before replying.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ActiveSubtitle))]
+    private bool _isContactSearching;
 
     [ObservableProperty] private bool _hasMessages;
 
@@ -125,7 +135,7 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     public bool HasConversation => ActiveConversationId is not null;
 
     public string ActiveSubtitle => IsContactTyping
-        ? "typing…"
+        ? IsContactSearching ? "looking something up…" : "typing…"
         : ActiveContact?.Agent is { } agent ? $"{agent.Provider} · {agent.Model}" : "Simulated replies";
 
     public MessengerViewModel(IConversationService conversations, IContactService contacts, IMemoryService memories, ITextToSpeech? speech = null)
@@ -627,6 +637,8 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         {
             superseded.Cancel();
         }
+
+        _searching.Remove(conversationId);
     }
 
     private async Task ReplyAsync(ConversationId conversationId, CancellationTokenSource pending)
@@ -636,7 +648,9 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
 
         try
         {
-            ConversationReply result = await _conversations.ReplyAsync(conversationId, pending.Token);
+            // Reported on this (the UI) thread, since Progress captures it.
+            Progress<ReplyActivity> activity = new(stage => ShowActivity(conversationId, pending, stage));
+            ConversationReply result = await _conversations.ReplyAsync(conversationId, activity, pending.Token);
             reply = result.Message;
 
             // A deleted conversation needs no explanation.
@@ -659,6 +673,7 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         if (current)
         {
             _pendingReplies.Remove(conversationId);
+            _searching.Remove(conversationId);
         }
 
         pending.Dispose();
@@ -763,9 +778,30 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         }
     }
 
+    private void ShowActivity(ConversationId conversationId, CancellationTokenSource pending, ReplyActivity activity)
+    {
+        // A superseded reply's late report must not change what the current one shows.
+        if (!_pendingReplies.TryGetValue(conversationId, out CancellationTokenSource? active) || active != pending)
+        {
+            return;
+        }
+
+        if (activity == ReplyActivity.SearchingWeb)
+        {
+            _searching.Add(conversationId);
+        }
+        else
+        {
+            _searching.Remove(conversationId);
+        }
+
+        UpdateTyping();
+    }
+
     private void UpdateTyping()
     {
         IsContactTyping = ActiveConversationId is { } active && _pendingReplies.ContainsKey(active);
+        IsContactSearching = IsContactTyping && _searching.Contains(ActiveConversationId!.Value);
 
         foreach (ConversationListItem item in Conversations)
         {

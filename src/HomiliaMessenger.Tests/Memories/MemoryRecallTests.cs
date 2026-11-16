@@ -230,9 +230,9 @@ public sealed class MemoryRecallTests
         await database.Services.GetRequiredService<IMemoryService>().EmbedPendingAsync(walt.Id, TestContext.CancellationToken);
 
         await conversations.SendAsync(walt.Id, JEN_QUERY, TestContext.CancellationToken);
-        ConversationReply first = await conversations.ReplyAsync(sent.Conversation.Id, TestContext.CancellationToken);
+        ConversationReply first = await conversations.ReplyAsync(sent.Conversation.Id, cancellationToken: TestContext.CancellationToken);
         embedder.Error = new InvalidOperationException("The model crashed.");
-        ConversationReply second = await conversations.ReplyAsync(sent.Conversation.Id, TestContext.CancellationToken);
+        ConversationReply second = await conversations.ReplyAsync(sent.Conversation.Id, cancellationToken: TestContext.CancellationToken);
 
         Assert.AreEqual(ReplyStatus.Success, first.Status);
         Assert.AreEqual(ReplyStatus.Success, second.Status);

@@ -1,6 +1,7 @@
 using FluentValidation.Results;
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,6 +19,22 @@ public sealed record SendMessageResult(ValidationResult Validation, Conversation
 /// explains any other status.
 /// </summary>
 public sealed record ConversationReply(ReplyStatus Status, ChatMessage? Message, string? Problem);
+
+/// <summary>
+/// What a contact is doing on the way to a reply, for showing in the conversation.
+/// </summary>
+public enum ReplyActivity
+{
+    /// <summary>
+    /// Looking something up online.
+    /// </summary>
+    SearchingWeb,
+
+    /// <summary>
+    /// Writing the reply.
+    /// </summary>
+    Writing
+}
 
 public interface IConversationService
 {
@@ -42,9 +59,11 @@ public interface IConversationService
     /// <summary>
     /// Asks the contact's agent to reply to the conversation so far, in character, and saves the reply. Contacts without
     /// an assigned agent reply with simulated canned text. The status is <see cref="ReplyStatus.NotFound"/> when the
-    /// conversation no longer exists, for example because it was deleted while the contact was replying.
+    /// conversation no longer exists, for example because it was deleted while the contact was replying. When web search
+    /// is on and the latest message calls for it, the contact first looks it up; a failed search never stops the reply.
     /// </summary>
-    Task<ConversationReply> ReplyAsync(ConversationId conversationId, CancellationToken cancellationToken = default);
+    /// <param name="activity">Told when the contact starts searching the web, and when it starts writing.</param>
+    Task<ConversationReply> ReplyAsync(ConversationId conversationId, IProgress<ReplyActivity>? activity = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Learns the lasting facts in older messages as the contact's memories, once there are too many messages to give an

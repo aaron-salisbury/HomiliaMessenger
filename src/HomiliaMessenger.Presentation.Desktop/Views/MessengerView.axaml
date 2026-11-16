@@ -57,6 +57,14 @@
             <Setter Property="Foreground" Value="White" />
         </Style>
 
+        <!-- A bubble and, for a reply that looked something up, its sources button beside it. -->
+        <Style Selector="Grid.bubbleRow">
+            <Setter Property="HorizontalAlignment" Value="Left" />
+        </Style>
+        <Style Selector="Grid.bubbleRow.mine">
+            <Setter Property="HorizontalAlignment" Value="Right" />
+        </Style>
+
         <Style Selector="StackPanel.message">
             <Setter Property="Margin" Value="0,1" />
         </Style>
@@ -269,10 +277,38 @@
                                                 </Ellipse.Fill>
                                             </Ellipse>
                                         </Panel>
-                                        <Border Grid.Column="1" Classes="bubble" Classes.mine="{Binding IsFromUser}" Classes.first="{Binding IsFirstInGroup}"
-                                                Classes.last="{Binding IsLastInGroup}" ToolTip.Tip="{Binding SentAtToolTip}">
-                                            <SelectableTextBlock Text="{Binding Text}" TextWrapping="Wrap" />
-                                        </Border>
+                                        <!-- A grid rather than a horizontal panel, so a long bubble wraps within the thread's width. -->
+                                        <Grid Grid.Column="1" Classes="bubbleRow" Classes.mine="{Binding IsFromUser}" ColumnDefinitions="*,Auto">
+                                            <Border Grid.Column="0" Classes="bubble" Classes.mine="{Binding IsFromUser}" Classes.first="{Binding IsFirstInGroup}"
+                                                    Classes.last="{Binding IsLastInGroup}" ToolTip.Tip="{Binding SentAtToolTip}">
+                                                <SelectableTextBlock Text="{Binding Text}" TextWrapping="Wrap" />
+                                            </Border>
+                                            <!-- What the contact looked up online for this reply, and where it came from. -->
+                                            <Button Grid.Column="1" Margin="4,0,0,0" IsVisible="{Binding HasSources}" VerticalAlignment="Bottom" Padding="4" Opacity="0.6"
+                                                    Background="Transparent" BorderThickness="0" ToolTip.Tip="Looked up online · sources">
+                                                <i:MaterialIcon Kind="Web" Width="14" Height="14" />
+                                                <Button.Flyout>
+                                                    <Flyout Placement="RightEdgeAlignedBottom">
+                                                        <StackPanel Spacing="4" MaxWidth="360">
+                                                            <TextBlock Text="{Binding LookedUp}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                            <ItemsControl ItemsSource="{Binding Sources}">
+                                                                <ItemsControl.ItemTemplate>
+                                                                    <DataTemplate x:DataType="m:WebSourceLink">
+                                                                        <StackPanel Margin="0,4,0,0">
+                                                                            <HyperlinkButton NavigateUri="{Binding Uri}" Padding="0" ToolTip.Tip="{Binding Uri}">
+                                                                                <TextBlock Text="{Binding Title}" TextWrapping="Wrap" />
+                                                                            </HyperlinkButton>
+                                                                            <TextBlock Text="{Binding Site}" FontSize="11" Opacity="0.6" />
+                                                                        </StackPanel>
+                                                                    </DataTemplate>
+                                                                </ItemsControl.ItemTemplate>
+                                                            </ItemsControl>
+                                                            <TextBlock Text="Search results come from Tavily and may be wrong or out of date." FontSize="11" Opacity="0.6" TextWrapping="Wrap" Margin="0,6,0,0" />
+                                                        </StackPanel>
+                                                    </Flyout>
+                                                </Button.Flyout>
+                                            </Button>
+                                        </Grid>
                                     </Grid>
                                 </StackPanel>
                             </DataTemplate>

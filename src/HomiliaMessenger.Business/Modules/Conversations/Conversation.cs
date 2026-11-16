@@ -1,4 +1,5 @@
 using HomiliaMessenger.Business.Modules.Contacts;
+using HomiliaMessenger.Business.Modules.WebSearch;
 using System;
 
 namespace HomiliaMessenger.Business.Modules.Conversations;
@@ -43,6 +44,12 @@ public sealed record ChatMessage
     /// The agent and model that wrote a contact's reply; <see langword="null"/> for the user's messages.
     /// </summary>
     public AgentAssignment? Agent { get; init; }
+
+    /// <summary>
+    /// What the contact looked up online before writing this reply, and where it came from; <see langword="null"/> when
+    /// nothing was looked up. Kept for the user to see, and never given to agents or learned as a memory.
+    /// </summary>
+    public WebLookup? WebSearch { get; init; }
 }
 
 /// <summary>

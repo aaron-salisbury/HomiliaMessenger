@@ -2,10 +2,12 @@ using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Credentials;
 using HomiliaMessenger.Business.Modules.Memories;
 using HomiliaMessenger.Business.Modules.Speech;
+using HomiliaMessenger.Business.Modules.WebSearch;
 using HomiliaMessenger.Integrations.Credentials;
 using HomiliaMessenger.Integrations.Embeddings;
 using HomiliaMessenger.Integrations.LocalModels;
 using HomiliaMessenger.Integrations.Speech;
+using HomiliaMessenger.Integrations.WebSearch;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System;
@@ -77,6 +79,9 @@ public static class DependencyInjection
             Path.Combine(applicationDataDirectory, "Speech", "Kokoro"),
             provider.GetRequiredService<IHttpClientFactory>(),
             provider.GetRequiredService<ILogger<KokoroSpeech>>()));
+
+        // Web search sends queries to Tavily only when the user has turned it on and saved a key.
+        services.AddSingleton<IWebSearchProvider, TavilyWebSearchProvider>();
 
         return services;
     }

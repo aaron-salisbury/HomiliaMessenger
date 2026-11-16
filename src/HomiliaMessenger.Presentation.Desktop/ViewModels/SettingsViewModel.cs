@@ -1,14 +1,18 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using FluentValidation.Results;
+using HomiliaMessenger.Business.Base.Extensions;
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Memories;
 using HomiliaMessenger.Business.Modules.Speech;
+using HomiliaMessenger.Business.Modules.WebSearch;
 using HomiliaMessenger.Presentation.Desktop.Base;
 using HomiliaMessenger.Presentation.Desktop.Models;
 using HomiliaMessenger.Presentation.Desktop.Settings;
 using RunnethOverStudio.AppToolkit.Modules.ComponentModel;
 using System;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -48,6 +52,27 @@ public partial class SettingsViewModel : BaseViewModel
 
     public bool CanDownloadSpeech => !HasSpeechModel && !IsSpeechDownloading;
 
+    private readonly IWebSearchService? _webSearch;
+    private bool _refreshingWebSearch;
+
+    // Saves run one at a time, and only the latest change is saved, so a slow earlier save can never overwrite (or
+    // redisplay) a newer choice, such as turning web search off right after turning it on.
+    private readonly SemaphoreSlim _webSearchSaveGate = new(1, 1);
+    private int _webSearchChange;
+
+    public bool IsWebSearchAvailable => _webSearch is not null;
+    [ObservableProperty] private bool _webSearchEnabled;
+    [ObservableProperty] private bool _tavilyEnabled = true;
+    [ObservableProperty] private decimal? _monthlyCreditBudget = WebSearchSettings.DEFAULT_MONTHLY_CREDIT_BUDGET;
+    [ObservableProperty] private decimal? _creditResetDay = 1;
+    [ObservableProperty] private bool _hasTavilyKey;
+    [ObservableProperty] private string _tavilyKeyInput = string.Empty;
+    [ObservableProperty] private string _webSearchUsage = string.Empty;
+    [ObservableProperty] private string _webSearchStatus = string.Empty;
+    [ObservableProperty] private bool _isCheckingTavilyKey;
+
+    public string WebSearchHint { get; } = "Let contacts look up current information, such as a new release or recent news, when a message calls for it. Only a short query made from your latest message is sent to Tavily, an online search service; never your conversation, memories, or profile. Off until you turn it on, and it needs a Tavily API key.";
+
     /// <summary>
     /// Models that run on this device. Kept for the view model's lifetime so a download continues while the user is on
     /// another page.
@@ -73,8 +98,9 @@ public partial class SettingsViewModel : BaseViewModel
     /// </summary>
     public Func<AddLocalModelViewModel, Task<string?>>? ShowAddModelAsync { get; set; }
 
-    public SettingsViewModel(ThemeService themeService, ILocalModelLibrary localModels, ITextToSpeech? speech = null, IEmbeddingModelLibrary? embeddingModels = null, IMemoryService? memories = null)
+    public SettingsViewModel(ThemeService themeService, ILocalModelLibrary localModels, ITextToSpeech? speech = null, IEmbeddingModelLibrary? embeddingModels = null, IMemoryService? memories = null, IWebSearchService? webSearch = null)
     {
+        _webSearch = webSearch;
         _themeService = themeService ?? throw new ArgumentNullException(nameof(themeService));
         _localModels = localModels ?? throw new ArgumentNullException(nameof(localModels));
         _speech = speech;
@@ -93,8 +119,10 @@ public partial class SettingsViewModel : BaseViewModel
         SetThemeSelection(_themeService.CurrentPreference);
     }
 
-    public override Task InitializeAsync()
+    public override async Task InitializeAsync()
     {
+        await RefreshWebSearchAsync();
+
         if (!IsSpeechDownloading)
         {
             RefreshSpeech();
@@ -133,8 +161,6 @@ public partial class SettingsViewModel : BaseViewModel
                 }
             }
         }
-
-        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -322,6 +348,227 @@ public partial class SettingsViewModel : BaseViewModel
         {
             RefreshSpeech();
             SpeechStatus = "Could not remove Kokoro: " + error.Message;
+        }
+    }
+
+    /// <summary>
+    /// Shows web search's settings, key, and credit count as they are now.
+    /// </summary>
+    private async Task RefreshWebSearchAsync()
+    {
+        if (_webSearch is null)
+        {
+            return;
+        }
+
+        try
+        {
+            int change = _webSearchChange;
+            WebSearchOverview overview = await _webSearch.GetOverviewAsync();
+
+            // The user changed a setting while this was read; showing it would put back the old value, which the
+            // pending save would then store. That save shows the result when it is done.
+            if (change == _webSearchChange)
+            {
+                ShowWebSearch(overview);
+            }
+        }
+        catch (Exception error)
+        {
+            WebSearchStatus = "Could not read web search settings: " + error.Message;
+        }
+    }
+
+    private void ShowWebSearch(WebSearchOverview overview)
+    {
+        _refreshingWebSearch = true;
+
+        try
+        {
+            WebSearchEnabled = overview.Settings.Enabled;
+            TavilyEnabled = overview.Settings.TavilyEnabled;
+            MonthlyCreditBudget = overview.Settings.MonthlyCreditBudget;
+            CreditResetDay = overview.Settings.CreditResetDay;
+            HasTavilyKey = overview.HasTavilyKey;
+        }
+        finally
+        {
+            _refreshingWebSearch = false;
+        }
+
+        string since = overview.PeriodStart.ToString("MMMM d", CultureInfo.CurrentCulture);
+        WebSearchUsage = $"About {overview.CreditsUsed} of {overview.Settings.MonthlyCreditBudget} credits used since {since}, {overview.CreditsRemaining} left before searching pauses. This is counted on this computer; Tavily's dashboard has the real balance.";
+
+        WebSearchStatus = overview.State switch
+        {
+            { KeyRejected: true } => overview.State.Problem ?? "Tavily rejected the saved key.",
+            { PausedUntilUtc: { } until } when until > DateTimeOffset.UtcNow => $"{overview.State.Problem ?? "Searching is paused."} Paused until {until.ToLocalTime():g}.",
+            { Problem: { } problem } => "Last problem: " + problem,
+            _ when !overview.Settings.Enabled => "Web search is off.",
+            _ when !overview.HasTavilyKey => "Save a Tavily API key to let contacts search.",
+            _ when !overview.Settings.TavilyEnabled => "Tavily is turned off, so contacts will not search.",
+            _ when overview.CreditsRemaining == 0 => "This period's credit budget is used up; searching resumes next period.",
+            _ => "Ready. Contacts search only when a message calls for it."
+        };
+    }
+
+    partial void OnWebSearchEnabledChanged(bool value)
+    {
+        SaveWebSearchSettingsSoon();
+    }
+
+    partial void OnTavilyEnabledChanged(bool value)
+    {
+        SaveWebSearchSettingsSoon();
+    }
+
+    partial void OnMonthlyCreditBudgetChanged(decimal? value)
+    {
+        SaveWebSearchSettingsSoon();
+    }
+
+    partial void OnCreditResetDayChanged(decimal? value)
+    {
+        SaveWebSearchSettingsSoon();
+    }
+
+    private void SaveWebSearchSettingsSoon()
+    {
+        if (!_refreshingWebSearch && _webSearch is not null)
+        {
+            _ = SaveWebSearchSettingsAsync(_webSearch, ++_webSearchChange);
+        }
+    }
+
+    /// <summary>
+    /// Saves web search's settings as they are changed. Invalid values are not saved, and the page goes back to what is.
+    /// A save superseded by a newer change before its turn is skipped, and does not refresh the page.
+    /// </summary>
+    internal async Task SaveWebSearchSettingsAsync(IWebSearchService webSearch, int change)
+    {
+        // Let the control finish its own update before it may be put back.
+        await Task.Yield();
+        await _webSearchSaveGate.WaitAsync();
+
+        try
+        {
+            if (change != _webSearchChange)
+            {
+                return;
+            }
+
+            WebSearchSettings settings = new(
+                WebSearchEnabled,
+                TavilyEnabled,
+                (int)Math.Round(MonthlyCreditBudget ?? -1),
+                (int)Math.Round(CreditResetDay ?? 0));
+
+            try
+            {
+                ValidationResult result = await webSearch.SaveSettingsAsync(settings);
+
+                if (change == _webSearchChange)
+                {
+                    await RefreshWebSearchAsync();
+
+                    if (!result.IsValid)
+                    {
+                        WebSearchStatus = result.ToStringPretty("Web search");
+                    }
+                }
+            }
+            catch (Exception error)
+            {
+                if (change == _webSearchChange)
+                {
+                    await RefreshWebSearchAsync();
+                    WebSearchStatus = "Could not save web search settings: " + error.Message;
+                }
+            }
+        }
+        finally
+        {
+            _webSearchSaveGate.Release();
+        }
+    }
+
+    [RelayCommand]
+    private async Task SaveTavilyKeyAsync()
+    {
+        if (_webSearch is null || string.IsNullOrWhiteSpace(TavilyKeyInput))
+        {
+            return;
+        }
+
+        try
+        {
+            await _webSearch.SetTavilyKeyAsync(TavilyKeyInput);
+            TavilyKeyInput = string.Empty;
+            await RefreshWebSearchAsync();
+            WebSearchStatus = "Key saved in the system's credential store. Check it to confirm it works.";
+        }
+        catch (Exception error)
+        {
+            WebSearchStatus = "Could not save the key: " + error.Message;
+        }
+    }
+
+    [RelayCommand]
+    private async Task RemoveTavilyKeyAsync()
+    {
+        if (_webSearch is null || !HasTavilyKey
+            || !await ConfirmWithViewAsync("Remove Tavily key", "Remove the saved Tavily API key? Contacts will stop searching until you save another."))
+        {
+            return;
+        }
+
+        try
+        {
+            await _webSearch.SetTavilyKeyAsync(null);
+            await RefreshWebSearchAsync();
+        }
+        catch (Exception error)
+        {
+            WebSearchStatus = "Could not remove the key: " + error.Message;
+        }
+    }
+
+    /// <summary>
+    /// Asks Tavily whether the saved key works and how many credits it has used, which costs no credits.
+    /// </summary>
+    [RelayCommand]
+    private async Task CheckTavilyKeyAsync()
+    {
+        if (_webSearch is null || IsCheckingTavilyKey)
+        {
+            return;
+        }
+
+        IsCheckingTavilyKey = true;
+
+        try
+        {
+            WebSearchKeyCheck check = await _webSearch.CheckTavilyKeyAsync();
+            await RefreshWebSearchAsync();
+
+            if (check.Status == Business.Modules.WebSearch.WebSearchStatus.Success)
+            {
+                string key = check.KeyCreditsUsed is { } used ? $" Tavily says this key has used {used} credits this cycle." : string.Empty;
+                string plan = check.PlanCreditsUsed is { } planUsed && check.PlanCreditLimit is { } limit ? $" The account has used {planUsed} of {limit}." : string.Empty;
+                WebSearchStatus = "The key works." + key + plan;
+            }
+            else
+            {
+                WebSearchStatus = check.Problem ?? "Tavily could not confirm the key.";
+            }
+        }
+        catch (Exception error)
+        {
+            WebSearchStatus = "Could not check the key: " + error.Message;
+        }
+        finally
+        {
+            IsCheckingTavilyKey = false;
         }
     }
 

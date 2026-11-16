@@ -4,6 +4,7 @@ using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Memories;
 using HomiliaMessenger.Business.Modules.Profile;
+using HomiliaMessenger.Business.Modules.WebSearch;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -23,14 +24,15 @@ internal sealed class ConversationService : IConversationService
     private readonly IMemoryService _memories;
     private readonly MemoryRecall _recall;
     private readonly MemoryRecallOptions _recallOptions;
+    private readonly WebSearchService _webSearch;
     private readonly TimeProvider _timeProvider;
 
-    public ConversationService(IConversationStore store, IContactService contacts, IUserProfileService profile, IValidator<ChatMessage> validator, IEnumerable<IConversationAgent> agents, IMemoryStore memoryStore, IMemoryService memories, MemoryRecall recall, MemoryRecallOptions recallOptions)
-        : this(store, contacts, profile, validator, agents, memoryStore, memories, recall, recallOptions, TimeProvider.System)
+    public ConversationService(IConversationStore store, IContactService contacts, IUserProfileService profile, IValidator<ChatMessage> validator, IEnumerable<IConversationAgent> agents, IMemoryStore memoryStore, IMemoryService memories, MemoryRecall recall, MemoryRecallOptions recallOptions, WebSearchService webSearch)
+        : this(store, contacts, profile, validator, agents, memoryStore, memories, recall, recallOptions, webSearch, TimeProvider.System)
     {
     }
 
-    internal ConversationService(IConversationStore store, IContactService contacts, IUserProfileService profile, IValidator<ChatMessage> validator, IEnumerable<IConversationAgent> agents, IMemoryStore memoryStore, IMemoryService memories, MemoryRecall recall, MemoryRecallOptions recallOptions, TimeProvider timeProvider)
+    internal ConversationService(IConversationStore store, IContactService contacts, IUserProfileService profile, IValidator<ChatMessage> validator, IEnumerable<IConversationAgent> agents, IMemoryStore memoryStore, IMemoryService memories, MemoryRecall recall, MemoryRecallOptions recallOptions, WebSearchService webSearch, TimeProvider timeProvider)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _contacts = contacts ?? throw new ArgumentNullException(nameof(contacts));
@@ -42,6 +44,7 @@ internal sealed class ConversationService : IConversationService
         _memories = memories ?? throw new ArgumentNullException(nameof(memories));
         _recall = recall ?? throw new ArgumentNullException(nameof(recall));
         _recallOptions = recallOptions ?? throw new ArgumentNullException(nameof(recallOptions));
+        _webSearch = webSearch ?? throw new ArgumentNullException(nameof(webSearch));
         _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
     }
 
@@ -108,7 +111,7 @@ internal sealed class ConversationService : IConversationService
         return new SendMessageResult(result, conversation with { LastMessage = message }, message);
     }
 
-    public async Task<ConversationReply> ReplyAsync(ConversationId conversationId, CancellationToken cancellationToken = default)
+    public async Task<ConversationReply> ReplyAsync(ConversationId conversationId, IProgress<ReplyActivity>? activity = null, CancellationToken cancellationToken = default)
     {
         Conversation? conversation = await _store.GetAsync(conversationId, cancellationToken);
         Contact? contact = conversation is null ? null : await _contacts.GetAsync(conversation.ContactId, cancellationToken);
@@ -137,7 +140,14 @@ internal sealed class ConversationService : IConversationService
         IReadOnlyList<Memory> recalled = agent is SimulatedAgent
             ? []
             : await _recall.RecallAsync(contact.Id, MemoryRecall.QueryFor(recent, _recallOptions.MaxQueryCharacters), cancellationToken);
-        AgentRequest request = PersonaFraming.Build(contact, user, [.. recalled.Select(memory => memory.Text)], recent, assignment.Model.Trim(), today);
+        // Canned replies could make no use of what was found. Only the latest messages decide, and only a short query
+        // made from them is sent; the results inform this reply alone and are kept with it for the user to see.
+        WebLookup? lookup = agent is SimulatedAgent
+            ? null
+            : await _webSearch.LookUpForReplyAsync(recent, PrivateNames(contact, user), agent.ReplyAsync, assignment.Model.Trim(), () => activity?.Report(ReplyActivity.SearchingWeb), cancellationToken);
+        activity?.Report(ReplyActivity.Writing);
+
+        AgentRequest request = PersonaFraming.Build(contact, user, [.. recalled.Select(memory => memory.Text)], recent, assignment.Model.Trim(), today, lookup?.Sources);
         AgentReply answer = await agent.ReplyAsync(request, cancellationToken);
 
         if (answer.Status != ReplyStatus.Success)
@@ -164,7 +174,8 @@ internal sealed class ConversationService : IConversationService
             Sender = MessageSender.Contact,
             Text = text,
             SentAtUtc = _timeProvider.GetUtcNow(),
-            Agent = assignment
+            Agent = assignment,
+            WebSearch = lookup
         };
 
         return await _store.AddMessageAsync(reply, cancellationToken)
@@ -252,6 +263,16 @@ internal sealed class ConversationService : IConversationService
         bool saved = await _memoryStore.AddExtractedAsync(conversation.Id, learned, through, conversation.MemoryThrough, cancellationToken);
 
         return saved ? conversation with { MemoryThrough = through } : null;
+    }
+
+    /// <summary>
+    /// Names that identify the user or the contact, which are never sent in a search query.
+    /// </summary>
+    private static IReadOnlyCollection<string> PrivateNames(Contact contact, UserProfile user)
+    {
+        return [.. new[] { contact.DisplayName, contact.GivenName, contact.FamilyName, contact.Nickname, user.Name }
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => name!.Trim())];
     }
 
     /// <summary>

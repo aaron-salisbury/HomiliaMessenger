@@ -97,7 +97,7 @@ public sealed class SpeechSettingsTests
         Assert.IsTrue(condition(), "Timed out waiting for the settings to update.");
     }
 
-    private sealed class EmptyLocalModels : ILocalModelLibrary
+    internal sealed class EmptyLocalModels : ILocalModelLibrary
     {
         public string Provider => "Local";
         public IReadOnlyList<LocalModel> List()
