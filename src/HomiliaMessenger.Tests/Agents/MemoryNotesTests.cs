@@ -175,7 +175,7 @@ public sealed class MemoryNotesTests
         Conversation? updated = await service.UpdateMemoryAsync(conversation, TestContext.CancellationToken);
         Conversation? again = await service.UpdateMemoryAsync(conversation, TestContext.CancellationToken);
         await service.SendAsync(walt.Id, "Remember my dog's name?", TestContext.CancellationToken);
-        await service.ReplyAsync(conversation, TestContext.CancellationToken);
+        await service.ReplyAsync(conversation, cancellationToken: TestContext.CancellationToken);
         IReadOnlyList<Memory> learned = await memories.ListAsync(walt.Id, TestContext.CancellationToken);
 
         Assert.IsNotNull(updated);
@@ -440,7 +440,7 @@ public sealed class MemoryNotesTests
         {
             SendMessageResult sent = await service.SendAsync(contact.Id, $"message {i} " + new string('x', 190), TestContext.CancellationToken);
             conversation = sent.Conversation!.Id;
-            await service.ReplyAsync(conversation.Value, TestContext.CancellationToken);
+            await service.ReplyAsync(conversation.Value, cancellationToken: TestContext.CancellationToken);
         }
 
         return conversation!.Value;

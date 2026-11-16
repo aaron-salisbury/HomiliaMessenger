@@ -4,6 +4,7 @@ using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
 using HomiliaMessenger.Business.Modules.Memories;
 using HomiliaMessenger.Business.Modules.Profile;
+using HomiliaMessenger.Business.Modules.WebSearch;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using System;
@@ -35,6 +36,12 @@ public static class DependencyInjection
         services.TryAddSingleton(new MemoryRecallOptions());
         services.AddScoped<MemoryRecall>();
         services.AddScoped<IMemoryService, MemoryService>();
+
+        // Integrations registers Tavily; without it, contacts never search. One instance shares searches in progress and
+        // limits how many run at once.
+        services.TryAddSingleton<IWebSearchProvider, UnavailableWebSearchProvider>();
+        services.AddSingleton<WebSearchService>();
+        services.AddSingleton<IWebSearchService>(provider => provider.GetRequiredService<WebSearchService>());
 
         return services;
     }

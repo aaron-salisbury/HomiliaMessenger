@@ -27,7 +27,7 @@ public sealed class AgentReplyTests
         await database.Services.GetRequiredService<IUserProfileService>().SaveAsync(new UserProfile { Name = "Aaron" }, TestContext.CancellationToken);
 
         SendMessageResult sent = await service.SendAsync(walt.Id, "How are you?", TestContext.CancellationToken);
-        ConversationReply result = await service.ReplyAsync(sent.Conversation!.Id, TestContext.CancellationToken);
+        ConversationReply result = await service.ReplyAsync(sent.Conversation!.Id, cancellationToken: TestContext.CancellationToken);
         IReadOnlyList<ChatMessage> stored = await service.ListMessagesAsync(sent.Conversation.Id, TestContext.CancellationToken);
 
         Assert.AreEqual(ReplyStatus.Success, result.Status);
@@ -49,7 +49,7 @@ public sealed class AgentReplyTests
         Contact walt = await SaveContactAsync(database, new AgentAssignment("Nowhere", "model"));
 
         SendMessageResult sent = await service.SendAsync(walt.Id, "Hello?", TestContext.CancellationToken);
-        ConversationReply result = await service.ReplyAsync(sent.Conversation!.Id, TestContext.CancellationToken);
+        ConversationReply result = await service.ReplyAsync(sent.Conversation!.Id, cancellationToken: TestContext.CancellationToken);
         IReadOnlyList<ChatMessage> stored = await service.ListMessagesAsync(sent.Conversation.Id, TestContext.CancellationToken);
 
         Assert.AreEqual(ReplyStatus.Unavailable, result.Status);
@@ -68,7 +68,7 @@ public sealed class AgentReplyTests
         Contact walt = await SaveContactAsync(database, new AgentAssignment("Fake", "model"));
 
         SendMessageResult sent = await service.SendAsync(walt.Id, "Hello?", TestContext.CancellationToken);
-        ConversationReply result = await service.ReplyAsync(sent.Conversation!.Id, TestContext.CancellationToken);
+        ConversationReply result = await service.ReplyAsync(sent.Conversation!.Id, cancellationToken: TestContext.CancellationToken);
 
         Assert.AreEqual(status, result.Status);
         Assert.AreEqual(problem, result.Problem);
@@ -84,7 +84,7 @@ public sealed class AgentReplyTests
         Contact walt = await SaveContactAsync(database, new AgentAssignment("Fake", "model"));
 
         SendMessageResult sent = await service.SendAsync(walt.Id, "Hello?", TestContext.CancellationToken);
-        ConversationReply result = await service.ReplyAsync(sent.Conversation!.Id, TestContext.CancellationToken);
+        ConversationReply result = await service.ReplyAsync(sent.Conversation!.Id, cancellationToken: TestContext.CancellationToken);
 
         Assert.AreEqual(ReplyStatus.InvalidResponse, result.Status);
     }

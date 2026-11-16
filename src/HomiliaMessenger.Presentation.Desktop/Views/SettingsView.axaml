@@ -115,6 +115,43 @@
 						</ItemsControl>
 					</StackPanel>
 
+                    <StackPanel Spacing="8" IsVisible="{Binding IsWebSearchAvailable}">
+                        <TextBlock Text="Web Search" Classes="section-header" />
+                        <TextBlock Text="{Binding WebSearchHint}" TextWrapping="Wrap" Opacity="0.75" />
+                        <CheckBox Content="Let contacts search the web" IsChecked="{Binding WebSearchEnabled, Mode=TwoWay}" />
+
+                        <StackPanel Spacing="8" Margin="20,0,0,0" IsEnabled="{Binding WebSearchEnabled}">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Text="Tavily" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <HyperlinkButton Content="Get an API key" NavigateUri="https://app.tavily.com" Padding="0" VerticalAlignment="Center" />
+                            </StackPanel>
+                            <CheckBox Content="Use Tavily" IsChecked="{Binding TavilyEnabled, Mode=TwoWay}" />
+                            <TextBlock Text="A key is saved in the system's credential store." IsVisible="{Binding HasTavilyKey}" FontSize="12" />
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBox Text="{Binding TavilyKeyInput}" PasswordChar="•" Width="260" PlaceholderText="Paste an API key (tvly-…)" />
+                                <Button Content="Save key" Command="{Binding SaveTavilyKeyCommand}" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding HasTavilyKey}">
+                                <Button Content="Check key" Command="{Binding CheckTavilyKeyCommand}" IsEnabled="{Binding !IsCheckingTavilyKey}"
+                                        ToolTip.Tip="Asks Tavily whether the key works and how much it has used. Costs no credits." />
+                                <Button Content="Remove key" Command="{Binding RemoveTavilyKeyCommand}" />
+                            </StackPanel>
+                            <Grid ColumnDefinitions="Auto,Auto" RowDefinitions="Auto,Auto" HorizontalAlignment="Left">
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Monthly credit budget" VerticalAlignment="Center" Margin="0,0,12,6" />
+                                <NumericUpDown Grid.Row="0" Grid.Column="1" Value="{Binding MonthlyCreditBudget}" Minimum="0" Maximum="1000000" Increment="50"
+                                               FormatString="0" Width="150" Margin="0,0,0,6"
+                                               ToolTip.Tip="Credits contacts may use each period, as counted here. A basic search costs 1 credit." />
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Period starts on day" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                <NumericUpDown Grid.Row="1" Grid.Column="1" Value="{Binding CreditResetDay}" Minimum="1" Maximum="28" Increment="1"
+                                               FormatString="0" Width="150"
+                                               ToolTip.Tip="The day of the month your Tavily credits renew." />
+                            </Grid>
+                            <TextBlock Text="{Binding WebSearchUsage}" TextWrapping="Wrap" FontSize="12" Opacity="0.75" />
+                        </StackPanel>
+
+                        <TextBlock Text="{Binding WebSearchStatus}" TextWrapping="Wrap" FontSize="12" />
+                    </StackPanel>
+
                     <StackPanel Spacing="8">
                         <TextBlock Text="Text to Speech" Classes="section-header" />
                         <TextBlock Text="Kokoro v1.0 · 326 MB · Apache 2.0" FontWeight="SemiBold" />

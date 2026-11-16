@@ -108,8 +108,13 @@ Before memories were individual records, a conversation kept them as one block o
 - The memory dialog lists every memory; it has no search, which a contact with very many memories may eventually need.
 - Recall is by English-language embedding models and English word matching.
 
+### Web Search
+
+Optional, off by default. Before a contact with a model replies, Business decides from the latest message whether a search would help: deterministic rules for explicit requests and questions about recent things, and a constrained yes-or-no question to the contact's own model for questions about specific named things. The query is built by Business from that message alone, without names or contact details. Tavily (Integrations) runs at most one basic search per reply; Business enforces a local credit budget per billing period, respects limits Tavily reports, caches results by query, and never lets a failed search stop a reply. Up to three short, sanitized results are added to the persona instructions as untrusted information, and the query and sources are kept with the reply for the user, never as memories. See [web search](web_search.md).
+
 ## Persistence and Security
 
 - Application data lives in the per-user application data directory: the SQLite database (`HomiliaMessenger.db`, including contacts' memories and their vectors), desktop preferences (`desktop-settings.json`), rolling daily logs, and downloaded local models (`Models`, with embedding models in `Models/Embeddings`).
 - The schema changes only through versioned migrations recorded in `SchemaMigration`.
-- Secrets, once providers need them, are resolved through `ICredentialStore` and never stored in provider configuration or SQLite.
+- Secrets are resolved through `ICredentialStore` and never stored in provider configuration or SQLite. The Hugging Face access token and the Tavily API key are kept this way.
+- Web search settings, the Tavily credit count per period, cached search results, and each reply's lookup (query and sources) are stored in SQLite (schema version 7).

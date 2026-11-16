@@ -1,6 +1,9 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using HomiliaMessenger.Business.Modules.Conversations;
+using HomiliaMessenger.Business.Modules.WebSearch;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace HomiliaMessenger.Presentation.Desktop.Models;
 
@@ -31,6 +34,8 @@ public sealed partial class MessageItem : ObservableObject
         TimeSeparator = timeSeparator;
         string sentAt = MessengerTime.ForToolTip(message.SentAtUtc);
         SentAtToolTip = message.Agent is { } agent ? $"{sentAt} · {agent.Provider} · {agent.Model}" : sentAt;
+        Sources = [.. (message.WebSearch?.Sources ?? []).Select(WebSourceLink.From).OfType<WebSourceLink>()];
+        LookedUp = message.WebSearch is { } lookup ? $"Looked up “{lookup.Query}”" : null;
     }
 
     public ChatMessage Message { get; }
@@ -46,6 +51,18 @@ public sealed partial class MessageItem : ObservableObject
     public bool HasTimeSeparator => TimeSeparator is not null;
     public string SentAtToolTip { get; }
     public bool ShowsAvatar => !IsFromUser && IsLastInGroup;
+
+    /// <summary>
+    /// What the contact searched for before writing this reply, or <see langword="null"/> when nothing was looked up.
+    /// </summary>
+    public string? LookedUp { get; }
+
+    /// <summary>
+    /// Where what was looked up came from.
+    /// </summary>
+    public IReadOnlyList<WebSourceLink> Sources { get; }
+
+    public bool HasSources => Sources.Count > 0;
 
     /// <summary>
     /// Creates the item for <paramref name="message"/> as the one following <paramref name="previous"/>, ending the
@@ -66,5 +83,27 @@ public sealed partial class MessageItem : ObservableObject
         }
 
         return new MessageItem(message, startsGroup, separated ? MessengerTime.ForSeparator(message.SentAtUtc, now) : null);
+    }
+}
+
+/// <summary>
+/// A page a reply's looked-up information came from, as a link.
+/// </summary>
+public sealed record WebSourceLink(string Title, string Site, Uri Uri)
+{
+    /// <summary>
+    /// The link for a search result, or <see langword="null"/> unless its address is <c>http</c> or <c>https</c>.
+    /// </summary>
+    internal static WebSourceLink? From(WebSearchResult result)
+    {
+        if (!Uri.TryCreate(result.Url, UriKind.Absolute, out Uri? uri) || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
+        {
+            return null;
+        }
+
+        string site = uri.Host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? uri.Host[4..] : uri.Host;
+        string title = string.IsNullOrWhiteSpace(result.Title) ? site : result.Title.ReplaceLineEndings(" ").Trim();
+
+        return new WebSourceLink(title, result.PublishedAt is { } published ? $"{site} · {published:MMM d, yyyy}" : site, uri);
     }
 }

@@ -104,7 +104,7 @@ public sealed class ConversationServiceTests
         Contact walt = await AddContactAsync(database, "Walt", TestContext);
 
         SendMessageResult sent = await service.SendAsync(walt.Id, "How was your day?", TestContext.CancellationToken);
-        ConversationReply result = await service.ReplyAsync(sent.Conversation!.Id, TestContext.CancellationToken);
+        ConversationReply result = await service.ReplyAsync(sent.Conversation!.Id, cancellationToken: TestContext.CancellationToken);
         ChatMessage? reply = result.Message;
         IReadOnlyList<ChatMessage> messages = await service.ListMessagesAsync(sent.Conversation.Id, TestContext.CancellationToken);
         Conversation? conversation = await service.FindByContactAsync(walt.Id, TestContext.CancellationToken);
@@ -128,7 +128,7 @@ public sealed class ConversationServiceTests
         SendMessageResult sent = await service.SendAsync(walt.Id, "Hello", TestContext.CancellationToken);
         bool deleted = await service.DeleteAsync(sent.Conversation!.Id, TestContext.CancellationToken);
         bool deletedAgain = await service.DeleteAsync(sent.Conversation.Id, TestContext.CancellationToken);
-        ConversationReply reply = await service.ReplyAsync(sent.Conversation.Id, TestContext.CancellationToken);
+        ConversationReply reply = await service.ReplyAsync(sent.Conversation.Id, cancellationToken: TestContext.CancellationToken);
         IReadOnlyList<ChatMessage> messages = await service.ListMessagesAsync(sent.Conversation.Id, TestContext.CancellationToken);
 
         Assert.IsTrue(deleted);
@@ -167,7 +167,7 @@ public sealed class ConversationServiceTests
         await Task.Delay(TimeSpan.FromMilliseconds(5), TestContext.CancellationToken);
         await service.SendAsync(rose.Id, "Second", TestContext.CancellationToken);
         await Task.Delay(TimeSpan.FromMilliseconds(5), TestContext.CancellationToken);
-        await service.ReplyAsync(toWalt.Conversation!.Id, TestContext.CancellationToken);
+        await service.ReplyAsync(toWalt.Conversation!.Id, cancellationToken: TestContext.CancellationToken);
 
         IReadOnlyList<Conversation> conversations = await service.ListAsync(TestContext.CancellationToken);
 

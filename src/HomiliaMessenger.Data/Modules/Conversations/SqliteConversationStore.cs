@@ -2,6 +2,7 @@ using Dapper;
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
 using HomiliaMessenger.Data.Database;
+using HomiliaMessenger.Data.Modules.WebSearch;
 using Microsoft.Data.Sqlite;
 using System;
 using System.Collections.Generic;
@@ -18,7 +19,7 @@ internal sealed class SqliteConversationStore : IConversationStore
 
     // The last message is found by rowid so equal timestamps still resolve to the most recently inserted message.
     private const string SELECT_CONVERSATION_SQL = """
-        SELECT c.Id, c.ContactId, c.StartedAtUtc, c.MemoryThroughMessageId, m.Id AS MessageId, m.Sender, m.Text, m.SentAtUtc, m.AgentProvider, m.AgentModel
+        SELECT c.Id, c.ContactId, c.StartedAtUtc, c.MemoryThroughMessageId, m.Id AS MessageId, m.Sender, m.Text, m.SentAtUtc, m.AgentProvider, m.AgentModel, m.WebSearch
         FROM Conversation c
         LEFT JOIN ChatMessage m ON m.rowid = (
             SELECT rowid FROM ChatMessage WHERE ConversationId = c.Id ORDER BY SentAtUtc DESC, rowid DESC LIMIT 1)
@@ -85,7 +86,7 @@ internal sealed class SqliteConversationStore : IConversationStore
     public async Task<IReadOnlyList<ChatMessage>> ListMessagesAsync(ConversationId conversationId, CancellationToken cancellationToken = default)
     {
         const string sql = """
-            SELECT Id, ConversationId, Sender, Text, SentAtUtc, AgentProvider, AgentModel
+            SELECT Id, ConversationId, Sender, Text, SentAtUtc, AgentProvider, AgentModel, WebSearch
             FROM ChatMessage
             WHERE ConversationId = @ConversationId
             ORDER BY SentAtUtc, rowid
@@ -96,7 +97,7 @@ internal sealed class SqliteConversationStore : IConversationStore
         IEnumerable<MessageRow> rows = await connection.QueryAsync<MessageRow>(new CommandDefinition(
             sql, new { ConversationId = ToKey(conversationId.Value) }, cancellationToken: cancellationToken));
 
-        return [.. rows.Select(row => Map(row.Id, row.ConversationId, row.Sender, row.Text, row.SentAtUtc, row.AgentProvider, row.AgentModel))];
+        return [.. rows.Select(row => Map(row.Id, row.ConversationId, row.Sender, row.Text, row.SentAtUtc, row.AgentProvider, row.AgentModel, row.WebSearch))];
     }
 
     public async Task<bool> AddMessageAsync(ChatMessage message, CancellationToken cancellationToken = default)
@@ -106,8 +107,8 @@ internal sealed class SqliteConversationStore : IConversationStore
         // Inserting only when the conversation exists lets a reply that finishes after its conversation was deleted
         // report that, rather than failing on the foreign key.
         const string sql = """
-            INSERT INTO ChatMessage (Id, ConversationId, Sender, Text, SentAtUtc, AgentProvider, AgentModel)
-            SELECT @Id, @ConversationId, @Sender, @Text, @SentAtUtc, @AgentProvider, @AgentModel
+            INSERT INTO ChatMessage (Id, ConversationId, Sender, Text, SentAtUtc, AgentProvider, AgentModel, WebSearch)
+            SELECT @Id, @ConversationId, @Sender, @Text, @SentAtUtc, @AgentProvider, @AgentModel, @WebSearch
             WHERE EXISTS (SELECT 1 FROM Conversation WHERE Id = @ConversationId);
             """;
 
@@ -121,7 +122,8 @@ internal sealed class SqliteConversationStore : IConversationStore
             message.Text,
             SentAtUtc = ToText(message.SentAtUtc),
             AgentProvider = message.Agent?.Provider,
-            AgentModel = message.Agent?.Model
+            AgentModel = message.Agent?.Model,
+            WebSearch = message.WebSearch is null ? null : WebSearchJson.Write(message.WebSearch)
         }, cancellationToken: cancellationToken));
 
         return count != 0;
@@ -172,11 +174,11 @@ internal sealed class SqliteConversationStore : IConversationStore
             MemoryThrough = row.MemoryThroughMessageId is null ? null : new MessageId(Guid.Parse(row.MemoryThroughMessageId)),
             LastMessage = row.MessageId is null || row.Sender is null || row.Text is null || row.SentAtUtc is null
                 ? null
-                : Map(row.MessageId, row.Id, row.Sender.Value, row.Text, row.SentAtUtc, row.AgentProvider, row.AgentModel)
+                : Map(row.MessageId, row.Id, row.Sender.Value, row.Text, row.SentAtUtc, row.AgentProvider, row.AgentModel, row.WebSearch)
         };
     }
 
-    private static ChatMessage Map(string id, string conversationId, long sender, string text, string sentAtUtc, string? agentProvider, string? agentModel)
+    private static ChatMessage Map(string id, string conversationId, long sender, string text, string sentAtUtc, string? agentProvider, string? agentModel, string? webSearch)
     {
         return new()
         {
@@ -185,7 +187,8 @@ internal sealed class SqliteConversationStore : IConversationStore
             Sender = (MessageSender)sender,
             Text = text,
             SentAtUtc = FromText(sentAtUtc),
-            Agent = agentProvider is null || agentModel is null ? null : new AgentAssignment(agentProvider, agentModel)
+            Agent = agentProvider is null || agentModel is null ? null : new AgentAssignment(agentProvider, agentModel),
+            WebSearch = WebSearchJson.ReadLookup(webSearch)
         };
     }
 
@@ -201,6 +204,7 @@ internal sealed class SqliteConversationStore : IConversationStore
         public string? SentAtUtc { get; set; }
         public string? AgentProvider { get; set; }
         public string? AgentModel { get; set; }
+        public string? WebSearch { get; set; }
     }
 
     private sealed class MessageRow
@@ -212,5 +216,6 @@ internal sealed class SqliteConversationStore : IConversationStore
         public string SentAtUtc { get; set; } = string.Empty;
         public string? AgentProvider { get; set; }
         public string? AgentModel { get; set; }
+        public string? WebSearch { get; set; }
     }
 }
