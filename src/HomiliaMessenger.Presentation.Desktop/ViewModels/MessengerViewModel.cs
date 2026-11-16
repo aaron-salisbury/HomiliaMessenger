@@ -1,10 +1,10 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using FluentValidation.Results;
 using HomiliaMessenger.Business.Base.Extensions;
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
+using HomiliaMessenger.Business.Modules.Memories;
 using HomiliaMessenger.Business.Modules.Speech;
 using HomiliaMessenger.Presentation.Desktop.Base.Controls.RibbonControls;
 using HomiliaMessenger.Presentation.Desktop.Models;
@@ -22,6 +22,7 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
 {
     private readonly IConversationService _conversations;
     private readonly IContactService _contacts;
+    private readonly IMemoryService _memories;
     private readonly ITextToSpeech? _speech;
     private CancellationTokenSource? _speechSession;
 
@@ -39,7 +40,7 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     // sent so far, once, as a person reading a burst of messages would.
     private readonly Dictionary<ConversationId, CancellationTokenSource> _pendingReplies = [];
 
-    // Conversations whose memory notes are being updated, so updates do not overlap.
+    // Conversations whose memories are being updated, so updates do not overlap.
     private readonly HashSet<ConversationId> _updatingMemory = [];
 
     // Unsent composer text per contact, kept while switching between chats.
@@ -108,10 +109,9 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     public Func<string, string, Task<bool>>? ConfirmAsync { get; set; }
 
     /// <summary>
-    /// Supplied by the view to let the user read and correct a contact's memory notes, given the contact's name and the
-    /// current notes. Returns the edited notes, or <see langword="null"/> when the user cancels.
+    /// Supplied by the view to let the user read and correct what a contact remembers, until the user is done.
     /// </summary>
-    public Func<string, string?, Task<string?>>? ShowMemoryEditorAsync { get; set; }
+    public Func<MemoryEditorViewModel, Task>? ShowMemoryEditorAsync { get; set; }
 
     public Type RibbonControlType => typeof(MessengerRibbonControl);
 
@@ -120,7 +120,7 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     public bool HasReplyProblem => ReplyProblem is not null;
 
     /// <summary>
-    /// Whether the open chat has a saved conversation, and so memory notes to show.
+    /// Whether the open chat has a saved conversation, and so memories to show.
     /// </summary>
     public bool HasConversation => ActiveConversationId is not null;
 
@@ -128,10 +128,11 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         ? "typing…"
         : ActiveContact?.Agent is { } agent ? $"{agent.Provider} · {agent.Model}" : "Simulated replies";
 
-    public MessengerViewModel(IConversationService conversations, IContactService contacts, ITextToSpeech? speech = null)
+    public MessengerViewModel(IConversationService conversations, IContactService contacts, IMemoryService memories, ITextToSpeech? speech = null)
     {
         _conversations = conversations ?? throw new ArgumentNullException(nameof(conversations));
         _contacts = contacts ?? throw new ArgumentNullException(nameof(contacts));
+        _memories = memories ?? throw new ArgumentNullException(nameof(memories));
         _speech = speech;
     }
 
@@ -700,8 +701,8 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     }
 
     /// <summary>
-    /// Condenses older messages into the contact's notes, in the background after a reply. A reply asked for meanwhile
-    /// waits its turn for the model.
+    /// Learns lasting facts from older messages as the contact's memories, in the background after a reply. A reply asked
+    /// for meanwhile waits its turn for the model.
     /// </summary>
     private async Task UpdateMemoryAsync(ConversationId conversationId)
     {
@@ -715,12 +716,12 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
             if (await _conversations.UpdateMemoryAsync(conversationId) is { } updated
                 && Conversations.FirstOrDefault(existing => existing.Id == conversationId) is { } item)
             {
-                item.Conversation = item.Conversation with { MemoryNotes = updated.MemoryNotes, MemoryThrough = updated.MemoryThrough };
+                item.Conversation = item.Conversation with { MemoryThrough = updated.MemoryThrough };
             }
         }
         catch (Exception)
         {
-            // Notes are retried after the next reply; until then the contact is still given the messages themselves.
+            // Retried after the next reply; until then the contact is still given the messages themselves.
         }
         finally
         {
@@ -729,41 +730,36 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     }
 
     /// <summary>
-    /// Shows what the open chat's contact remembers from earlier, and saves any corrections.
+    /// Shows what the open chat's contact remembers, where the user can correct it. Changes are saved as they are made;
+    /// afterwards the changed memories are embedded in the background so they can be found by meaning.
     /// </summary>
     [RelayCommand(CanExecute = nameof(HasConversation))]
     private async Task EditMemoryAsync()
     {
-        if (ShowMemoryEditorAsync is null || ActiveContact is not { } contact
-            || Conversations.FirstOrDefault(existing => existing.Id == ActiveConversationId) is not { } item)
+        if (ShowMemoryEditorAsync is null || ActiveContact is not { } contact || ActiveConversationId is not { } conversationId)
         {
             return;
         }
 
-        string? current = item.Conversation.MemoryNotes;
-        string? edited = await ShowMemoryEditorAsync(contact.DisplayName, current);
+        MemoryEditorViewModel editor = new(_memories, contact, conversationId);
+        await ShowMemoryEditorAsync(editor);
 
-        if (edited is null || string.Equals(edited.Trim(), current ?? string.Empty, StringComparison.Ordinal))
+        if (editor.HasChanges)
         {
-            return;
+            Status = $"Saved what {contact.DisplayName} remembers.";
+            _ = EmbedMemoriesAsync(contact.Id);
         }
+    }
 
+    private async Task EmbedMemoriesAsync(ContactId contactId)
+    {
         try
         {
-            ValidationResult result = await _conversations.SaveMemoryNotesAsync(item.Id, edited, current);
-
-            if (!result.IsValid)
-            {
-                Status = result.ToStringPretty("Saving notes");
-                return;
-            }
-
-            item.Conversation = item.Conversation with { MemoryNotes = string.IsNullOrWhiteSpace(edited) ? null : edited.Trim() };
-            Status = $"Saved what {contact.DisplayName} remembers.";
+            await _memories.EmbedPendingAsync(contactId);
         }
-        catch (Exception error)
+        catch (Exception)
         {
-            Status = "Could not save the notes: " + error.Message;
+            // Retried after the next reply; until then the memories are found by their words.
         }
     }
 

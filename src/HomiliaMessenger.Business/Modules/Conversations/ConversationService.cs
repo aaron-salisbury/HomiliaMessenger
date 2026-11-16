@@ -2,6 +2,7 @@ using FluentValidation;
 using FluentValidation.Results;
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
+using HomiliaMessenger.Business.Modules.Memories;
 using HomiliaMessenger.Business.Modules.Profile;
 using System;
 using System.Collections.Generic;
@@ -18,14 +19,18 @@ internal sealed class ConversationService : IConversationService
     private readonly IUserProfileService _profile;
     private readonly IValidator<ChatMessage> _validator;
     private readonly IReadOnlyList<IConversationAgent> _agents;
+    private readonly IMemoryStore _memoryStore;
+    private readonly IMemoryService _memories;
+    private readonly MemoryRecall _recall;
+    private readonly MemoryRecallOptions _recallOptions;
     private readonly TimeProvider _timeProvider;
 
-    public ConversationService(IConversationStore store, IContactService contacts, IUserProfileService profile, IValidator<ChatMessage> validator, IEnumerable<IConversationAgent> agents)
-        : this(store, contacts, profile, validator, agents, TimeProvider.System)
+    public ConversationService(IConversationStore store, IContactService contacts, IUserProfileService profile, IValidator<ChatMessage> validator, IEnumerable<IConversationAgent> agents, IMemoryStore memoryStore, IMemoryService memories, MemoryRecall recall, MemoryRecallOptions recallOptions)
+        : this(store, contacts, profile, validator, agents, memoryStore, memories, recall, recallOptions, TimeProvider.System)
     {
     }
 
-    internal ConversationService(IConversationStore store, IContactService contacts, IUserProfileService profile, IValidator<ChatMessage> validator, IEnumerable<IConversationAgent> agents, TimeProvider timeProvider)
+    internal ConversationService(IConversationStore store, IContactService contacts, IUserProfileService profile, IValidator<ChatMessage> validator, IEnumerable<IConversationAgent> agents, IMemoryStore memoryStore, IMemoryService memories, MemoryRecall recall, MemoryRecallOptions recallOptions, TimeProvider timeProvider)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _contacts = contacts ?? throw new ArgumentNullException(nameof(contacts));
@@ -33,6 +38,10 @@ internal sealed class ConversationService : IConversationService
         _validator = validator ?? throw new ArgumentNullException(nameof(validator));
         ArgumentNullException.ThrowIfNull(agents);
         _agents = [.. agents];
+        _memoryStore = memoryStore ?? throw new ArgumentNullException(nameof(memoryStore));
+        _memories = memories ?? throw new ArgumentNullException(nameof(memories));
+        _recall = recall ?? throw new ArgumentNullException(nameof(recall));
+        _recallOptions = recallOptions ?? throw new ArgumentNullException(nameof(recallOptions));
         _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
     }
 
@@ -122,9 +131,13 @@ internal sealed class ConversationService : IConversationService
         UserProfile user = await _profile.GetAsync(cancellationToken);
         DateOnly today = DateOnly.FromDateTime(_timeProvider.GetUtcNow().UtcDateTime);
 
-        // The agent is given the notes and the messages they do not cover yet.
+        // The agent is given the memories recalled for the latest messages, and the messages after the memory checkpoint.
         int unremembered = MemoryNotes.FirstUnremembered(messages, conversation.MemoryThrough);
-        AgentRequest request = PersonaFraming.Build(contact, user, conversation.MemoryNotes, [.. messages.Skip(unremembered)], assignment.Model.Trim(), today);
+        IReadOnlyList<ChatMessage> recent = [.. messages.Skip(unremembered)];
+        IReadOnlyList<Memory> recalled = agent is SimulatedAgent
+            ? []
+            : await _recall.RecallAsync(contact.Id, MemoryRecall.QueryFor(recent, _recallOptions.MaxQueryCharacters), cancellationToken);
+        AgentRequest request = PersonaFraming.Build(contact, user, [.. recalled.Select(memory => memory.Text)], recent, assignment.Model.Trim(), today);
         AgentReply answer = await agent.ReplyAsync(request, cancellationToken);
 
         if (answer.Status != ReplyStatus.Success)
@@ -164,13 +177,29 @@ internal sealed class ConversationService : IConversationService
         Conversation? conversation = await _store.GetAsync(conversationId, cancellationToken);
         Contact? contact = conversation is null ? null : await _contacts.GetAsync(conversation.ContactId, cancellationToken);
 
-        // Canned replies make no use of notes, and have no model to write them.
+        // Canned replies make no use of memories, and have no model to list them.
         if (conversation is null || contact?.Agent is not { } assignment || FindAgent(assignment) is not { } agent || agent is SimulatedAgent)
         {
             return null;
         }
 
-        IReadOnlyList<ChatMessage> messages = await _store.ListMessagesAsync(conversationId, cancellationToken);
+        Conversation? updated = await LearnAsync(conversation, contact, assignment, agent, cancellationToken);
+
+        // Vectors for what was just learned, and for any memories still waiting: added or corrected by the user, not
+        // embedded after an earlier failure, or embedded by a model no longer chosen.
+        await _memories.EmbedPendingAsync(contact.Id, cancellationToken);
+
+        return updated;
+    }
+
+    /// <summary>
+    /// Lists the facts in the next batch of messages after the checkpoint, and saves each new one as a memory as the
+    /// checkpoint moves past the batch. Returns <see langword="null"/> when there was nothing to condense or nothing was
+    /// saved; the batch is then tried again after the next reply.
+    /// </summary>
+    private async Task<Conversation?> LearnAsync(Conversation conversation, Contact contact, AgentAssignment assignment, IConversationAgent agent, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<ChatMessage> messages = await _store.ListMessagesAsync(conversation.Id, cancellationToken);
         int start = MemoryNotes.FirstUnremembered(messages, conversation.MemoryThrough);
 
         if (MemoryNotes.FoldBoundary(messages, start) is not { } boundary)
@@ -178,8 +207,12 @@ internal sealed class ConversationService : IConversationService
             return null;
         }
 
+        IReadOnlyList<ChatMessage> batch = [.. messages.Take(boundary).Skip(start)];
         UserProfile user = await _profile.GetAsync(cancellationToken);
-        AgentRequest request = MemoryNotes.ExtractRequest(contact, user, conversation.MemoryNotes, messages.Take(boundary).Skip(start), assignment.Model.Trim());
+
+        // What is already known, as far as it bears on this batch, so the agent lists only what is new.
+        IReadOnlyList<Memory> known = await _recall.RecallAsync(contact.Id, MemoryRecall.QueryForBatch(batch, _recallOptions.MaxQueryCharacters), cancellationToken);
+        AgentRequest request = MemoryNotes.ExtractRequest(contact, user, [.. known.Select(memory => memory.Text)], batch, assignment.Model.Trim());
         AgentReply answer = await agent.ReplyAsync(request, cancellationToken);
 
         if (answer.Status != ReplyStatus.Success)
@@ -188,40 +221,37 @@ internal sealed class ConversationService : IConversationService
             return null;
         }
 
-        // Finding nothing worth remembering still moves the notes past these messages.
-        string? notes = MemoryNotes.Append(conversation.MemoryNotes, MemoryNotes.Facts(answer.Text));
-
         MessageId through = messages[boundary - 1].Id;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
+        IReadOnlyList<Memory> existing = await _memoryStore.ListAsync(contact.Id, cancellationToken);
+        List<Memory> learned = [];
 
-        // The user may have corrected the notes while they were being written; their edit wins and this update is retried.
-        bool saved = await _store.SaveMemoryAsync(conversationId, notes, through, conversation.MemoryNotes, conversation.MemoryThrough, cancellationToken);
-
-        return saved ? conversation with { MemoryNotes = notes, MemoryThrough = through } : null;
-    }
-
-    public async Task<ValidationResult> SaveMemoryNotesAsync(ConversationId conversationId, string? notes, string? expectedNotes, CancellationToken cancellationToken = default)
-    {
-        string? cleaned = string.IsNullOrWhiteSpace(notes) ? null : notes.Trim();
-
-        if (cleaned?.Length > Conversation.MAX_MEMORY_NOTES_LENGTH)
+        foreach (string fact in MemoryNotes.Facts(answer.Text))
         {
-            return new ValidationResult([new ValidationFailure("MemoryNotes", $"Notes must be {Conversation.MAX_MEMORY_NOTES_LENGTH} characters or fewer.")]);
+            if (existing.Any(memory => MemoryNotes.IsSameFact(memory.Text, fact)) || learned.Any(memory => MemoryNotes.IsSameFact(memory.Text, fact)))
+            {
+                continue;
+            }
+
+            learned.Add(new Memory
+            {
+                Id = MemoryId.New(),
+                ContactId = contact.Id,
+                ConversationId = conversation.Id,
+                Text = fact,
+                Origin = MemoryOrigin.Extracted,
+                SourceMessageId = through,
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
+            });
         }
 
-        Conversation? conversation = await _store.GetAsync(conversationId, cancellationToken);
+        // The memories and the checkpoint are saved together, so the checkpoint never moves past facts that were not
+        // saved. Finding nothing worth remembering still moves it past these messages. If another update moved the
+        // checkpoint meanwhile, or the conversation was deleted, nothing is saved.
+        bool saved = await _memoryStore.AddExtractedAsync(conversation.Id, learned, through, conversation.MemoryThrough, cancellationToken);
 
-        if (conversation is null)
-        {
-            return new ValidationResult([new ValidationFailure("Conversation", "The conversation no longer exists.")]);
-        }
-
-        if (!string.Equals(conversation.MemoryNotes, expectedNotes, StringComparison.Ordinal)
-            || !await _store.SaveMemoryAsync(conversationId, cleaned, conversation.MemoryThrough, conversation.MemoryNotes, conversation.MemoryThrough, cancellationToken))
-        {
-            return new ValidationResult([new ValidationFailure("MemoryNotes", "The notes were updated while you were editing them. Open them again to see the latest.")]);
-        }
-
-        return new ValidationResult();
+        return saved ? conversation with { MemoryThrough = through } : null;
     }
 
     /// <summary>

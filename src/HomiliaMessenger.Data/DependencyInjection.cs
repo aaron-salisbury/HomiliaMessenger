@@ -1,10 +1,12 @@
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
+using HomiliaMessenger.Business.Modules.Memories;
 using HomiliaMessenger.Business.Modules.Profile;
 using HomiliaMessenger.Data.Database;
 using HomiliaMessenger.Data.Database.Migrations;
 using HomiliaMessenger.Data.Modules.Contacts;
 using HomiliaMessenger.Data.Modules.Conversations;
+using HomiliaMessenger.Data.Modules.Memories;
 using HomiliaMessenger.Data.Modules.Profile;
 using Microsoft.Extensions.DependencyInjection;
 using System;
@@ -35,11 +37,12 @@ public static class DependencyInjection
         string databasePath = Path.Combine(applicationDataDirectory, DATABASE_FILE_NAME);
         services.AddSingleton<IApplicationDatabase>(_ => new ApplicationDatabase(databasePath));
         services.AddSingleton<ApplicationDatabaseInitializer>(provider => new ApplicationDatabaseInitializer(
-            provider.GetRequiredService<IApplicationDatabase>(), [new CreateContactsMigration(), new CreateConversationsMigration(), new AddRelationshipsAndUserProfileMigration(), new AddConversationMemoryMigration(), new AddContactVoiceMigration()]));
+            provider.GetRequiredService<IApplicationDatabase>(), [new CreateContactsMigration(), new CreateConversationsMigration(), new AddRelationshipsAndUserProfileMigration(), new AddConversationMemoryMigration(), new AddContactVoiceMigration(), new AddContactMemoriesMigration()]));
 
         services.AddScoped<IContactStore, SqliteContactStore>();
         services.AddScoped<IConversationStore, SqliteConversationStore>();
         services.AddScoped<IUserProfileStore, SqliteUserProfileStore>();
+        services.AddScoped<IMemoryStore, SqliteMemoryStore>();
 
         return services;
     }

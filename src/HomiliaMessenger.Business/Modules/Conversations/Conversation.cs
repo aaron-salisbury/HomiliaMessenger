@@ -51,21 +51,13 @@ public sealed record ChatMessage
 /// </summary>
 public sealed record Conversation
 {
-    public const int MAX_MEMORY_NOTES_LENGTH = 1000;
-
     public ConversationId Id { get; init; }
     public ContactId ContactId { get; init; }
     public DateTimeOffset StartedAtUtc { get; init; }
 
     /// <summary>
-    /// The contact's notes on what was said earlier in the conversation: older messages condensed so the contact still
-    /// knows them once they no longer fit in what an agent is given. The user can read and correct them.
-    /// </summary>
-    public string? MemoryNotes { get; init; }
-
-    /// <summary>
-    /// The last message condensed into <see cref="MemoryNotes"/>; <see langword="null"/> until messages are condensed.
-    /// Messages after it are given to agents as they are.
+    /// The memory checkpoint: the last message whose lasting facts have been learned as the contact's memories;
+    /// <see langword="null"/> until messages are condensed. Messages after it are given to agents as they are.
     /// </summary>
     public MessageId? MemoryThrough { get; init; }
 

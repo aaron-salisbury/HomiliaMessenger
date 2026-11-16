@@ -30,15 +30,16 @@ internal static partial class PersonaFraming
     /// </summary>
     internal const int MEMORY_STEP_CHARACTERS = MAX_MEMORY_CHARACTERS / 4;
 
-    /// <param name="memoryNotes">The contact's notes on what was said before <paramref name="messages"/>.</param>
-    /// <param name="messages">The messages not yet condensed into <paramref name="memoryNotes"/>, oldest first.</param>
-    internal static AgentRequest Build(Contact contact, UserProfile user, string? memoryNotes, IReadOnlyList<ChatMessage> messages, string model, DateOnly today)
+    /// <param name="memories">What the contact remembers from before <paramref name="messages"/> that was recalled for this reply.</param>
+    /// <param name="messages">The messages after the conversation's memory checkpoint, oldest first.</param>
+    internal static AgentRequest Build(Contact contact, UserProfile user, IReadOnlyList<string> memories, IReadOnlyList<ChatMessage> messages, string model, DateOnly today)
     {
         ArgumentNullException.ThrowIfNull(contact);
         ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(memories);
         ArgumentNullException.ThrowIfNull(messages);
 
-        return new AgentRequest(model, Instructions(contact, user, memoryNotes, today), Memory(messages), StopTexts(contact, user));
+        return new AgentRequest(model, Instructions(contact, user, memories, today), Memory(messages), StopTexts(contact, user));
     }
 
     /// <summary>
@@ -67,7 +68,12 @@ internal static partial class PersonaFraming
     /// Who the persona is, who they are texting and how they are related, and how to reply. Who the user is comes right
     /// after the persona's identity, since small models attend most to the start of the instructions.
     /// </summary>
-    internal static string Instructions(Contact contact, UserProfile user, string? memoryNotes, DateOnly today)
+    /// <remarks>
+    /// Memories are written as a list of facts after the persona's own details and before how to reply, each kept to one
+    /// line, so a memory reads as something the persona knows rather than as an instruction, and cannot add a section of
+    /// its own.
+    /// </remarks>
+    internal static string Instructions(Contact contact, UserProfile user, IReadOnlyList<string>? memories, DateOnly today)
     {
         ArgumentNullException.ThrowIfNull(contact);
         ArgumentNullException.ThrowIfNull(user);
@@ -108,13 +114,18 @@ internal static partial class PersonaFraming
         AppendField(builder, "Personality", contact.Personality);
         AppendField(builder, "Background", contact.Background);
 
-        bool remembers = !string.IsNullOrWhiteSpace(memoryNotes);
+        List<string> remembered = [.. (memories ?? []).Select(MemoryLine).Where(line => line.Length > 0)];
+        bool remembers = remembered.Count > 0;
 
         if (remembers)
         {
             builder.AppendLine();
             builder.AppendLine("What you remember from earlier in this conversation:");
-            builder.AppendLine(memoryNotes!.Trim());
+
+            foreach (string line in remembered)
+            {
+                builder.AppendLine("- " + line);
+            }
         }
 
         builder.AppendLine();
@@ -138,6 +149,16 @@ internal static partial class PersonaFraming
         builder.Append("- Do not add notes, explanations, narration, or commentary about your reply.");
 
         return builder.ToString();
+    }
+
+    /// <summary>
+    /// A memory as one line of the list, without a list marker of its own.
+    /// </summary>
+    private static string MemoryLine(string memory)
+    {
+        string line = (memory ?? string.Empty).ReplaceLineEndings(" ").Trim();
+
+        return line.StartsWith("- ", StringComparison.Ordinal) ? line[2..].Trim() : line;
     }
 
     private static void AppendUser(StringBuilder builder, UserProfile user, string? userName, DateOnly today)

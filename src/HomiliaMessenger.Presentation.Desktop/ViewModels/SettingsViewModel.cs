@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using HomiliaMessenger.Business.Modules.Agents;
+using HomiliaMessenger.Business.Modules.Memories;
 using HomiliaMessenger.Business.Modules.Speech;
 using HomiliaMessenger.Presentation.Desktop.Base;
 using HomiliaMessenger.Presentation.Desktop.Models;
@@ -29,6 +30,8 @@ public partial class SettingsViewModel : BaseViewModel
 
     private readonly ThemeService _themeService;
     private readonly ILocalModelLibrary _localModels;
+    private readonly IEmbeddingModelLibrary? _embeddingModels;
+    private readonly IMemoryService? _memories;
     private readonly ITextToSpeech? _speech;
     private CancellationTokenSource? _speechDownload;
     private bool _refreshingSpeech;
@@ -54,6 +57,13 @@ public partial class SettingsViewModel : BaseViewModel
     public string LocalModelsHint { get; }
 
     /// <summary>
+    /// Models that memories can be searched with, kept apart from the models contacts converse with.
+    /// </summary>
+    public ObservableCollection<EmbeddingModelItem> EmbeddingModels { get; } = [];
+
+    public string EmbeddingModelsHint { get; }
+
+    /// <summary>
     /// Supplied by the view to ask the user to confirm an action, given a title and a message.
     /// </summary>
     public Func<string, string, Task<bool>>? ConfirmAsync { get; set; }
@@ -63,11 +73,14 @@ public partial class SettingsViewModel : BaseViewModel
     /// </summary>
     public Func<AddLocalModelViewModel, Task<string?>>? ShowAddModelAsync { get; set; }
 
-    public SettingsViewModel(ThemeService themeService, ILocalModelLibrary localModels, ITextToSpeech? speech = null)
+    public SettingsViewModel(ThemeService themeService, ILocalModelLibrary localModels, ITextToSpeech? speech = null, IEmbeddingModelLibrary? embeddingModels = null, IMemoryService? memories = null)
     {
         _themeService = themeService ?? throw new ArgumentNullException(nameof(themeService));
         _localModels = localModels ?? throw new ArgumentNullException(nameof(localModels));
         _speech = speech;
+        _embeddingModels = embeddingModels;
+        _memories = memories;
+        EmbeddingModelsHint = "Contacts remember lasting things you tell them. With an embedding model, which runs on this computer, they recall the memories that relate to what you're talking about; without one, they recall memories that share its words. Optional.";
         LocalModelsHint = "Run a model on this computer, without a GPU or an account. Download one, or add any GGUF model from Hugging Face, then choose it as a contact's agent on the Contacts page. Contacts without an agent reply with simulated text.";
 
         AppDisplayName = AppInfo.AppDisplayName;
@@ -103,7 +116,54 @@ public partial class SettingsViewModel : BaseViewModel
             }
         }
 
+        if (_embeddingModels is not null)
+        {
+            if (EmbeddingModels.Count == 0)
+            {
+                foreach (EmbeddingModel model in _embeddingModels.List())
+                {
+                    EmbeddingModels.Add(new EmbeddingModelItem(model, _embeddingModels, ConfirmWithViewAsync, OnEmbeddingModelsChanged));
+                }
+            }
+            else
+            {
+                foreach (EmbeddingModelItem item in EmbeddingModels.Where(item => !item.IsDownloading))
+                {
+                    item.Refresh();
+                }
+            }
+        }
+
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// After an embedding model is downloaded, chosen, or removed: shows every model's state, which may all have changed,
+    /// and embeds any memories the model in use has no vectors for, in the background.
+    /// </summary>
+    private void OnEmbeddingModelsChanged()
+    {
+        foreach (EmbeddingModelItem item in EmbeddingModels.Where(item => !item.IsDownloading))
+        {
+            item.Refresh();
+        }
+
+        if (_memories is not null)
+        {
+            _ = EmbedMemoriesAsync(_memories);
+        }
+    }
+
+    private static async Task EmbedMemoriesAsync(IMemoryService memories)
+    {
+        try
+        {
+            await memories.EmbedPendingAsync(null);
+        }
+        catch (Exception)
+        {
+            // Memories waiting for a vector are embedded after each reply as well; until then they are found by words.
+        }
     }
 
     private LocalModelItem CreateItem(LocalModel model)

@@ -1,8 +1,10 @@
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Credentials;
-using HomiliaMessenger.Integrations.Credentials;
-using HomiliaMessenger.Integrations.LocalModels;
+using HomiliaMessenger.Business.Modules.Memories;
 using HomiliaMessenger.Business.Modules.Speech;
+using HomiliaMessenger.Integrations.Credentials;
+using HomiliaMessenger.Integrations.Embeddings;
+using HomiliaMessenger.Integrations.LocalModels;
 using HomiliaMessenger.Integrations.Speech;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -16,6 +18,7 @@ namespace HomiliaMessenger.Integrations;
 public static class DependencyInjection
 {
     private const string MODELS_DIRECTORY_NAME = "Models";
+    private const string EMBEDDINGS_DIRECTORY_NAME = "Embeddings";
 
     /// <summary>
     /// Registers internal integrations-tier services. Local agent models need <see cref="IHttpClientFactory"/> and
@@ -57,6 +60,19 @@ public static class DependencyInjection
             provider.GetRequiredService<ILogger<LocalModelLibrary>>()));
         services.AddSingleton<ILocalModelLibrary>(provider => provider.GetRequiredService<LocalModelLibrary>());
         services.AddSingleton<IConversationAgent, LocalConversationAgent>();
+
+        // Embedding models are a separate category from conversational models, with their own folder and host.
+        services.AddSingleton<LlamaEmbeddingHost>();
+        services.AddSingleton(provider => new EmbeddingModelLibrary(
+            Path.Combine(modelsDirectory, EMBEDDINGS_DIRECTORY_NAME),
+            provider.GetRequiredService<IHttpClientFactory>(),
+            provider.GetRequiredService<LlamaEmbeddingHost>(),
+            provider.GetRequiredService<ILogger<EmbeddingModelLibrary>>()));
+        services.AddSingleton<IEmbeddingModelLibrary>(provider => provider.GetRequiredService<EmbeddingModelLibrary>());
+        services.AddSingleton<ITextEmbedder>(provider => new LocalTextEmbedder(
+            provider.GetRequiredService<EmbeddingModelLibrary>(),
+            provider.GetRequiredService<ILogger<LocalTextEmbedder>>(),
+            provider.GetRequiredService<LlamaEmbeddingHost>()));
         services.AddSingleton<ITextToSpeech>(provider => new KokoroSpeech(
             Path.Combine(applicationDataDirectory, "Speech", "Kokoro"),
             provider.GetRequiredService<IHttpClientFactory>(),

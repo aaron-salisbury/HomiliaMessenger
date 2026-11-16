@@ -181,7 +181,7 @@ public sealed class PersonaFramingTests
     [TestMethod]
     public void Build_StopsTheReplyWhereTheModelStartsWritingTheNextTurns()
     {
-        AgentRequest request = PersonaFraming.Build(WALT, new UserProfile { Name = "Aaron" }, null, [Message(MessageSender.User, "Hi")], "m", TODAY);
+        AgentRequest request = PersonaFraming.Build(WALT, new UserProfile { Name = "Aaron" }, [], [Message(MessageSender.User, "Hi")], "m", TODAY);
 
         string reply = PersonaFraming.CleanReply("Grandpa Walt: Doing fine, kiddo.  User: Great! Assistant: Anytime.", WALT, request)!;
         string named = PersonaFraming.CleanReply("Doing fine.\nAaron: Glad to hear it.\nGrandpa Walt: Yep.", WALT, request)!;

@@ -1,9 +1,10 @@
-using FluentValidation.Results;
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
+using HomiliaMessenger.Business.Modules.Memories;
 using HomiliaMessenger.Business.Modules.Profile;
 using HomiliaMessenger.Tests.Conversations;
+using HomiliaMessenger.Tests.Memories;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
@@ -93,7 +94,7 @@ public sealed class MemoryNotesTests
     {
         List<ChatMessage> folding = [Message(MessageSender.User, "My dog Biscuit is sick."), Message(MessageSender.Contact, "Poor pup.\nGive him a hug.")];
 
-        AgentRequest request = MemoryNotes.ExtractRequest(WALT, new UserProfile { Name = "Aaron" }, "- Aaron is a nurse.", folding, "phi-3.5-mini");
+        AgentRequest request = MemoryNotes.ExtractRequest(WALT, new UserProfile { Name = "Aaron" }, ["Aaron is a nurse."], folding, "phi-3.5-mini");
 
         Assert.AreEqual("phi-3.5-mini", request.Model);
         Assert.Contains("list the lasting facts Walt should remember later", request.Instructions);
@@ -103,6 +104,7 @@ public sealed class MemoryNotesTests
         Assert.Contains("Messages from Aaron:\n- My dog Biscuit is sick.".ReplaceLineEndings(), request.Turns[0].Text.ReplaceLineEndings());
         Assert.DoesNotContain("Poor pup", request.Turns[0].Text);
         Assert.IsTrue(request.Precise);
+        Assert.Contains("Already known:\n- nothing yet".ReplaceLineEndings(), MemoryNotes.ExtractRequest(WALT, new UserProfile(), [], folding, "m").Turns[0].Text.ReplaceLineEndings());
     }
 
     [TestMethod]
@@ -112,24 +114,19 @@ public sealed class MemoryNotesTests
 
         IReadOnlyList<string> facts = MemoryNotes.Facts(raw);
 
-        Assert.AreSequenceEqual(new[] { "- Aaron's dog is Biscuit.", "- Lunch is set for Saturday.", "- Aaron is a nurse." }, facts.ToArray());
+        Assert.AreSequenceEqual(new[] { "Aaron's dog is Biscuit.", "Lunch is set for Saturday.", "Aaron is a nurse." }, facts.ToArray());
         Assert.IsEmpty(MemoryNotes.Facts("- none"));
         Assert.IsEmpty(MemoryNotes.Facts("Nothing new worth remembering."));
         Assert.IsEmpty(MemoryNotes.Facts("(Note: nothing to add.)"));
         Assert.HasCount(MemoryNotes.MAX_FACTS_PER_FOLD, MemoryNotes.Facts("- a\n- b\n- c\n- d\n- e"));
-    }
+        Assert.AreSequenceEqual(new[] { new string('x', Memory.MAX_TEXT_LENGTH), new string('x', 50) }, MemoryNotes.Facts("- " + new string('x', Memory.MAX_TEXT_LENGTH + 50)).ToArray());
 
-    [TestMethod]
-    public void Append_AddsNewFactsAndLetsTheOldestGoWhenFull()
-    {
-        string? notes = MemoryNotes.Append("- Aaron's dog is Biscuit.", ["- aaron's dog is biscuit.", "- Jen is moving to Portland."]);
-        string? full = MemoryNotes.Append(notes, [.. Enumerable.Range(0, 20).Select(i => $"- Person{i} lives in City{i} " + new string((char)('a' + i), 60))]);
-
-        Assert.AreEqual("- Aaron's dog is Biscuit.\n- Jen is moving to Portland.", notes);
-        Assert.IsLessThanOrEqualTo(Conversation.MAX_MEMORY_NOTES_LENGTH, full!.Length);
-        Assert.DoesNotContain("Biscuit", full);
-        Assert.EndsWith(new string((char)('a' + 19), 60), full);
-        Assert.IsNull(MemoryNotes.Append(null, []));
+        string sentence = "Aaron's sister Jen is moving to Portland with her two kids, the dog, and the piano. ";
+        string longFact = string.Concat(Enumerable.Repeat(sentence, 4)) + "She arrives on the third of May.";
+        IReadOnlyList<string> parts = MemoryNotes.Facts("- " + longFact);
+        Assert.IsGreaterThan(1, parts.Count);
+        Assert.IsTrue(parts.All(part => part.Length <= Memory.MAX_TEXT_LENGTH));
+        Assert.EndsWith("She arrives on the third of May.", parts[^1]);
     }
 
     [TestMethod]
@@ -142,7 +139,6 @@ public sealed class MemoryNotesTests
     public void IsSameFact_MatchesOnlyTheSameFactWrittenAgain(string known, string fact, bool same)
     {
         Assert.AreEqual(same, MemoryNotes.IsSameFact(known, fact));
-        Assert.IsNull(MemoryNotes.Append(null, []));
     }
 
     [TestMethod]
@@ -157,19 +153,22 @@ public sealed class MemoryNotesTests
     [TestMethod]
     public void Instructions_IncludeWhatThePersonaRemembers()
     {
-        string instructions = PersonaFraming.Instructions(WALT, new UserProfile { Name = "Aaron" }, "- Aaron's dog is Biscuit.", new DateOnly(2026, 10, 31));
+        string instructions = PersonaFraming.Instructions(WALT, new UserProfile { Name = "Aaron" }, ["Aaron's dog is Biscuit.", "- Jen moved\nto Portland."], new DateOnly(2026, 10, 31));
 
         Assert.Contains("What you remember from earlier in this conversation:", instructions);
         Assert.Contains("- Aaron's dog is Biscuit.", instructions);
+        Assert.Contains("- Jen moved to Portland.", instructions);
         Assert.Contains("don't ask about things Aaron already told you", instructions);
+        Assert.DoesNotContain("What you remember", PersonaFraming.Instructions(WALT, new UserProfile(), ["  "], new DateOnly(2026, 10, 31)));
     }
 
     [TestMethod]
-    public async Task UpdateMemoryAsync_CondensesOlderMessagesAndRepliesUseTheNotesWithTheRest()
+    public async Task UpdateMemoryAsync_LearnsMemoriesFromOlderMessagesAndRepliesRecallThem()
     {
         NotingAgent agent = new();
         using TestDatabase database = await ConversationServiceTests.CreateDatabaseAsync(TestContext, default, agent);
         IConversationService service = database.Services.GetRequiredService<IConversationService>();
+        IMemoryService memories = database.Services.GetRequiredService<IMemoryService>();
         Contact walt = await SaveWaltAsync(database);
         ConversationId conversation = await ChatAsync(service, walt, 14);
 
@@ -177,10 +176,16 @@ public sealed class MemoryNotesTests
         Conversation? again = await service.UpdateMemoryAsync(conversation, TestContext.CancellationToken);
         await service.SendAsync(walt.Id, "Remember my dog's name?", TestContext.CancellationToken);
         await service.ReplyAsync(conversation, TestContext.CancellationToken);
+        IReadOnlyList<Memory> learned = await memories.ListAsync(walt.Id, TestContext.CancellationToken);
 
         Assert.IsNotNull(updated);
-        Assert.AreEqual("- Aaron's dog is Biscuit.", updated.MemoryNotes);
+        Assert.IsNotNull(updated.MemoryThrough);
         Assert.IsNull(again);
+        Assert.HasCount(1, learned);
+        Assert.AreEqual("Aaron's dog is Biscuit.", learned[0].Text);
+        Assert.AreEqual(MemoryOrigin.Extracted, learned[0].Origin);
+        Assert.AreEqual(updated.MemoryThrough, learned[0].SourceMessageId);
+        Assert.AreEqual(conversation, learned[0].ConversationId);
         AgentRequest noteRequest = agent.Requests.Single(request => request.Instructions.Contains("should remember later"));
         Assert.Contains("message 0 ", noteRequest.Turns[0].Text);
         AgentRequest reply = agent.Requests[^1];
@@ -190,20 +195,115 @@ public sealed class MemoryNotesTests
     }
 
     [TestMethod]
+    public async Task UpdateMemoryAsync_KeepsEveryMemoryAsTheyAccumulate()
+    {
+        NotingAgent agent = new();
+        using TestDatabase database = await ConversationServiceTests.CreateDatabaseAsync(TestContext, default, agent);
+        IConversationService service = database.Services.GetRequiredService<IConversationService>();
+        IMemoryService memories = database.Services.GetRequiredService<IMemoryService>();
+        Contact walt = await SaveWaltAsync(database);
+        ConversationId conversation = await ChatAsync(service, walt, 120);
+        int folds = 0;
+
+        while (folds < 50)
+        {
+            agent.Facts = $"- Fact number {folds} is about something worth remembering for a long time to come, told in enough detail that a dozen of them would no longer fit.";
+
+            if (await service.UpdateMemoryAsync(conversation, TestContext.CancellationToken) is null)
+            {
+                break;
+            }
+
+            folds++;
+        }
+
+        IReadOnlyList<Memory> learned = await memories.ListAsync(walt.Id, TestContext.CancellationToken);
+
+        // More than the old notes could hold; none are dropped to make room.
+        Assert.IsGreaterThan(new MemoryRecallOptions().MaxCharacters, learned.Sum(memory => memory.Text.Length + 1));
+        Assert.HasCount(folds, learned);
+        Assert.StartsWith("Fact number 0 ", learned[0].Text);
+    }
+
+    [TestMethod]
+    public async Task UpdateMemoryAsync_SkipsRepeatsButKeepsContradictions()
+    {
+        NotingAgent agent = new() { Facts = "- Aaron's dog is Biscuit.\n- aaron's dog is biscuit\n- Aaron starts work on Monday." };
+        using TestDatabase database = await ConversationServiceTests.CreateDatabaseAsync(TestContext, default, agent);
+        IConversationService service = database.Services.GetRequiredService<IConversationService>();
+        IMemoryService memories = database.Services.GetRequiredService<IMemoryService>();
+        Contact walt = await SaveWaltAsync(database);
+        ConversationId conversation = await ChatAsync(service, walt, 30);
+
+        await service.UpdateMemoryAsync(conversation, TestContext.CancellationToken);
+        agent.Facts = "- Aaron's dog is Biscuit.\n- Aaron starts work on Tuesday.";
+        await service.UpdateMemoryAsync(conversation, TestContext.CancellationToken);
+        IReadOnlyList<string> learned = [.. (await memories.ListAsync(walt.Id, TestContext.CancellationToken)).Select(memory => memory.Text)];
+
+        Assert.AreSequenceEqual(new[] { "Aaron's dog is Biscuit.", "Aaron starts work on Monday.", "Aaron starts work on Tuesday." }, learned.ToArray());
+    }
+
+    [TestMethod]
     public async Task UpdateMemoryAsync_MovesPastMessagesWithNothingWorthRemembering()
     {
         NotingAgent agent = new() { Facts = "- none" };
         using TestDatabase database = await ConversationServiceTests.CreateDatabaseAsync(TestContext, default, agent);
         IConversationService service = database.Services.GetRequiredService<IConversationService>();
+        IMemoryService memories = database.Services.GetRequiredService<IMemoryService>();
         Contact walt = await SaveWaltAsync(database);
         ConversationId conversation = await ChatAsync(service, walt, 14);
 
         Conversation? updated = await service.UpdateMemoryAsync(conversation, TestContext.CancellationToken);
 
         Assert.IsNotNull(updated);
-        Assert.IsNull(updated.MemoryNotes);
         Assert.IsNotNull(updated.MemoryThrough);
+        Assert.IsEmpty(await memories.ListAsync(walt.Id, TestContext.CancellationToken));
         Assert.IsNull(await service.UpdateMemoryAsync(conversation, TestContext.CancellationToken));
+    }
+
+    [TestMethod]
+    public async Task UpdateMemoryAsync_KeepsTheCheckpointWhenTheAgentFailsSoNothingIsLost()
+    {
+        NotingAgent agent = new() { Failure = AgentReply.Unavailable("Not downloaded.") };
+        using TestDatabase database = await ConversationServiceTests.CreateDatabaseAsync(TestContext, default, agent);
+        IConversationService service = database.Services.GetRequiredService<IConversationService>();
+        IMemoryService memories = database.Services.GetRequiredService<IMemoryService>();
+        Contact walt = await SaveWaltAsync(database);
+        ConversationId conversation = await ChatAsync(service, walt, 14);
+
+        Conversation? failed = await service.UpdateMemoryAsync(conversation, TestContext.CancellationToken);
+        Conversation? stored = await service.FindByContactAsync(walt.Id, TestContext.CancellationToken);
+        agent.Failure = null;
+        Conversation? retried = await service.UpdateMemoryAsync(conversation, TestContext.CancellationToken);
+
+        Assert.IsNull(failed);
+        Assert.IsNull(stored!.MemoryThrough);
+        Assert.IsNotNull(retried);
+        Assert.HasCount(1, await memories.ListAsync(walt.Id, TestContext.CancellationToken));
+    }
+
+    [TestMethod]
+    public async Task UpdateMemoryAsync_StopsWhenCanceledWithoutMovingTheCheckpoint()
+    {
+        NotingAgent agent = new();
+        using TestDatabase database = await ConversationServiceTests.CreateDatabaseAsync(TestContext, default, agent);
+        IConversationService service = database.Services.GetRequiredService<IConversationService>();
+        Contact walt = await SaveWaltAsync(database);
+        ConversationId conversation = await ChatAsync(service, walt, 14);
+        using CancellationTokenSource cancel = new();
+        agent.WhileNoting = () =>
+        {
+            cancel.Cancel();
+            cancel.Token.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        };
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => service.UpdateMemoryAsync(conversation, cancel.Token));
+        Conversation? stored = await service.FindByContactAsync(walt.Id, TestContext.CancellationToken);
+
+        Assert.IsNull(stored!.MemoryThrough);
+        agent.WhileNoting = null;
+        Assert.IsNotNull(await service.UpdateMemoryAsync(conversation, TestContext.CancellationToken));
     }
 
     [TestMethod]
@@ -223,42 +323,101 @@ public sealed class MemoryNotesTests
     }
 
     [TestMethod]
-    public async Task UpdateMemoryAsync_DoesNotOverwriteNotesTheUserEditedMeanwhile()
+    public async Task UpdateMemoryAsync_KeepsWhatTheUserChangedMeanwhile()
     {
         NotingAgent agent = new();
         using TestDatabase database = await ConversationServiceTests.CreateDatabaseAsync(TestContext, default, agent);
         IConversationService service = database.Services.GetRequiredService<IConversationService>();
+        IMemoryService memories = database.Services.GetRequiredService<IMemoryService>();
         Contact walt = await SaveWaltAsync(database);
         ConversationId conversation = await ChatAsync(service, walt, 14);
-        agent.WhileNoting = () => service.SaveMemoryNotesAsync(conversation, "- Aaron is allergic to cats.", null, TestContext.CancellationToken);
+        MemorySaveResult cats = await memories.AddAsync(conversation, "Aaron is allergic to cats.", TestContext.CancellationToken);
+        agent.WhileNoting = async () =>
+        {
+            await memories.UpdateAsync(cats.Memory!.Id, "Aaron is allergic to cats and dogs.", cats.Memory.Text, TestContext.CancellationToken);
+            await memories.AddAsync(conversation, "Aaron's birthday is in May.", TestContext.CancellationToken);
+        };
 
         Conversation? updated = await service.UpdateMemoryAsync(conversation, TestContext.CancellationToken);
-        Conversation? stored = await service.FindByContactAsync(walt.Id, TestContext.CancellationToken);
+        IReadOnlyList<Memory> stored = await memories.ListAsync(walt.Id, TestContext.CancellationToken);
 
-        Assert.IsNull(updated);
-        Assert.AreEqual("- Aaron is allergic to cats.", stored!.MemoryNotes);
-        Assert.IsNull(stored.MemoryThrough);
+        Assert.IsNotNull(updated);
+        Assert.AreSequenceEqual(
+            new[] { "Aaron is allergic to cats and dogs.", "Aaron's birthday is in May.", "Aaron's dog is Biscuit." },
+            stored.Select(memory => memory.Text).ToArray());
+        Assert.AreEqual(MemoryOrigin.Manual, stored[0].Origin);
     }
 
     [TestMethod]
-    public async Task SaveMemoryNotesAsync_SavesCorrectionsUnlessTooLongOrOutdated()
+    public async Task UpdateMemoryAsync_SavesNothingWhenAnotherUpdateMovedTheCheckpointFirst()
     {
-        using TestDatabase database = await ConversationServiceTests.CreateDatabaseAsync(TestContext, default, new NotingAgent());
+        NotingAgent agent = new();
+        using TestDatabase database = await ConversationServiceTests.CreateDatabaseAsync(TestContext, default, agent);
         IConversationService service = database.Services.GetRequiredService<IConversationService>();
+        IMemoryService memories = database.Services.GetRequiredService<IMemoryService>();
         Contact walt = await SaveWaltAsync(database);
-        ConversationId conversation = await ChatAsync(service, walt, 1);
+        ConversationId conversation = await ChatAsync(service, walt, 30);
+        bool racing = false;
+        agent.WhileNoting = async () =>
+        {
+            if (racing)
+            {
+                return;
+            }
 
-        ValidationResult saved = await service.SaveMemoryNotesAsync(conversation, "  - Aaron is a nurse.  ", null, TestContext.CancellationToken);
-        ValidationResult outdated = await service.SaveMemoryNotesAsync(conversation, "- Something else.", null, TestContext.CancellationToken);
-        ValidationResult tooLong = await service.SaveMemoryNotesAsync(conversation, new string('x', Conversation.MAX_MEMORY_NOTES_LENGTH + 1), "- Aaron is a nurse.", TestContext.CancellationToken);
-        ValidationResult cleared = await service.SaveMemoryNotesAsync(conversation, "   ", "- Aaron is a nurse.", TestContext.CancellationToken);
-        Conversation? stored = await service.FindByContactAsync(walt.Id, TestContext.CancellationToken);
+            racing = true;
+            agent.Facts = "- Learned by the other update.";
+            await service.UpdateMemoryAsync(conversation, TestContext.CancellationToken);
+            agent.Facts = "- Learned by the first update.";
+        };
 
-        Assert.IsTrue(saved.IsValid);
-        Assert.IsFalse(outdated.IsValid);
-        Assert.IsFalse(tooLong.IsValid);
-        Assert.IsTrue(cleared.IsValid);
-        Assert.IsNull(stored!.MemoryNotes);
+        Conversation? first = await service.UpdateMemoryAsync(conversation, TestContext.CancellationToken);
+        IReadOnlyList<Memory> stored = await memories.ListAsync(walt.Id, TestContext.CancellationToken);
+
+        Assert.IsNull(first);
+        Assert.AreSequenceEqual(new[] { "Learned by the other update." }, stored.Select(memory => memory.Text).ToArray());
+    }
+
+    [TestMethod]
+    public async Task UpdateMemoryAsync_SavesNothingOnceTheConversationIsDeleted()
+    {
+        NotingAgent agent = new();
+        using TestDatabase database = await ConversationServiceTests.CreateDatabaseAsync(TestContext, default, agent);
+        IConversationService service = database.Services.GetRequiredService<IConversationService>();
+        IMemoryService memories = database.Services.GetRequiredService<IMemoryService>();
+        Contact walt = await SaveWaltAsync(database);
+        ConversationId conversation = await ChatAsync(service, walt, 14);
+        agent.WhileNoting = () => service.DeleteAsync(conversation, TestContext.CancellationToken);
+
+        Conversation? updated = await service.UpdateMemoryAsync(conversation, TestContext.CancellationToken);
+
+        Assert.IsNull(updated);
+        Assert.IsEmpty(await memories.ListAsync(walt.Id, TestContext.CancellationToken));
+    }
+
+    [TestMethod]
+    public async Task UpdateMemoryAsync_EmbedsWhatWasLearnedWhenAnEmbeddingModelIsReady()
+    {
+        NotingAgent agent = new();
+        FakeEmbedder embedder = new();
+        using TestDatabase database = await TestDatabase.CreateAsync(TestContext, services =>
+        {
+            services.AddSingleton<IConversationAgent>(new SimulatedAgent(new Random(7), TimeProvider.System, TimeSpan.Zero, TimeSpan.Zero));
+            services.AddSingleton<IConversationAgent>(agent);
+            services.AddSingleton<ITextEmbedder>(embedder);
+        });
+        IConversationService service = database.Services.GetRequiredService<IConversationService>();
+        IMemoryService memories = database.Services.GetRequiredService<IMemoryService>();
+        Contact walt = await SaveWaltAsync(database);
+        ConversationId conversation = await ChatAsync(service, walt, 14);
+
+        await service.UpdateMemoryAsync(conversation, TestContext.CancellationToken);
+        IReadOnlyList<Memory> learned = await memories.ListAsync(walt.Id, TestContext.CancellationToken);
+
+        Assert.HasCount(1, learned);
+        Assert.AreEqual(FakeEmbedder.MODEL, learned[0].EmbeddingModel);
+        Assert.AreEqual(FakeEmbedder.DIMENSIONS, learned[0].EmbeddingDimensions);
+        Assert.Contains(purpose => purpose == EmbeddingPurpose.Document, embedder.Purposes);
     }
 
     private async Task<Contact> SaveWaltAsync(TestDatabase database)
@@ -316,6 +475,8 @@ public sealed class MemoryNotesTests
 
         public Func<Task>? WhileNoting { get; set; }
 
+        public AgentReply? Failure { get; set; }
+
         public string Facts { get; set; } = "Facts:\n- Aaron's dog is Biscuit.";
 
         public async Task<AgentReply> ReplyAsync(AgentRequest request, CancellationToken cancellationToken = default)
@@ -332,7 +493,7 @@ public sealed class MemoryNotesTests
                 await WhileNoting();
             }
 
-            return AgentReply.Success(Facts);
+            return Failure ?? AgentReply.Success(Facts);
         }
     }
 }

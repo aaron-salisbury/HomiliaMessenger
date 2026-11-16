@@ -32,7 +32,7 @@ namespace HomiliaMessenger.Integrations.LocalModels;
 internal sealed partial class LocalModelLibrary : ILocalModelLibrary
 {
     internal const string PROVIDER = "Local";
-    private const string PARTIAL_SUFFIX = ".download";
+    internal const string PARTIAL_SUFFIX = ".download";
     private const string USER_MODELS_FILE = "user-models.json";
 
     private static readonly JsonSerializerOptions JSON = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
@@ -307,31 +307,45 @@ internal sealed partial class LocalModelLibrary : ILocalModelLibrary
 
     private async Task<LocalModelDownloadResult> DownloadCoreAsync(LocalModelDefinition model, IProgress<LocalModelDownloadProgress>? progress, CancellationToken cancellationToken)
     {
-        string directory = ModelDirectory(model);
+        // A gated repository needs the user's token; the built-in models are public.
+        AuthenticationHeaderValue? authorization = model.IsUserAdded ? await _huggingFace.AuthorizationAsync(cancellationToken) : null;
+        LocalModelDownloadResult result = await DownloadFilesAsync(ModelDirectory(model), model.BaseUrl, model.Files, model.DisplayName, _httpClientFactory.CreateClient(), authorization, progress, cancellationToken);
+
+        if (result.Status == LocalModelDownloadStatus.Success)
+        {
+            _logger.LogInformation("Downloaded local model {ModelId}.", model.Id);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Downloads <paramref name="files"/> from <paramref name="baseUrl"/> into <paramref name="directory"/>, resuming a
+    /// partial download in <c>{directory}.download</c>, and checks each file's hash before the folder takes its final name.
+    /// </summary>
+    internal static async Task<LocalModelDownloadResult> DownloadFilesAsync(string directory, string baseUrl, IReadOnlyList<LocalModelFile> files, string displayName, HttpClient client, AuthenticationHeaderValue? authorization, IProgress<LocalModelDownloadProgress>? progress, CancellationToken cancellationToken)
+    {
         string partial = directory + PARTIAL_SUFFIX;
         Directory.CreateDirectory(partial);
 
-        long downloaded = model.Files.Sum(file => Math.Min(FileDownload.ExistingLength(Path.Combine(partial, file.LocalName)), file.Size));
+        long total = files.Sum(file => file.Size);
+        long downloaded = files.Sum(file => Math.Min(FileDownload.ExistingLength(Path.Combine(partial, file.LocalName)), file.Size));
 
-        if (FileDownload.MissingSpace(partial, model.DownloadBytes - downloaded, model.DisplayName) is { } problem)
+        if (FileDownload.MissingSpace(partial, total - downloaded, displayName) is { } problem)
         {
             return LocalModelDownloadResult.Failed(problem);
         }
 
-        DownloadProgress reporter = new(progress is null ? null : (bytes, total) => progress.Report(new LocalModelDownloadProgress(bytes, total)), model.DownloadBytes, downloaded);
-        HttpClient client = _httpClientFactory.CreateClient();
+        DownloadProgress reporter = new(progress is null ? null : (bytes, all) => progress.Report(new LocalModelDownloadProgress(bytes, all)), total, downloaded);
 
-        // A gated repository needs the user's token; the built-in models are public.
-        AuthenticationHeaderValue? authorization = model.IsUserAdded ? await _huggingFace.AuthorizationAsync(cancellationToken) : null;
-
-        foreach (LocalModelFile file in model.Files)
+        foreach (LocalModelFile file in files)
         {
-            await FileDownload.DownloadAsync(client, new Uri(model.BaseUrl + file.UrlPath), Path.Combine(partial, file.LocalName), file.Size, reporter, cancellationToken, authorization);
+            await FileDownload.DownloadAsync(client, new Uri(baseUrl + file.UrlPath), Path.Combine(partial, file.LocalName), file.Size, reporter, cancellationToken, authorization);
         }
 
         reporter.Report(force: true);
 
-        foreach (LocalModelFile file in model.Files)
+        foreach (LocalModelFile file in files)
         {
             string path = Path.Combine(partial, file.LocalName);
 
@@ -348,7 +362,6 @@ internal sealed partial class LocalModelLibrary : ILocalModelLibrary
         }
 
         Directory.Move(partial, directory);
-        _logger.LogInformation("Downloaded local model {ModelId}.", model.Id);
 
         return LocalModelDownloadResult.Success;
     }

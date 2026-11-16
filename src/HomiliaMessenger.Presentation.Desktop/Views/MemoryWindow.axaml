@@ -2,31 +2,74 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="520" d:DesignHeight="440"
+        mc:Ignorable="d" d:DesignWidth="560" d:DesignHeight="520"
         x:Class="HomiliaMessenger.Presentation.Desktop.Views.MemoryWindow"
         xmlns:i="using:Material.Icons.Avalonia"
-        Width="520" Height="440" MinWidth="420" MinHeight="340"
+        xmlns:vm="clr-namespace:HomiliaMessenger.Presentation.Desktop.ViewModels"
+        xmlns:m="clr-namespace:HomiliaMessenger.Presentation.Desktop.Models"
+        x:DataType="vm:MemoryEditorViewModel"
+        Width="560" Height="520" MinWidth="440" MinHeight="380"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False" CanMinimize="False"
-        Title="Memory">
+        Title="{Binding Heading}">
 
-    <Grid RowDefinitions="Auto,*,Auto,Auto" Margin="24,20,24,20">
+    <Grid RowDefinitions="Auto,*,Auto,Auto,Auto" Margin="24,20,24,20">
 
         <StackPanel Grid.Row="0" Spacing="6" Margin="0,0,0,14">
             <StackPanel Orientation="Horizontal" Spacing="10">
                 <i:MaterialIcon Kind="NoteTextOutline" Width="22" Height="22" Opacity="0.8" />
-                <TextBlock x:Name="Heading" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding Heading}" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
             </StackPanel>
-            <TextBlock x:Name="Explanation" TextWrapping="Wrap" FontSize="12" Opacity="0.75" />
+            <TextBlock Text="{Binding Explanation}" TextWrapping="Wrap" FontSize="12" Opacity="0.75" />
         </StackPanel>
 
-        <TextBox Grid.Row="1" x:Name="Notes" AcceptsReturn="True" TextWrapping="Wrap" AutomationProperties.Name="Memory notes"
-                 VerticalContentAlignment="Top" />
+        <Grid Grid.Row="1">
+            <TextBlock Text="{Binding EmptyText}" IsVisible="{Binding IsEmpty}" TextWrapping="Wrap" Opacity="0.6" Margin="0,8,0,0" />
 
-        <TextBlock Grid.Row="2" x:Name="Count" FontSize="11" Opacity="0.6" HorizontalAlignment="Right" Margin="0,4,0,0" />
+            <ScrollViewer IsVisible="{Binding !IsEmpty}">
+                <ItemsControl ItemsSource="{Binding Memories}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="m:MemoryItem">
+                            <Border Margin="0,0,0,6" Padding="10,8" CornerRadius="8" Background="{DynamicResource SystemControlBackgroundBaseLowBrush}">
+                                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding Text}" TextWrapping="Wrap" IsVisible="{Binding !IsEditing}" VerticalAlignment="Center" />
+                                    <TextBox Grid.Row="0" Grid.Column="0" Text="{Binding EditText}" TextWrapping="Wrap" MaxLength="{Binding MaxLength}"
+                                             IsVisible="{Binding IsEditing}" AutomationProperties.Name="Memory" />
+                                    <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding OriginText}" FontSize="11" Opacity="0.6" Margin="0,2,0,0" />
 
-        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,14,0,0">
-            <Button Content="Cancel" Click="Cancel_Click" IsCancel="True" />
-            <Button Content="Save" Classes="accent" Click="Save_Click" />
+                                    <StackPanel Grid.Row="0" Grid.RowSpan="2" Grid.Column="1" Orientation="Horizontal" Spacing="4" Margin="8,0,0,0" VerticalAlignment="Top">
+                                        <Button Classes="noBackground" Command="{Binding EditCommand}" IsVisible="{Binding !IsEditing}" ToolTip.Tip="Correct" AutomationProperties.Name="Correct">
+                                            <i:MaterialIcon Kind="PencilOutline" />
+                                        </Button>
+                                        <Button Classes="noBackground" Command="{Binding DeleteCommand}" IsVisible="{Binding !IsEditing}" ToolTip.Tip="Forget" AutomationProperties.Name="Forget">
+                                            <i:MaterialIcon Kind="TrashCanOutline" />
+                                        </Button>
+                                        <Button Classes="accent" Command="{Binding SaveCommand}" IsVisible="{Binding IsEditing}" Content="Save" />
+                                        <Button Command="{Binding CancelEditCommand}" IsVisible="{Binding IsEditing}" Content="Cancel" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Grid>
+
+        <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="0,12,0,0">
+            <TextBox Grid.Column="0" Text="{Binding NewText}" MaxLength="{Binding MaxLength}" TextWrapping="Wrap"
+                     PlaceholderText="{Binding ContactName, StringFormat='Something {0} should remember'}" AutomationProperties.Name="New memory" />
+            <Button Grid.Column="1" Command="{Binding AddCommand}" Margin="8,0,0,0" VerticalAlignment="Top">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <i:MaterialIcon Kind="Plus" />
+                    <TextBlock Text="Add" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <TextBlock Grid.Row="3" Text="{Binding Status}" IsVisible="{Binding Status, Converter={x:Static ObjectConverters.IsNotNull}}"
+                   TextWrapping="Wrap" FontSize="12" Margin="0,6,0,0" />
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Content="Done" Classes="accent" Click="Done_Click" IsCancel="True" />
         </StackPanel>
 
     </Grid>
