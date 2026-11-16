@@ -157,7 +157,8 @@ internal static class UserControlExtensions
             return false;
         }
 
-        Window dialog = new() { Title = title, Width = 420, Height = 175, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        // Sized to its message, so a longer one (such as a license notice) is never cut off.
+        Window dialog = new() { Title = title, Width = 420, MinHeight = 175, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
 
         Button cancel = new() { Content = "Cancel" };
 

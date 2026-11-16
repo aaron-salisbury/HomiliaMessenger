@@ -25,4 +25,10 @@
 	<ProjectReference Include="..\HomiliaMessenger.Integrations\HomiliaMessenger.Integrations.csproj" />
 	<ProjectReference Include="..\HomiliaMessenger.Presentation.Desktop\HomiliaMessenger.Presentation.Desktop.csproj" />
   </ItemGroup>
+
+  <!--
+    The stable-diffusion.cpp runtime for local image generation, for the system being built or published for, downloaded
+    and verified at build time. Imported here, by the application, because only it knows the publish runtime identifier.
+  -->
+  <Import Project="..\..\build\native\StableDiffusionRuntime.targets" />
 </Project>

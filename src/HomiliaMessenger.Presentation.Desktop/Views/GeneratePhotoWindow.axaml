@@ -1,0 +1,71 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="560" d:DesignHeight="720"
+        x:Class="HomiliaMessenger.Presentation.Desktop.Views.GeneratePhotoWindow"
+        xmlns:vm="clr-namespace:HomiliaMessenger.Presentation.Desktop.ViewModels"
+        x:DataType="vm:GeneratePhotoViewModel"
+        xmlns:i="using:Material.Icons.Avalonia"
+        xmlns:imaging="clr-namespace:Avalonia.Media.Imaging;assembly=Avalonia.Base"
+        Width="560" Height="720" MinWidth="460" MinHeight="600"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" CanMinimize="False"
+        Title="Generate a photo">
+
+    <Window.Resources>
+        <imaging:Bitmap x:Key="ContactPlaceholder">avares://HomiliaMessenger.Presentation.Desktop/Base/Assets/contact-placeholder.png</imaging:Bitmap>
+    </Window.Resources>
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" Margin="24,20,24,20">
+
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" Margin="0,0,0,12">
+            <i:MaterialIcon Kind="AutoFix" Width="22" Height="22" Opacity="0.8" />
+            <TextBlock Text="Generate a photo" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Spacing="6">
+            <TextBlock Text="{Binding DescriptionHint}" TextWrapping="Wrap" FontSize="12" Opacity="0.75" />
+            <TextBox Text="{Binding Description}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="80" MaxHeight="120"
+                     MaxLength="{Binding MaxDescriptionLength}" IsEnabled="{Binding IsIdle}"
+                     PlaceholderText="Describe the person" AutomationProperties.Name="Description of the person" />
+        </StackPanel>
+
+        <!-- Preview -->
+        <Border Grid.Row="2" Margin="0,14,0,0" CornerRadius="8" ClipToBounds="True" HorizontalAlignment="Center" VerticalAlignment="Center"
+                Background="{DynamicResource SystemControlBackgroundBaseLowBrush}">
+            <Grid>
+                <Image Source="{Binding Preview, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="Uniform"
+                       MaxWidth="360" MaxHeight="360" AutomationProperties.Name="Generated photo" />
+                <Border IsVisible="{Binding IsGenerating}" Background="{DynamicResource SystemRegionColor}" Opacity="0.6" />
+            </Grid>
+        </Border>
+
+        <StackPanel Grid.Row="3" Spacing="6" Margin="0,14,0,0">
+            <ProgressBar Value="{Binding ProgressPercent}" Maximum="100" IsIndeterminate="{Binding IsProgressIndeterminate}" IsVisible="{Binding IsGenerating}" />
+            <TextBlock Text="{Binding Status}" TextWrapping="Wrap" FontSize="12" />
+            <Button Content="Open Image Generation settings" Command="{Binding OpenSettingsCommand}" IsVisible="{Binding NeedsModel}" HorizontalAlignment="Left" />
+        </StackPanel>
+
+        <Grid Grid.Row="4" ColumnDefinitions="Auto,*,Auto" Margin="0,16,0,0">
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                <Button Command="{Binding GenerateCommand}" IsVisible="{Binding IsIdle}" IsDefault="True">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <i:MaterialIcon Kind="AutoFix" />
+                        <TextBlock Text="{Binding GenerateLabel}" />
+                    </StackPanel>
+                </Button>
+                <Button Content="Stop" Command="{Binding StopCommand}" IsVisible="{Binding IsGenerating}" />
+            </StackPanel>
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                <Button Content="Cancel" Click="Close_Click" IsCancel="True" />
+                <Button Classes="accent" Command="{Binding UsePhotoCommand}">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <i:MaterialIcon Kind="Check" />
+                        <TextBlock Text="Use photo" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </Grid>
+
+    </Grid>
+</Window>

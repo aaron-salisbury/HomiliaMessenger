@@ -11,6 +11,18 @@
     <ProjectReference Include="..\HomiliaMessenger.Presentation.Desktop\HomiliaMessenger.Presentation.Desktop.csproj" />
   </ItemGroup>
 
+  <!-- Reads the dependency names of the image generation runtime built with the app, to check its private ggml is renamed. -->
+  <PropertyGroup>
+    <DefineConstants>$(DefineConstants);NATIVE_RENAMER_ONLY</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\build\native\NativeLibraryRenamer.cs" Link="ImageGeneration\NativeLibraryRenamer.cs" />
+  </ItemGroup>
+
+  <!-- The stable-diffusion.cpp runtime, as the app includes it, for the image generation tests. -->
+  <Import Project="..\..\build\native\StableDiffusionRuntime.targets" />
+
   <!--
     Microsoft.Testing.Platform eagerly creates its results directory, defaulting to TestResults under whatever the current
     directory is, so `dotnet test`, Cake, and IDEs leave empty TestResults folders wherever they were launched from. A

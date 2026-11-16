@@ -2,6 +2,7 @@ using FluentValidation;
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
+using HomiliaMessenger.Business.Modules.ImageGeneration;
 using HomiliaMessenger.Business.Modules.Memories;
 using HomiliaMessenger.Business.Modules.Profile;
 using HomiliaMessenger.Business.Modules.WebSearch;
@@ -36,6 +37,10 @@ public static class DependencyInjection
         services.TryAddSingleton(new MemoryRecallOptions());
         services.AddScoped<MemoryRecall>();
         services.AddScoped<IMemoryService, MemoryService>();
+
+        // Integrations registers the local image generator; without it, photos can only be chosen from files.
+        services.TryAddSingleton<IImageGenerator, UnavailableImageGenerator>();
+        services.AddScoped<IPortraitService, PortraitService>();
 
         // Integrations registers Tavily; without it, contacts never search. One instance shares searches in progress and
         // limits how many run at once.

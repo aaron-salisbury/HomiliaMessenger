@@ -2,6 +2,7 @@ using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using HomiliaMessenger.Business.Modules.Contacts;
+using HomiliaMessenger.Business.Modules.ImageGeneration;
 using HomiliaMessenger.Business.Modules.Speech;
 using HomiliaMessenger.Presentation.Desktop.Base;
 using HomiliaMessenger.Presentation.Desktop.Models;
@@ -29,7 +30,11 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
     private bool _refreshingAgents;
     private string? _voiceId;
     private readonly ITextToSpeech? _speech;
+    private readonly IPortraitService? _portraits;
     private CancellationTokenSource? _sample;
+
+    // The description last used to generate a photo, offered again so it can be adjusted rather than retyped.
+    private string? _portraitDescription;
 
     [ObservableProperty] private string? _givenName;
     [ObservableProperty] private string? _familyName;
@@ -71,6 +76,16 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
     /// </summary>
     public event EventHandler<string>? MessageRaised;
 
+    /// <summary>
+    /// Raised when the user asks to go to Settings, such as to download an image model.
+    /// </summary>
+    public event EventHandler? SettingsRequested;
+
+    /// <summary>
+    /// Whether photos can be generated from a description, in addition to being chosen from a file.
+    /// </summary>
+    public bool CanGeneratePhoto => _portraits is not null;
+
     public ContactId Id => _id;
 
     public IReadOnlyList<GenderOption> GenderOptions => GenderOption.All;
@@ -84,9 +99,10 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
 
     /// <param name="contact">The contact to edit, or <see langword="null"/> for a new one.</param>
     /// <param name="agentOptions">The agents to choose from; when omitted, only no agent.</param>
-    public ContactDetailViewModel(Contact? contact = null, IReadOnlyList<AgentOption>? agentOptions = null, IReadOnlyList<SpeechVoice>? voices = null, bool isSpeechAvailable = false, ITextToSpeech? speech = null)
+    public ContactDetailViewModel(Contact? contact = null, IReadOnlyList<AgentOption>? agentOptions = null, IReadOnlyList<SpeechVoice>? voices = null, bool isSpeechAvailable = false, ITextToSpeech? speech = null, IPortraitService? portraits = null)
     {
         _speech = speech;
+        _portraits = portraits;
         _id = contact?.Id ?? ContactId.New();
         AgentOptions = agentOptions ?? [AgentOption.None];
         _voiceId = contact?.VoiceId;
@@ -302,6 +318,48 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
         catch (Exception error)
         {
             ReportPhotoError(error);
+        }
+    }
+
+    /// <summary>
+    /// A dialog for generating a photo, offering the description used last time; <see langword="null"/> when photos
+    /// cannot be generated.
+    /// </summary>
+    public GeneratePhotoViewModel? CreatePhotoGenerator()
+    {
+        return _portraits is null ? null : new GeneratePhotoViewModel(_portraits, _portraitDescription);
+    }
+
+    /// <summary>
+    /// Applies what the user did in the photo dialog: the photo they chose to use replaces the current one, through the
+    /// same path as a chosen file; closing the dialog any other way changes nothing.
+    /// </summary>
+    public void AcceptGeneratedPhoto(GeneratePhotoViewModel generator)
+    {
+        ArgumentNullException.ThrowIfNull(generator);
+
+        if (!string.IsNullOrWhiteSpace(generator.Description))
+        {
+            _portraitDescription = generator.Description;
+        }
+
+        if (generator.ChosenPhoto is { } photo)
+        {
+            try
+            {
+                SetPhoto(photo);
+                IsDirty = true;
+                MessageRaised?.Invoke(this, "Photo generated. Save the contact to keep it.");
+            }
+            catch (Exception error)
+            {
+                ReportPhotoError(error);
+            }
+        }
+
+        if (generator.WantsSettings)
+        {
+            SettingsRequested?.Invoke(this, EventArgs.Empty);
         }
     }
 

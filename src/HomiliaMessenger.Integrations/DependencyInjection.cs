@@ -1,10 +1,12 @@
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Credentials;
+using HomiliaMessenger.Business.Modules.ImageGeneration;
 using HomiliaMessenger.Business.Modules.Memories;
 using HomiliaMessenger.Business.Modules.Speech;
 using HomiliaMessenger.Business.Modules.WebSearch;
 using HomiliaMessenger.Integrations.Credentials;
 using HomiliaMessenger.Integrations.Embeddings;
+using HomiliaMessenger.Integrations.ImageGeneration;
 using HomiliaMessenger.Integrations.LocalModels;
 using HomiliaMessenger.Integrations.Speech;
 using HomiliaMessenger.Integrations.WebSearch;
@@ -21,6 +23,7 @@ public static class DependencyInjection
 {
     private const string MODELS_DIRECTORY_NAME = "Models";
     private const string EMBEDDINGS_DIRECTORY_NAME = "Embeddings";
+    private const string IMAGES_DIRECTORY_NAME = "Images";
 
     /// <summary>
     /// Registers internal integrations-tier services. Local agent models need <see cref="IHttpClientFactory"/> and
@@ -75,6 +78,31 @@ public static class DependencyInjection
             provider.GetRequiredService<EmbeddingModelLibrary>(),
             provider.GetRequiredService<ILogger<LocalTextEmbedder>>(),
             provider.GetRequiredService<LlamaEmbeddingHost>()));
+        // Image models are a third category, with their own folder and runtime (stable-diffusion.cpp, built with the app).
+        // Only one image is generated at a time, and conversation models are released (waiting for any reply in progress)
+        // and kept from reloading until it is drawn, to make room for it.
+        services.AddSingleton<ImageGenerationGate>();
+        services.AddSingleton<IStableDiffusionBackend, NativeStableDiffusionBackend>();
+        services.AddSingleton(provider => new ImageModelLibrary(
+            Path.Combine(modelsDirectory, IMAGES_DIRECTORY_NAME),
+            provider.GetRequiredService<IHttpClientFactory>(),
+            provider.GetRequiredService<ICredentialStore>(),
+            provider.GetRequiredService<ImageGenerationGate>(),
+            provider.GetRequiredService<ILogger<ImageModelLibrary>>()));
+        services.AddSingleton<IImageModelLibrary>(provider => provider.GetRequiredService<ImageModelLibrary>());
+        services.AddSingleton<IImageGenerator>(provider =>
+        {
+            OnnxModelHost onnx = provider.GetRequiredService<OnnxModelHost>();
+            LlamaModelHost llama = provider.GetRequiredService<LlamaModelHost>();
+
+            return new StableDiffusionImageGenerator(
+                provider.GetRequiredService<ImageModelLibrary>(),
+                provider.GetRequiredService<IStableDiffusionBackend>(),
+                provider.GetRequiredService<ImageGenerationGate>(),
+                provider.GetRequiredService<ILogger<StableDiffusionImageGenerator>>(),
+                draw => onnx.HoldUnloadedAsync(() => llama.HoldUnloadedAsync(draw)));
+        });
+
         services.AddSingleton<ITextToSpeech>(provider => new KokoroSpeech(
             Path.Combine(applicationDataDirectory, "Speech", "Kokoro"),
             provider.GetRequiredService<IHttpClientFactory>(),
