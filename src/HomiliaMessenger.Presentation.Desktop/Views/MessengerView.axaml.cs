@@ -3,7 +3,6 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using HomiliaMessenger.Business.Modules.Contacts;
-using HomiliaMessenger.Business.Modules.Conversations;
 using HomiliaMessenger.Presentation.Desktop.Base.Extensions;
 using HomiliaMessenger.Presentation.Desktop.Models;
 using HomiliaMessenger.Presentation.Desktop.ViewModels;
@@ -73,11 +72,9 @@ public partial class MessengerView : UserControl
         }
     }
 
-    private Task<string?> ShowMemoryEditorAsync(string contactName, string? notes)
+    private Task ShowMemoryEditorAsync(MemoryEditorViewModel editor)
     {
-        return TopLevel.GetTopLevel(this) is Window owner
-            ? MemoryWindow.ShowAsync(owner, contactName, notes, Conversation.MAX_MEMORY_NOTES_LENGTH)
-            : Task.FromResult<string?>(null);
+        return TopLevel.GetTopLevel(this) is Window owner ? MemoryWindow.ShowAsync(owner, editor) : Task.CompletedTask;
     }
 
     private Task<bool> ConfirmWithDialogAsync(string title, string message)

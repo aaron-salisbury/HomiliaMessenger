@@ -47,18 +47,16 @@ public interface IConversationService
     Task<ConversationReply> ReplyAsync(ConversationId conversationId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Condenses older messages into the contact's memory notes once there are too many to give an agent as they are.
-    /// Meant to run after a reply, in the background. Contacts with simulated replies keep no notes.
+    /// Learns the lasting facts in older messages as the contact's memories, once there are too many messages to give an
+    /// agent as they are, and embeds memories that are waiting for a vector. Meant to run after a reply, in the
+    /// background. Contacts with simulated replies learn nothing.
     /// </summary>
-    /// <returns>The conversation with its updated notes, or <see langword="null"/> when nothing changed.</returns>
+    /// <returns>The conversation with its moved memory checkpoint, or <see langword="null"/> when it did not move.</returns>
     Task<Conversation?> UpdateMemoryAsync(ConversationId conversationId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Saves the user's corrections to the contact's memory notes. Fails without saving when the notes are too long, or
-    /// when they were updated after <paramref name="expectedNotes"/> were read.
+    /// Deletes the conversation, its messages, and what the contact learned in it.
     /// </summary>
-    Task<ValidationResult> SaveMemoryNotesAsync(ConversationId conversationId, string? notes, string? expectedNotes, CancellationToken cancellationToken = default);
-
     Task<bool> DeleteAsync(ConversationId conversationId, CancellationToken cancellationToken = default);
 }
 
@@ -82,13 +80,6 @@ public interface IConversationStore
     /// Adds a message to its conversation. Returns <see langword="false"/> when the conversation does not exist.
     /// </summary>
     Task<bool> AddMessageAsync(ChatMessage message, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Saves a conversation's memory, only if it is still <paramref name="expectedNotes"/> through
-    /// <paramref name="expectedThrough"/>. Returns <see langword="false"/> when it changed meanwhile, or the conversation
-    /// does not exist.
-    /// </summary>
-    Task<bool> SaveMemoryAsync(ConversationId id, string? notes, MessageId? through, string? expectedNotes, MessageId? expectedThrough, CancellationToken cancellationToken = default);
 
     Task<bool> DeleteAsync(ConversationId id, CancellationToken cancellationToken = default);
 }

@@ -16,8 +16,14 @@ namespace HomiliaMessenger.Tests;
 internal sealed class TestDatabase : IDisposable
 {
     private readonly string _directory;
+    private bool _reopened;
 
     public ServiceProvider Services { get; }
+
+    /// <summary>
+    /// The directory holding the database.
+    /// </summary>
+    public string DirectoryPath => _directory;
 
     private TestDatabase(string directory, ServiceProvider services)
     {
@@ -27,11 +33,28 @@ internal sealed class TestDatabase : IDisposable
 
     /// <param name="testContext">The running test's context.</param>
     /// <param name="configure">Optionally replaces registrations after the tiers are registered.</param>
-    public static async Task<TestDatabase> CreateAsync(TestContext testContext, Action<IServiceCollection>? configure = null)
+    public static Task<TestDatabase> CreateAsync(TestContext testContext, Action<IServiceCollection>? configure = null)
     {
         string directory = Path.Combine(Path.GetTempPath(), $"HomiliaMessenger-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
 
+        return OpenAsync(directory, testContext, configure);
+    }
+
+    /// <summary>
+    /// Closes this database and opens it again, as a restart of the application would. The returned database takes over
+    /// the directory, and deletes it on disposal.
+    /// </summary>
+    public async Task<TestDatabase> ReopenAsync(TestContext testContext, Action<IServiceCollection>? configure = null)
+    {
+        Close();
+        _reopened = true;
+
+        return await OpenAsync(_directory, testContext, configure);
+    }
+
+    private static async Task<TestDatabase> OpenAsync(string directory, TestContext testContext, Action<IServiceCollection>? configure)
+    {
         ServiceCollection services = new();
         services.RegisterInternalDataServices(directory).RegisterInternalBusinessServices();
         configure?.Invoke(services);
@@ -43,6 +66,17 @@ internal sealed class TestDatabase : IDisposable
 
     public void Dispose()
     {
+        if (_reopened)
+        {
+            return;
+        }
+
+        Close();
+        Directory.Delete(_directory, recursive: true);
+    }
+
+    private void Close()
+    {
         // Pooled SQLite connections keep the file open on Windows until the pool is cleared. Clear only this database's
         // pool: clearing all pools would dispose connections that tests running in parallel are using.
         using (SqliteConnection connection = Services.GetRequiredService<IApplicationDatabase>().OpenConnectionAsync().GetAwaiter().GetResult())
@@ -51,6 +85,5 @@ internal sealed class TestDatabase : IDisposable
         }
 
         Services.Dispose();
-        Directory.Delete(_directory, recursive: true);
     }
 }

@@ -411,9 +411,9 @@ internal sealed class LlamaModelHost : IAsyncDisposable, IDisposable
 
     /// <summary>
     /// Sends llama.cpp's own messages to the application log, warnings and errors only, rather than the console. This
-    /// must happen before the native library loads, so once, before the first model.
+    /// must happen before the native library loads, so once, before the first model of any kind.
     /// </summary>
-    private static void ConfigureLogging(ILogger logger)
+    internal static void ConfigureLogging(ILogger logger)
     {
         lock (_loggingLock)
         {

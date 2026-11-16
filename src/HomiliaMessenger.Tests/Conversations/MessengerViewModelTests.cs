@@ -1,8 +1,9 @@
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
-using HomiliaMessenger.Tests.Speech;
+using HomiliaMessenger.Business.Modules.Memories;
 using HomiliaMessenger.Presentation.Desktop.Models;
 using HomiliaMessenger.Presentation.Desktop.ViewModels;
+using HomiliaMessenger.Tests.Speech;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
@@ -270,7 +271,8 @@ public sealed class MessengerViewModelTests
     {
         return new MessengerViewModel(
             database.Services.GetRequiredService<IConversationService>(),
-            database.Services.GetRequiredService<IContactService>(), speech);
+            database.Services.GetRequiredService<IContactService>(),
+            database.Services.GetRequiredService<IMemoryService>(), speech);
     }
 
     private static ChatMessage Message(MessageSender sender, DateTimeOffset sentAtUtc)

@@ -9,20 +9,21 @@ using System.Text;
 namespace HomiliaMessenger.Business.Modules.Agents;
 
 /// <summary>
-/// The rolling memory of a conversation: when the messages not yet in the contact's notes grow past
+/// How a conversation's memories are learned: when the messages after the conversation's memory checkpoint grow past
 /// <see cref="FOLD_AFTER_CHARACTERS"/>, the contact's agent lists the facts worth remembering from all but the most recent
-/// <see cref="KEEP_CHARACTERS"/>, and those facts are added to the notes. Agents are then given the notes plus the
-/// messages after them.
+/// <see cref="KEEP_CHARACTERS"/>, each fact becomes one of the contact's memories, and the checkpoint moves past those
+/// messages. Agents are then given the memories recalled for each reply plus the messages after the checkpoint.
 /// </summary>
 /// <remarks>
 /// <para>
-/// A notes-plus-recent-messages memory, as in LangChain's ConversationSummaryBufferMemory. Folding in large steps keeps
+/// A memory-plus-recent-messages design, as in LangChain's ConversationSummaryBufferMemory. Folding in large steps keeps
 /// the prompt's start unchanged between folds, so local models can reuse their cache for most replies.
 /// </para>
 /// <para>
-/// The notes are only ever appended to, never rewritten by a model: small models asked to rewrite a running summary drop
-/// a little more of the earlier facts each time, while listing the facts in a few messages is well within their reach.
-/// When the notes are full the oldest facts give way, and the user can always correct them.
+/// Memories are only ever added, never rewritten by a model: small models asked to rewrite a running summary drop a little
+/// more of the earlier facts each time, while listing the facts in a few messages is well within their reach. Every memory
+/// is kept however many there are; only which are given with a reply is limited (see <c>MemoryRecall</c>), and the user
+/// can always correct them.
 /// </para>
 /// </remarks>
 internal static class MemoryNotes
@@ -31,7 +32,7 @@ internal static class MemoryNotes
     internal const int KEEP_CHARACTERS = 800;
 
     /// <summary>
-    /// The index of the first message not yet condensed into the notes.
+    /// The index of the first message after the memory checkpoint, not yet condensed into memories.
     /// </summary>
     internal static int FirstUnremembered(IReadOnlyList<ChatMessage> messages, MessageId? through)
     {
@@ -54,9 +55,9 @@ internal static class MemoryNotes
     }
 
     /// <summary>
-    /// Where the notes should end after condensing, or <see langword="null"/> when the messages from
+    /// Where the checkpoint should move after condensing, or <see langword="null"/> when the messages from
     /// <paramref name="start"/> still fit. The messages kept start with one from the user, so no reply is left between the
-    /// notes and the question it answered. At most about <see cref="FOLD_AFTER_CHARACTERS"/> are condensed at once, so a
+    /// memories and the question it answered. At most about <see cref="FOLD_AFTER_CHARACTERS"/> are condensed at once, so a
     /// long history (such as one from before the contact had a model) fits in what a model can read, and catches up a
     /// batch at a time.
     /// </summary>
@@ -124,18 +125,20 @@ internal static class MemoryNotes
     internal const int MAX_FACTS_PER_FOLD = 3;
 
     /// <summary>
-    /// Asks an agent to list the facts in <paramref name="folding"/> worth remembering that the notes do not have yet.
+    /// Asks an agent to list the facts in <paramref name="folding"/> worth remembering that are not already
+    /// <paramref name="known"/>.
     /// </summary>
     /// <remarks>
     /// Only the user's messages are given. In testing with a small local model, including the contact's replies filled
     /// the few facts allowed per fold with the contact's small talk and crowded out what the user shared; with the user's
     /// messages alone, the facts that mattered were kept every time. The cost is that a plan the contact proposed is
-    /// only remembered when the user's reply restates it, or the user adds it to the notes.
+    /// only remembered when the user's reply restates it, or the user adds it as a memory.
     /// </remarks>
-    internal static AgentRequest ExtractRequest(Contact contact, UserProfile user, string? notes, IEnumerable<ChatMessage> folding, string model)
+    internal static AgentRequest ExtractRequest(Contact contact, UserProfile user, IReadOnlyList<string> known, IEnumerable<ChatMessage> folding, string model)
     {
         ArgumentNullException.ThrowIfNull(contact);
         ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(known);
         ArgumentNullException.ThrowIfNull(folding);
 
         string name = contact.DisplayName;
@@ -153,7 +156,16 @@ internal static class MemoryNotes
 
         StringBuilder input = new();
         input.AppendLine("Already known:");
-        input.AppendLine(string.IsNullOrWhiteSpace(notes) ? "- nothing yet" : notes.Trim());
+        if (known.Count == 0)
+        {
+            input.AppendLine("- nothing yet");
+        }
+
+        foreach (string fact in known)
+        {
+            input.AppendLine($"- {fact.ReplaceLineEndings(" ")}");
+        }
+
         input.AppendLine();
         input.AppendLine($"Messages from {userName}:");
 
@@ -166,8 +178,9 @@ internal static class MemoryNotes
     }
 
     /// <summary>
-    /// The facts in an agent's answer, one per line starting with "- ", without headings, commentary, or a "none"
-    /// answer. Returns an empty list when nothing new was found.
+    /// The facts in an agent's answer, listed one per line, without list markers, headings, commentary, or a "none"
+    /// answer. A fact longer than a memory may be is split between sentences or words, so none of it is lost once the
+    /// checkpoint moves past the messages it came from. Returns an empty list when nothing new was found.
     /// </summary>
     internal static IReadOnlyList<string> Facts(string? text)
     {
@@ -193,36 +206,48 @@ internal static class MemoryNotes
                 continue;
             }
 
-            facts.Add("- " + line);
+            facts.Add(line);
         }
 
-        return [.. facts.Take(MAX_FACTS_PER_FOLD)];
+        return [.. facts.Take(MAX_FACTS_PER_FOLD).SelectMany(fact => Split(fact, Memories.Memory.MAX_TEXT_LENGTH))];
     }
 
     /// <summary>
-    /// Appends <paramref name="facts"/> not already in <paramref name="notes"/>. When the result would exceed
-    /// <see cref="Conversation.MAX_MEMORY_NOTES_LENGTH"/>, the oldest lines give way.
+    /// <paramref name="text"/> in parts of at most <paramref name="maxLength"/> characters, ending between sentences
+    /// where that keeps a part at least half as long, otherwise between words, otherwise anywhere.
     /// </summary>
-    internal static string? Append(string? notes, IReadOnlyList<string> facts)
+    internal static IEnumerable<string> Split(string text, int maxLength)
     {
-        ArgumentNullException.ThrowIfNull(facts);
+        string rest = text.Trim();
 
-        List<string> lines = string.IsNullOrWhiteSpace(notes) ? [] : [.. notes.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries)];
-
-        foreach (string fact in facts)
+        while (rest.Length > maxLength)
         {
-            if (!lines.Any(line => IsSameFact(line, fact)))
+            int end = rest.LastIndexOfAny(['.', '!', '?', ';'], maxLength - 1) + 1;
+
+            if (end < maxLength / 2)
             {
-                lines.Add(fact);
+                end = rest.LastIndexOf(' ', maxLength);
             }
+
+            if (end < maxLength / 2)
+            {
+                end = maxLength;
+            }
+
+            string part = rest[..end].Trim();
+
+            if (part.Length > 0)
+            {
+                yield return part;
+            }
+
+            rest = rest[end..].TrimStart();
         }
 
-        while (lines.Count > 0 && lines.Sum(line => line.Length + 1) - 1 > Conversation.MAX_MEMORY_NOTES_LENGTH)
+        if (rest.Length > 0)
         {
-            lines.RemoveAt(0);
+            yield return rest;
         }
-
-        return lines.Count == 0 ? null : string.Join("\n", lines);
     }
 
     /// <summary>
@@ -231,7 +256,8 @@ internal static class MemoryNotes
     /// <remarks>
     /// Deliberately strict. Any looser comparison of words treats some real changes as repeats, such as a corrected day
     /// ("Tuesday" after "Monday"), a reversed relationship ("Sam works for Aaron"), or a change of tense, and those
-    /// corrections would be lost for good. A reworded repeat in the notes is the smaller harm, and the user can delete it.
+    /// corrections would be lost for good. A reworded repeat in the memories is the smaller harm, and the user can delete it.
+    /// Contradictory memories are likewise both kept; recall gives the agent both rather than guess which is true.
     /// </remarks>
     internal static bool IsSameFact(string known, string fact)
     {
