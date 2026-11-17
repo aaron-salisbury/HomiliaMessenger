@@ -31,6 +31,12 @@ public interface IMemoryService
     Task<MemorySaveResult> AddAsync(ConversationId conversationId, string text, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Adds a memory the user wrote for <paramref name=contactId/>, as learned in <paramref name=conversationId/>,
+    /// which the contact must take part in, as a group's contacts do. Fails without saving as the other overload does.
+    /// </summary>
+    Task<MemorySaveResult> AddAsync(ConversationId conversationId, ContactId contactId, string text, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Saves the user's correction to a memory, which makes it the user's own. Fails without saving when the text is
     /// blank or too long, or when the memory was changed after <paramref name="expectedText"/> was read.
     /// </summary>

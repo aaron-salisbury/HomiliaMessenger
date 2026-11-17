@@ -18,6 +18,11 @@ namespace HomiliaMessenger.Business.Modules.Agents;
 internal static partial class PersonaFraming
 {
     /// <summary>
+    /// Who else is in a group chat, and why the persona is writing now.
+    /// </summary>
+    internal sealed record GroupFrame(IReadOnlyList<Contact> Others, GroupTurnReason Reason);
+
+    /// <summary>
     /// Memory is the most recent messages within this many characters. Small models on a CPU are slow to read long
     /// prompts and have small context windows, so the budget stays modest.
     /// </summary>
@@ -42,6 +47,85 @@ internal static partial class PersonaFraming
         ArgumentNullException.ThrowIfNull(messages);
 
         return new AgentRequest(model, Instructions(contact, user, memories, today, lookedUp), Memory(messages), StopTexts(contact, user));
+    }
+
+    /// <summary>
+    /// Composes what <paramref name="speaker"/> is asked in a group: their own persona and memories, who else is in the
+    /// group, and the group's recent messages, each attributed to whoever wrote it. Only the speaker's own memories are
+    /// given; what the other contacts remember is never included.
+    /// </summary>
+    /// <param name="messages">The group's messages after the speaker's memory checkpoint, oldest first.</param>
+    internal static AgentRequest BuildGroup(Contact speaker, UserProfile user, Conversation conversation, IReadOnlyList<Contact> others, GroupTurnReason reason, IReadOnlyList<string> memories, IReadOnlyList<ChatMessage> messages, string model, DateOnly today, IReadOnlyList<WebSearchResult>? lookedUp = null)
+    {
+        ArgumentNullException.ThrowIfNull(speaker);
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(conversation);
+        ArgumentNullException.ThrowIfNull(others);
+        ArgumentNullException.ThrowIfNull(memories);
+        ArgumentNullException.ThrowIfNull(messages);
+
+        GroupFrame group = new(others, reason);
+        List<string> stops = [.. StopTexts(speaker, user)];
+
+        foreach (Contact other in others)
+        {
+            if (!string.IsNullOrWhiteSpace(other.DisplayName))
+            {
+                stops.Add(other.DisplayName.Trim() + ":");
+            }
+        }
+
+        return new AgentRequest(model, Instructions(speaker, user, memories, today, lookedUp, group), GroupMemory(speaker, user, conversation, others, messages), stops);
+    }
+
+    /// <summary>
+    /// The group's recent messages as turns for <paramref name="speaker"/>: their own messages as their turns, and
+    /// everyone else's as the other side, each line labelled with who wrote it, so the speaker knows who said what. The
+    /// turns always end with the other side, closing with a note that it is the speaker's turn when nobody else has
+    /// written since they did, since a chat template asks the model to answer the other side's last turn.
+    /// </summary>
+    internal static IReadOnlyList<AgentTurn> GroupMemory(Contact speaker, UserProfile user, Conversation conversation, IReadOnlyList<Contact> others, IReadOnlyList<ChatMessage> messages)
+    {
+        ArgumentNullException.ThrowIfNull(speaker);
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(conversation);
+        ArgumentNullException.ThrowIfNull(others);
+        ArgumentNullException.ThrowIfNull(messages);
+
+        string userName = string.IsNullOrWhiteSpace(user.Name) ? "Me" : user.Name.Trim();
+        Dictionary<ContactId, string> names = others.ToDictionary(other => other.Id, other => other.DisplayName);
+        List<AgentTurn> turns = [];
+
+        foreach (ChatMessage message in messages.Skip(MemoryStart(messages)))
+        {
+            ContactId? sender = conversation.SenderOf(message);
+            bool own = sender == speaker.Id;
+            MessageSender side = own ? MessageSender.Contact : MessageSender.User;
+            string author = sender is { } id ? names.GetValueOrDefault(id, "Someone") : userName;
+            string text = own ? message.Text : $"{author}: {message.Text}";
+
+            if (turns.Count == 0 && own)
+            {
+                // Chat templates expect the conversation to start with the other side.
+                continue;
+            }
+
+            if (turns.Count > 0 && turns[^1].Sender == side)
+            {
+                turns[^1] = turns[^1] with { Text = turns[^1].Text + "\n" + text };
+            }
+            else
+            {
+                turns.Add(new AgentTurn(side, text));
+            }
+        }
+
+        if (turns.Count == 0 || turns[^1].Sender != MessageSender.User)
+        {
+            turns.Add(new AgentTurn(MessageSender.User, $"[{speaker.DisplayName}'s turn to write in the group chat]"));
+        }
+
+        return turns;
     }
 
     /// <summary>
@@ -76,16 +160,19 @@ internal static partial class PersonaFraming
     /// its own. Anything looked up online comes after the memories, in the same one-line form (see <see cref="WebContext"/>),
     /// introduced as information that cannot change who the persona is or tell them what to do.
     /// </remarks>
-    internal static string Instructions(Contact contact, UserProfile user, IReadOnlyList<string>? memories, DateOnly today, IReadOnlyList<WebSearchResult>? lookedUp = null)
+    internal static string Instructions(Contact contact, UserProfile user, IReadOnlyList<string>? memories, DateOnly today, IReadOnlyList<WebSearchResult>? lookedUp = null, GroupFrame? group = null)
     {
         ArgumentNullException.ThrowIfNull(contact);
         ArgumentNullException.ThrowIfNull(user);
 
         string name = contact.DisplayName;
         string? userName = string.IsNullOrWhiteSpace(user.Name) ? null : user.Name.Trim();
+        string? othersNames = group is null ? null : JoinNames([.. group.Others.Select(other => other.DisplayName)]);
         StringBuilder builder = new();
 
-        builder.AppendLine($"You are {name}, a real person texting with {userName ?? "someone you know"} in a messaging app. You are not an AI, a language model, or an assistant, and you never say or suggest that you are.");
+        builder.AppendLine(othersNames is null
+            ? $"You are {name}, a real person texting with {userName ?? "someone you know"} in a messaging app. You are not an AI, a language model, or an assistant, and you never say or suggest that you are."
+            : $"You are {name}, a real person in a group chat with {userName ?? "someone you know"} and {othersNames} in a messaging app. You are not an AI, a language model, or an assistant, and you never say or suggest that you are.");
 
         if (!string.IsNullOrWhiteSpace(contact.Relationship))
         {
@@ -96,6 +183,20 @@ internal static partial class PersonaFraming
         }
 
         AppendUser(builder, user, userName, today);
+
+        if (group is not null && group.Others.Count > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("Also in the group:");
+
+            foreach (Contact other in group.Others)
+            {
+                string who = string.IsNullOrWhiteSpace(other.Relationship)
+                    ? $"a friend of {userName ?? "theirs"}"
+                    : userName is null ? $"their {LowerFirst(other.Relationship.Trim())}" : $"{userName}'s {LowerFirst(other.Relationship.Trim())}";
+                builder.AppendLine($"- {MemoryLine(other.DisplayName)}, {who}");
+            }
+        }
 
         builder.AppendLine();
         builder.AppendLine("About you:");
@@ -123,7 +224,9 @@ internal static partial class PersonaFraming
         if (remembers)
         {
             builder.AppendLine();
-            builder.AppendLine("What you remember from earlier in this conversation:");
+            builder.AppendLine(group is null
+                ? "What you remember from earlier in this conversation:"
+                : $"What you remember about {userName ?? "them"} from your own chats with them (the others in the group may not know these things):");
 
             foreach (string line in remembered)
             {
@@ -149,7 +252,16 @@ internal static partial class PersonaFraming
         builder.AppendLine($"Today is {today.ToString("dddd, MMMM d, yyyy", CultureInfo.InvariantCulture)}.");
         builder.AppendLine();
         builder.AppendLine("How to reply:");
-        builder.AppendLine($"- Write only {name}'s next text message, the way {name} would actually text: casual and natural, usually one to three short sentences.");
+
+        if (group is null)
+        {
+            builder.AppendLine($"- Write only {name}'s next text message, the way {name} would actually text: casual and natural, usually one to three short sentences.");
+        }
+        else
+        {
+            AppendGroupRules(builder, name, userName, othersNames!, group, remembers);
+        }
+
         builder.AppendLine("- Draw on your background and personality when it fits, including what you would rather not talk about.");
 
         if (!string.IsNullOrWhiteSpace(contact.Relationship) || userName is not null)
@@ -171,6 +283,43 @@ internal static partial class PersonaFraming
         builder.Append("- Do not add notes, explanations, narration, or commentary about your reply.");
 
         return builder.ToString();
+    }
+
+    private static void AppendGroupRules(StringBuilder builder, string name, string? userName, string othersNames, GroupFrame group, bool remembers)
+    {
+        string user = userName ?? "your friend";
+
+        builder.AppendLine($"- Write only {name}'s next message in the group chat, the way {name} would actually text: casual and natural, usually one or two short sentences.");
+        builder.AppendLine($"- Never write messages for {user} or {othersNames}, and never start with anyone's name and a colon.");
+        builder.AppendLine(group.Reason switch
+        {
+            GroupTurnReason.Addressed => "- You were just spoken to by name, so answer that.",
+            GroupTurnReason.Answering => $"- Answer {user}'s latest message.",
+            GroupTurnReason.FollowingUp => "- Add something of your own to what was just said: a reaction, a different view, a joke, or a question. You can disagree if you would.",
+            GroupTurnReason.Greeting => $"- You were just added to this group chat. Say a brief, natural hello to {user} and {othersNames}, with no long introduction.",
+            GroupTurnReason.Initiating => "- Nobody has written for a while. Start something new, naturally: a bit of news from your life, a question for the group, or a follow-up on something talked about before.",
+            _ => $"- Reply to the group as {name} would."
+        });
+        builder.AppendLine("- Talk to whoever you are answering, by name when it helps. Don't greet everyone again, introduce yourself again, or repeat what was already said.");
+
+        if (remembers)
+        {
+            builder.AppendLine($"- You may remember things {user} told you privately. Use that knowledge naturally, but don't volunteer private or sensitive details to others in the group unless {user} has brought them up or sharing them is clearly appropriate.");
+        }
+    }
+
+    /// <summary>
+    /// Names written as a list: "Elena", "Elena and Marcus", or "Elena, Marcus, and Jo".
+    /// </summary>
+    private static string JoinNames(IReadOnlyList<string> names)
+    {
+        return names.Count switch
+        {
+            0 => "others",
+            1 => names[0],
+            2 => $"{names[0]} and {names[1]}",
+            _ => string.Join(", ", names.Take(names.Count - 1)) + ", and " + names[^1]
+        };
     }
 
     /// <summary>
@@ -222,6 +371,32 @@ internal static partial class PersonaFraming
     {
         ArgumentNullException.ThrowIfNull(messages);
 
+        int start = MemoryStart(messages);
+        List<AgentTurn> turns = [];
+
+        foreach (ChatMessage message in messages.Skip(start).SkipWhile(message => message.Sender != MessageSender.User))
+        {
+            if (turns.Count > 0 && turns[^1].Sender == message.Sender)
+            {
+                turns[^1] = turns[^1] with { Text = turns[^1].Text + "\n" + message.Text };
+            }
+            else
+            {
+                turns.Add(new AgentTurn(message.Sender, message.Text));
+            }
+        }
+
+        return turns;
+    }
+
+    /// <summary>
+    /// The index of the first of the most recent messages within the memory budget, at a boundary that stays put as
+    /// messages are added (see <see cref="MEMORY_STEP_CHARACTERS"/>). The latest message is always included.
+    /// </summary>
+    internal static int MemoryStart(IReadOnlyList<ChatMessage> messages)
+    {
+        ArgumentNullException.ThrowIfNull(messages);
+
         long total = messages.Sum(message => (long)message.Text.Length);
         long offset = 0;
         long nextBoundary = 0;
@@ -243,21 +418,31 @@ internal static partial class PersonaFraming
             offset += messages[index].Text.Length;
         }
 
-        List<AgentTurn> turns = [];
+        return start;
+    }
 
-        foreach (ChatMessage message in messages.Skip(start).SkipWhile(message => message.Sender != MessageSender.User))
+    /// <summary>
+    /// <see cref="CleanReply"/> for a group: also rejects a reply that opens as the user or another member of the group,
+    /// which shows the model has started writing someone else's message rather than the speaker's.
+    /// </summary>
+    internal static string? CleanGroupReply(string? text, Contact speaker, UserProfile user, IReadOnlyList<Contact> others, AgentRequest? request = null)
+    {
+        ArgumentNullException.ThrowIfNull(speaker);
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(others);
+
+        string opening = (text ?? string.Empty).TrimStart();
+        IEnumerable<string?> labels = others.SelectMany(other => new[] { other.DisplayName, other.Nickname, other.GivenName }).Append(user.Name);
+
+        if (labels.Any(label => !string.IsNullOrWhiteSpace(label) && opening.StartsWith(label.Trim() + ":", StringComparison.OrdinalIgnoreCase)))
         {
-            if (turns.Count > 0 && turns[^1].Sender == message.Sender)
-            {
-                turns[^1] = turns[^1] with { Text = turns[^1].Text + "\n" + message.Text };
-            }
-            else
-            {
-                turns.Add(new AgentTurn(message.Sender, message.Text));
-            }
+            return null;
         }
 
-        return turns;
+        string? cleaned = CleanReply(text, speaker, request);
+
+        // The bracketed note that it is the speaker's turn, echoed back, is not a message.
+        return cleaned is not null && cleaned.StartsWith('[') && cleaned.EndsWith(']') ? null : cleaned;
     }
 
     /// <summary>

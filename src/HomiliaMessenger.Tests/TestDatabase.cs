@@ -42,6 +42,15 @@ internal sealed class TestDatabase : IDisposable
     }
 
     /// <summary>
+    /// Opens the application database already in <paramref name="directory"/>, as the application would at startup,
+    /// migrating it if needed. The returned database takes over the directory, and deletes it on disposal.
+    /// </summary>
+    public static Task<TestDatabase> OpenExistingAsync(string directory, TestContext testContext, Action<IServiceCollection>? configure = null)
+    {
+        return OpenAsync(directory, testContext, configure);
+    }
+
+    /// <summary>
     /// Closes this database and opens it again, as a restart of the application would. The returned database takes over
     /// the directory, and deletes it on disposal.
     /// </summary>

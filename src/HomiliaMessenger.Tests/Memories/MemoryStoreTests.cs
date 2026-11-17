@@ -184,9 +184,9 @@ public sealed class MemoryStoreTests
         MessageId first = (await conversations.ListMessagesAsync(chat, TestContext.CancellationToken))[0].Id;
         MessageId later = MessageId.New();
 
-        bool saved = await store.AddExtractedAsync(chat, [NewMemory(walt, chat, "One.")], first, null, TestContext.CancellationToken);
-        bool stale = await store.AddExtractedAsync(chat, [NewMemory(walt, chat, "Two.")], later, null, TestContext.CancellationToken);
-        bool missing = await store.AddExtractedAsync(ConversationId.New(), [NewMemory(walt, chat, "Three.")], later, null, TestContext.CancellationToken);
+        bool saved = await store.AddExtractedAsync(chat, walt.Id, [NewMemory(walt, chat, "One.")], first, null, TestContext.CancellationToken);
+        bool stale = await store.AddExtractedAsync(chat, walt.Id, [NewMemory(walt, chat, "Two.")], later, null, TestContext.CancellationToken);
+        bool missing = await store.AddExtractedAsync(ConversationId.New(), walt.Id, [NewMemory(walt, chat, "Three.")], later, null, TestContext.CancellationToken);
         Conversation? stored = await conversations.FindByContactAsync(walt.Id, TestContext.CancellationToken);
 
         Assert.IsTrue(saved);

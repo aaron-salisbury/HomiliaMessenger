@@ -27,8 +27,13 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
     private readonly bool _trackChanges;
     private IReadOnlyList<SpeechVoice> _voices = [];
     private bool _refreshingVoices;
-    private bool _refreshingAgents;
     private string? _voiceId;
+    private AgentAssignment? _agentAssignment;
+
+    // The values as last saved (or as opened), which the editor is dirty only while it differs from. The photo is kept
+    // apart because arrays compare by reference; photo arrays are replaced, never changed in place.
+    private Contact _saved;
+    private byte[]? _savedPhoto;
     private readonly ITextToSpeech? _speech;
     private readonly IPortraitService? _portraits;
     private CancellationTokenSource? _sample;
@@ -123,6 +128,8 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
         }
 
         RefreshVoices(voices ?? [], isSpeechAvailable);
+        _saved = Snapshot();
+        _savedPhoto = _photo;
         _trackChanges = true;
     }
 
@@ -134,24 +141,16 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
     {
         ArgumentNullException.ThrowIfNull(agentOptions);
         AgentOption? previous = Agent;
-        AgentAssignment? current = previous?.Assignment;
-        _refreshingAgents = true;
+        AgentAssignment? current = _agentAssignment;
 
-        try
-        {
-            // A model removed in Settings stays chosen, marked as removed, so the assignment is not lost; adding the
-            // model again restores it.
-            AgentOptions = current is null || agentOptions.Any(option => option.Assignment == current)
-                ? agentOptions
-                : [.. agentOptions, new AgentOption($"{previous!.Label.Replace(" (not downloaded)", string.Empty, StringComparison.Ordinal)} (removed)", current)];
+        // A model removed in Settings stays chosen, marked as removed, so the assignment is not lost; adding the model
+        // again restores it.
+        AgentOptions = current is null || agentOptions.Any(option => option.Assignment == current)
+            ? agentOptions
+            : [.. agentOptions, new AgentOption($"{(previous?.Label ?? current.Model).Replace(" (not downloaded)", string.Empty, StringComparison.Ordinal)} (removed)", current)];
 
-            // The combo box may clear its selection while its options are replaced; select the same agent again.
-            Agent = AgentOptions.FirstOrDefault(option => option.Assignment == current) ?? AgentOption.None;
-        }
-        finally
-        {
-            _refreshingAgents = false;
-        }
+        // The combo box may clear its selection while its options are replaced; select the same agent again.
+        Agent = AgentOptions.FirstOrDefault(option => option.Assignment == current) ?? AgentOption.None;
     }
 
     public void RefreshVoices(IReadOnlyList<SpeechVoice> voices, bool isAvailable)
@@ -189,6 +188,16 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
         {
             _voiceId = value.Id;
             OnPropertyChanged(nameof(VoiceDescription));
+        }
+    }
+
+    partial void OnAgentChanged(AgentOption value)
+    {
+        // A combo box clears its selection while its options are replaced, such as when the editor shows another
+        // contact; a cleared selection keeps the contact's agent.
+        if (value is not null)
+        {
+            _agentAssignment = value.Assignment;
         }
     }
 
@@ -260,18 +269,31 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
     /// </summary>
     public void AcceptChanges()
     {
+        _saved = Snapshot();
+        _savedPhoto = _photo;
         IsDirty = false;
+    }
+
+    /// <summary>
+    /// Whether the editor's values differ from those last saved. Comparing values, rather than counting every change as
+    /// an edit, keeps the editor clean when a control writes a value back without the user changing anything, as the
+    /// agent and voice selectors briefly do while the editor switches from one contact to another.
+    /// </summary>
+    private void UpdateDirty()
+    {
+        bool samePhoto = _photo is null ? _savedPhoto is null : _savedPhoto is not null && _photo.AsSpan().SequenceEqual(_savedPhoto);
+        IsDirty = !samePhoto || Snapshot() != _saved;
     }
 
     protected override void OnPropertyChanged(PropertyChangedEventArgs e)
     {
         base.OnPropertyChanged(e);
 
-        if (_trackChanges && !_refreshingVoices && !_refreshingAgents && !(e.PropertyName == nameof(Voice) && Voice is null)
-            && e.PropertyName is not (nameof(IsDirty) or nameof(PhotoPreview) or nameof(PhotoDescription) or nameof(AgeDescription) or nameof(IsPlayingSample)
-                or nameof(VoiceSampleHint)))
+        if (_trackChanges && e.PropertyName is not (nameof(IsDirty) or nameof(PhotoPreview) or nameof(PhotoDescription) or nameof(AgeDescription)
+            or nameof(IsPlayingSample) or nameof(VoiceSampleHint) or nameof(VoiceDescription) or nameof(AgentOptions) or nameof(VoiceOptions)
+            or nameof(IsSpeechAvailable)))
         {
-            IsDirty = true;
+            UpdateDirty();
         }
     }
 
@@ -303,7 +325,7 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
         if (_photo is not null)
         {
             SetPhoto(null);
-            IsDirty = true;
+            UpdateDirty();
         }
     }
 
@@ -312,7 +334,7 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
         try
         {
             SetPhoto(await PhotoFile.ReadAsync(stream));
-            IsDirty = true;
+            UpdateDirty();
             MessageRaised?.Invoke(this, "Photo selected. Save the contact to keep it.");
         }
         catch (Exception error)
@@ -348,7 +370,7 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
             try
             {
                 SetPhoto(photo);
-                IsDirty = true;
+                UpdateDirty();
                 MessageRaised?.Invoke(this, "Photo generated. Save the contact to keep it.");
             }
             catch (Exception error)
@@ -393,6 +415,12 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
 
     public Contact ToContact()
     {
+        return Snapshot() with { Photo = _photo is null ? null : [.. _photo] };
+    }
+
+    // The editor's values without the photo, which is compared and copied separately.
+    private Contact Snapshot()
+    {
         return new Contact
         {
             Id = _id,
@@ -404,10 +432,9 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
             Relationship = Clean(Relationship),
             Personality = Clean(Personality),
             Background = Clean(Background),
-            Agent = Agent?.Assignment,
+            Agent = _agentAssignment,
             VoiceId = _voiceId,
-            IsFavorite = IsFavorite,
-            Photo = _photo is null ? null : [.. _photo]
+            IsFavorite = IsFavorite
         };
     }
 

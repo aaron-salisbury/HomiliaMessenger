@@ -33,6 +33,45 @@ public sealed class ContactDetailViewModelTests
     }
 
     [TestMethod]
+    public void SelectorsWritingBackWhileSwitchingContacts_IsNotAnEdit()
+    {
+        // When the editor switches from one contact to another, the agent and voice selectors briefly write back the
+        // previous contact's choice, or none, before showing this contact's.
+        AgentOption phi = new("Phi-3.5 mini", new AgentAssignment("Local", "phi"));
+        AgentOption qwen = new("Qwen2.5", new AgentAssignment("Local", "qwen"));
+        FakeSpeech speech = new();
+        Contact rose = new() { Id = ContactId.New(), GivenName = "Rose", Gender = Gender.Female, Agent = qwen.Assignment, VoiceId = "af_heart" };
+        using ContactDetailViewModel detail = new(rose, [AgentOption.None, phi, qwen], speech.Voices, true);
+
+        detail.Agent = phi;
+        detail.Agent = null!;
+        detail.Agent = detail.AgentOptions[2];
+        detail.Voice = null;
+        detail.Voice = detail.VoiceOptions.Single(option => option.Id == "af_heart");
+
+        Assert.IsFalse(detail.IsDirty);
+        Assert.AreEqual(qwen.Assignment, detail.ToContact().Agent);
+        Assert.AreEqual("af_heart", detail.ToContact().VoiceId);
+    }
+
+    [TestMethod]
+    public void UndoingAnEdit_LeavesTheEditorClean()
+    {
+        using ContactDetailViewModel detail = new(new Contact { Id = ContactId.New(), GivenName = "Walt", IsFavorite = true });
+
+        detail.GivenName = "Walter";
+        detail.FlipFavoriteCommand.Execute(null);
+        Assert.IsTrue(detail.IsDirty);
+
+        detail.GivenName = "Walt";
+        detail.FlipFavoriteCommand.Execute(null);
+        Assert.IsFalse(detail.IsDirty);
+
+        detail.Agent = null!; // A cleared agent selection keeps the agent, so it is not an edit either.
+        Assert.IsFalse(detail.IsDirty);
+    }
+
+    [TestMethod]
     public void ToContact_TrimsTextAndDropsBlankValues()
     {
         using ContactDetailViewModel detail = new()

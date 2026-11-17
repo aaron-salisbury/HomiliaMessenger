@@ -18,6 +18,12 @@ namespace HomiliaMessenger.Integrations.LocalModels;
 /// for ONNX models: loaded on first use, released after a period without use, before its files are deleted, or at
 /// shutdown; and the prompt's cache kept between replies, so only new tokens are read.
 /// </summary>
+/// <remarks>
+/// As with ONNX, contacts on the same model share its loaded weights and context, one generation at a time; the cache is
+/// reused only for the tokens a prompt has in common with the previous one, so contacts never share conversation state.
+/// A context per contact (or a sequence per contact in one context) would keep each contact's cache warm, at the cost of
+/// that much more memory per contact; with small CPU contexts and two contacts, rereading the prompt is the better trade.
+/// </remarks>
 internal sealed class LlamaModelHost : IAsyncDisposable, IDisposable
 {
     internal static readonly TimeSpan IDLE_UNLOAD_AFTER = TimeSpan.FromMinutes(10);
@@ -46,6 +52,13 @@ internal sealed class LlamaModelHost : IAsyncDisposable, IDisposable
     private string? _loadedDirectory;
     private DateTimeOffset _lastUsed;
     private bool _disposed;
+    private int _loadCount;
+
+    /// <summary>
+    /// How many times a model has been loaded. Contacts that share a model reuse the one loaded, so consecutive replies
+    /// from them leave this unchanged; it grows only when a different model (or one unloaded since) is needed.
+    /// </summary>
+    internal int LoadCount => Volatile.Read(ref _loadCount);
 
     public LlamaModelHost(ILogger<LlamaModelHost> logger) : this(logger, TimeProvider.System)
     {
@@ -284,6 +297,7 @@ internal sealed class LlamaModelHost : IAsyncDisposable, IDisposable
 
         _loadedDirectory = modelDirectory;
         _cached.Clear();
+        Interlocked.Increment(ref _loadCount);
         _logger.LogInformation("Loaded GGUF model {ModelFile} with a {ContextTokens}-token context.", modelFile, parameters.ContextSize);
     }
 

@@ -87,7 +87,7 @@ public partial class MemoryEditorViewModel : ObservableObject
     {
         try
         {
-            MemorySaveResult result = await _memories.AddAsync(_conversationId, NewText);
+            MemorySaveResult result = await _memories.AddAsync(_conversationId, ContactId, NewText);
 
             if (!result.Validation.IsValid || result.Memory is null)
             {

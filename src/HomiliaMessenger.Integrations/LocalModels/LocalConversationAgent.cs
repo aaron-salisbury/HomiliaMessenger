@@ -17,6 +17,12 @@ namespace HomiliaMessenger.Integrations.LocalModels;
 /// models through llama.cpp. Contacts use it with the provider <c>Local</c> and a model name, such as
 /// <c>phi-3.5-mini</c>. Only one model is kept loaded across both runtimes, to bound memory use.
 /// </summary>
+/// <remarks>
+/// One agent serves every contact, so contacts assigned the same model share the one loaded copy, and replies from
+/// several contacts (such as in a group) run one after another. Contacts on different models are served in turn too,
+/// each switch releasing one model and loading the other: memory stays bounded at one model, at the cost of a load when
+/// the speaker's model changes.
+/// </remarks>
 internal sealed class LocalConversationAgent : IConversationAgent
 {
     private static readonly GenerationSettings SETTINGS = new();

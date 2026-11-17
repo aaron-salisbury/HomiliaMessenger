@@ -30,6 +30,8 @@ public static class DependencyInjection
 
         services.AddSingleton<IConversationAgent, SimulatedAgent>();
         services.AddScoped<IConversationService, ConversationService>();
+        services.TryAddSingleton(new GroupCoordinatorOptions());
+        services.TryAddSingleton<GroupCoordinator>();
 
         // Integrations may register an embedding provider and the composition root other recall limits; without them,
         // memories are recalled by keywords within the default limits.

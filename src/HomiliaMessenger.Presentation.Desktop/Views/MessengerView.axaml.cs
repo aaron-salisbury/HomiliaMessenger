@@ -53,7 +53,8 @@ public partial class MessengerView : UserControl
     {
         if (_attachedModel is not null)
         {
-            _attachedModel.StopSpeech();
+            // A group only talks while it is on screen.
+            _attachedModel.Suspend();
             _attachedModel.Messages.CollectionChanged -= Messages_CollectionChanged;
             _attachedModel.PropertyChanged -= Model_PropertyChanged;
 
@@ -102,6 +103,7 @@ public partial class MessengerView : UserControl
                 ScrollToEnd();
                 break;
             case nameof(MessengerViewModel.ActiveContact):
+            case nameof(MessengerViewModel.ActiveGroup):
                 // Ready to type as soon as a chat opens.
                 Dispatcher.UIThread.Post(() => Composer.Focus(), DispatcherPriority.Background);
                 break;
@@ -150,6 +152,18 @@ public partial class MessengerView : UserControl
         picker.SelectedItem = null;
         NewChatButton.Flyout?.Hide();
         model.StartChatCommand.Execute(contact);
+    }
+
+    private void InvitePicker_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (sender is not ListBox picker || picker.SelectedItem is not Contact contact || _attachedModel is not { } model)
+        {
+            return;
+        }
+
+        picker.SelectedItem = null;
+        InviteButton.Flyout?.Hide();
+        model.InviteContactCommand.Execute(contact);
     }
 
     private void DeleteConversation_Click(object? sender, RoutedEventArgs e)

@@ -41,7 +41,11 @@ A reference to an agent: a **provider** (a backend the app knows how to talk to,
 
 ### Conversation
 
-The ongoing message history between the user and one contact. A conversation belongs to the contact, not to the agent, so it continues across agent changes. Each agent reply records which agent and model produced it.
+A message history between the user and contacts. A **direct** conversation is the user's private chat with one contact; it belongs to the contact, not to the agent, so it continues across agent changes, and a contact has at most one. A **group** is a conversation with two contacts (see [Group Conversations](#group-conversations)). Each contact's message records who wrote it and which agent and model produced it.
+
+### Group Conversations
+
+A group is started by inviting a second contact from a direct chat, which is left unchanged. Each contact replies with their own persona, agent, memories, and voice, given the group's recent messages labelled by who wrote them and the memories of their own that relate to it, never another contact's. Business decides each turn: deterministic rules for membership, direct address by name, never the same contact twice in a row, at most three messages per round, and a cooldown on contacts starting conversations; and, for whether a contact adds something unasked, the contact's own already-loaded model as a validated yes-or-no answer at most once a round, falling back to rules and chance. Contacts start conversations only while the user has the group open, at most once per cooldown, and the user can turn that off per group. See [group conversations](group_conversations.md).
 
 ### Persona Framing
 
@@ -55,7 +59,7 @@ What the agent is given about earlier turns: the contact's memories recalled for
 
 A memory is one lasting thing a contact knows about the user, such as "Aaron's dog is Biscuit." Each is stored as its own record with its text, where it came from (learned from the chat, added or corrected by the user, or imported from the earlier notes), the conversation it belongs to, the message it was learned from, and when it was created and last changed.
 
-- **Contact isolation.** Every memory belongs to exactly one contact, through the conversation it was learned in. Every read, search, and embedding is limited to one contact's memories; nothing is shared between contacts.
+- **Contact isolation.** Every memory belongs to exactly one contact, and records the conversation it was learned in: their direct chat, or a group they are in. Every read, search, and embedding is limited to one contact's memories; nothing is shared between contacts, including contacts in the same group. In a group each contact learns from the user's messages as their own memories, with their own checkpoint.
 - **Lifecycle.** Deleting a contact deletes its memories and their vectors; so does deleting a chat, which starts the contact fresh, as deleting the notes did before. Memories survive restarts and changes to the contact's agent or model, since they belong to the contact, not the agent.
 - **Never discarded for space.** Memories are kept however many there are. Only which of them are given with a reply is limited.
 

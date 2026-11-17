@@ -29,9 +29,19 @@ internal sealed record GenerationSettings(int MaxReplyTokens = 80, double Temper
 /// use of the native model happens while holding <c>_gate</c>, so it is never released mid-generation.
 /// </summary>
 /// <remarks>
+/// <para>
+/// Contacts that use the same model share it: the host holds one loaded model whoever is replying, so a reply from a
+/// second contact on that model reuses the loaded weights instead of loading them again. What is shared is only the
+/// model; each reply is generated from its own prompt (the contact's persona, memories, and conversation), and the
+/// cache below is reused only for the exact tokens a new prompt has in common with the last one, so nothing of one
+/// contact's conversation carries into another's. When two contacts alternate, their prompts differ from the start, so
+/// each reply reads its prompt afresh: slower than continuing one chat, but never mixing them.
+/// </para>
+/// <para>
 /// Reading a prompt is the slow part on a CPU (tens of tokens per second), so the model's attention cache is kept between
 /// replies. A chat's next prompt repeats the previous one plus the latest messages, so only the new tokens are read,
 /// turning a 20-second wait in a long chat into about two seconds. The cache holds one chat at a time.
+/// </para>
 /// </remarks>
 internal sealed class OnnxModelHost : IAsyncDisposable, IDisposable
 {
@@ -58,6 +68,13 @@ internal sealed class OnnxModelHost : IAsyncDisposable, IDisposable
     private string? _loadedDirectory;
     private DateTimeOffset _lastUsed;
     private bool _disposed;
+    private int _loadCount;
+
+    /// <summary>
+    /// How many times a model has been loaded. Contacts that share a model reuse the one loaded, so consecutive replies
+    /// from them leave this unchanged; it grows only when a different model (or one unloaded since) is needed.
+    /// </summary>
+    internal int LoadCount => Volatile.Read(ref _loadCount);
 
     public OnnxModelHost() : this(TimeProvider.System)
     {
@@ -195,6 +212,7 @@ internal sealed class OnnxModelHost : IAsyncDisposable, IDisposable
             _tokenizer = new Tokenizer(_model);
             _endTokens = _tokenizer.GetEosTokenIds().ToArray();
             _loadedDirectory = modelDirectory;
+            Interlocked.Increment(ref _loadCount);
         }
 
         int[]? prompt = FitPrompt(messages, contextTokens - settings.MaxReplyTokens);

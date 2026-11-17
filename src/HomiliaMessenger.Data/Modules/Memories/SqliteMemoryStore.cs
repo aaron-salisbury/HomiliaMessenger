@@ -72,14 +72,17 @@ internal sealed class SqliteMemoryStore : IMemoryStore
         return await InsertAsync(connection, null, memory, cancellationToken);
     }
 
-    public async Task<bool> AddExtractedAsync(ConversationId conversationId, IReadOnlyList<Memory> memories, MessageId through, MessageId? expectedThrough, CancellationToken cancellationToken = default)
+    public async Task<bool> AddExtractedAsync(ConversationId conversationId, ContactId contactId, IReadOnlyList<Memory> memories, MessageId through, MessageId? expectedThrough, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(memories);
 
-        // IS compares NULLs as equal, so a conversation not yet condensed matches.
+        // A direct conversation keeps its contact's checkpoint itself; a group keeps one per participant. IS compares
+        // NULLs as equal, so a conversation not yet condensed matches.
         const string checkpointSql = """
             UPDATE Conversation SET MemoryThroughMessageId = @Through
-            WHERE Id = @Id AND MemoryThroughMessageId IS @ExpectedThrough;
+            WHERE Id = @Id AND Kind = 0 AND ContactId = @ContactId AND MemoryThroughMessageId IS @ExpectedThrough;
+            UPDATE ConversationParticipant SET MemoryThroughMessageId = @Through
+            WHERE ConversationId = @Id AND ContactId = @ContactId AND MemoryThroughMessageId IS @ExpectedThrough;
             """;
 
         await using SqliteConnection connection = await _database.OpenConnectionAsync(cancellationToken);
@@ -88,6 +91,7 @@ internal sealed class SqliteMemoryStore : IMemoryStore
         int moved = await connection.ExecuteAsync(new CommandDefinition(checkpointSql, new
         {
             Id = ToKey(conversationId.Value),
+            ContactId = ToKey(contactId.Value),
             Through = ToKey(through.Value),
             ExpectedThrough = expectedThrough is null ? null : ToKey(expectedThrough.Value.Value)
         }, transaction, cancellationToken: cancellationToken));
@@ -100,7 +104,7 @@ internal sealed class SqliteMemoryStore : IMemoryStore
 
         foreach (Memory memory in memories)
         {
-            if (!await InsertAsync(connection, transaction, memory with { ConversationId = conversationId }, cancellationToken))
+            if (!await InsertAsync(connection, transaction, memory with { ConversationId = conversationId, ContactId = contactId }, cancellationToken))
             {
                 await transaction.RollbackAsync(cancellationToken);
                 return false;
@@ -272,18 +276,21 @@ internal sealed class SqliteMemoryStore : IMemoryStore
 
     private static async Task<bool> InsertAsync(SqliteConnection connection, SqliteTransaction? transaction, Memory memory, CancellationToken cancellationToken)
     {
-        // The memory belongs to the conversation's contact; inserting only when the conversation exists lets work that
-        // finishes after its conversation was deleted report that, rather than fail on the foreign key.
+        // The memory belongs to a direct conversation's contact, or to the group participant it names; inserting only
+        // when the conversation (and participant) exists lets work that finishes after its conversation was deleted
+        // report that, rather than fail on the foreign key.
         const string sql = """
             INSERT INTO Memory (Id, ContactId, ConversationId, Text, Origin, SourceMessageId, CreatedAtUtc, UpdatedAtUtc)
-            SELECT @Id, c.ContactId, c.Id, @Text, @Origin, @SourceMessageId, @CreatedAtUtc, @UpdatedAtUtc
+            SELECT @Id, COALESCE(c.ContactId, p.ContactId), c.Id, @Text, @Origin, @SourceMessageId, @CreatedAtUtc, @UpdatedAtUtc
             FROM Conversation c
-            WHERE c.Id = @ConversationId;
+            LEFT JOIN ConversationParticipant p ON p.ConversationId = c.Id AND p.ContactId = @ContactId
+            WHERE c.Id = @ConversationId AND (c.ContactId IS NOT NULL OR p.ContactId IS NOT NULL);
             """;
 
         int count = await connection.ExecuteAsync(new CommandDefinition(sql, new
         {
             Id = ToKey(memory.Id.Value),
+            ContactId = ToKey(memory.ContactId.Value),
             ConversationId = ToKey(memory.ConversationId.Value),
             memory.Text,
             Origin = (int)memory.Origin,
