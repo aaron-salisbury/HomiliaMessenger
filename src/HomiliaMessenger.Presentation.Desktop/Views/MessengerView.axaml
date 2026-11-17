@@ -72,6 +72,21 @@
             <Setter Property="Margin" Value="0,8,0,1" />
         </Style>
 
+        <!-- The small continue-conversation button beneath the latest contact message's avatar. -->
+        <Style Selector="Button.continue">
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="24" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0,2,0,0" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Opacity" Value="0.6" />
+        </Style>
+
         <!-- The front photo of a group's pair sits on a ring of the background, so the two photos read as separate. -->
         <Style Selector="Ellipse.groupFront">
             <Setter Property="Stroke" Value="{DynamicResource SystemRegionColor}" />
@@ -423,6 +438,31 @@
                                             </Button>
                                         </Grid>
                                     </Grid>
+                                    <!-- Beneath the latest contact message's avatar: asks the contact, or the group, to keep talking. -->
+                                    <Button Classes="continue" IsVisible="{Binding ContinuesDirectChat}"
+                                            Command="{Binding $parent[ItemsControl].((vm:MessengerViewModel)DataContext).ContinueCommand}"
+                                            ToolTip.Tip="Continue conversation" AutomationProperties.Name="Continue conversation">
+                                        <i:MaterialIcon Kind="MessagePlusOutline" Width="16" Height="16" />
+                                    </Button>
+                                    <Button Classes="continue" IsVisible="{Binding ContinuesGroup}"
+                                            IsEnabled="{Binding $parent[ItemsControl].((vm:MessengerViewModel)DataContext).CanContinue}"
+                                            ToolTip.Tip="Continue conversation" AutomationProperties.Name="Continue conversation">
+                                        <i:MaterialIcon Kind="MessagePlusOutline" Width="16" Height="16" />
+                                        <Button.Flyout>
+                                            <MenuFlyout Placement="BottomEdgeAlignedLeft">
+                                                <MenuItem Header="{Binding SenderName, StringFormat='Continue with {0}'}" Click="ContinueWithSender_Click">
+                                                    <MenuItem.Icon>
+                                                        <i:MaterialIcon Kind="AccountOutline" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem Header="Continue group conversation" Click="ContinueGroup_Click">
+                                                    <MenuItem.Icon>
+                                                        <i:MaterialIcon Kind="AccountGroupOutline" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                            </MenuFlyout>
+                                        </Button.Flyout>
+                                    </Button>
                                 </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>

@@ -39,14 +39,26 @@ internal static partial class PersonaFraming
     /// <param name="memories">What the contact remembers from before <paramref name="messages"/> that was recalled for this reply.</param>
     /// <param name="messages">The messages after the conversation's memory checkpoint, oldest first.</param>
     /// <param name="lookedUp">What was found online for the latest message, if anything was looked up.</param>
-    internal static AgentRequest Build(Contact contact, UserProfile user, IReadOnlyList<string> memories, IReadOnlyList<ChatMessage> messages, string model, DateOnly today, IReadOnlyList<WebSearchResult>? lookedUp = null)
+    /// <param name="continuing">
+    /// Whether the user asked the contact to keep the conversation going without writing anything new. The contact is told
+    /// so in the instructions, and, when they wrote last, given a note that it is their turn; neither is a message.
+    /// </param>
+    internal static AgentRequest Build(Contact contact, UserProfile user, IReadOnlyList<string> memories, IReadOnlyList<ChatMessage> messages, string model, DateOnly today, IReadOnlyList<WebSearchResult>? lookedUp = null, bool continuing = false)
     {
         ArgumentNullException.ThrowIfNull(contact);
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(memories);
         ArgumentNullException.ThrowIfNull(messages);
 
-        return new AgentRequest(model, Instructions(contact, user, memories, today, lookedUp), Memory(messages), StopTexts(contact, user));
+        IReadOnlyList<AgentTurn> turns = Memory(messages);
+
+        if (continuing && (turns.Count == 0 || turns[^1].Sender != MessageSender.User))
+        {
+            // Chat templates ask the model to answer the other side's last turn, so the contact is told it is their turn.
+            turns = [.. turns, new AgentTurn(MessageSender.User, $"[{contact.DisplayName}'s turn to keep the conversation going]")];
+        }
+
+        return new AgentRequest(model, Instructions(contact, user, memories, today, lookedUp, continuing: continuing), turns, StopTexts(contact, user));
     }
 
     /// <summary>
@@ -160,7 +172,7 @@ internal static partial class PersonaFraming
     /// its own. Anything looked up online comes after the memories, in the same one-line form (see <see cref="WebContext"/>),
     /// introduced as information that cannot change who the persona is or tell them what to do.
     /// </remarks>
-    internal static string Instructions(Contact contact, UserProfile user, IReadOnlyList<string>? memories, DateOnly today, IReadOnlyList<WebSearchResult>? lookedUp = null, GroupFrame? group = null)
+    internal static string Instructions(Contact contact, UserProfile user, IReadOnlyList<string>? memories, DateOnly today, IReadOnlyList<WebSearchResult>? lookedUp = null, GroupFrame? group = null, bool continuing = false)
     {
         ArgumentNullException.ThrowIfNull(contact);
         ArgumentNullException.ThrowIfNull(user);
@@ -256,6 +268,11 @@ internal static partial class PersonaFraming
         if (group is null)
         {
             builder.AppendLine($"- Write only {name}'s next text message, the way {name} would actually text: casual and natural, usually one to three short sentences.");
+
+            if (continuing)
+            {
+                builder.AppendLine($"- {ContinueRule(userName ?? "the person you are texting")}");
+            }
         }
         else
         {
@@ -298,6 +315,7 @@ internal static partial class PersonaFraming
             GroupTurnReason.FollowingUp => "- Add something of your own to what was just said: a reaction, a different view, a joke, or a question. You can disagree if you would.",
             GroupTurnReason.Greeting => $"- You were just added to this group chat. Say a brief, natural hello to {user} and {othersNames}, with no long introduction.",
             GroupTurnReason.Initiating => "- Nobody has written for a while. Start something new, naturally: a bit of news from your life, a question for the group, or a follow-up on something talked about before.",
+            GroupTurnReason.Continuing => $"- {ContinueRule(user)}",
             _ => $"- Reply to the group as {name} would."
         });
         builder.AppendLine("- Talk to whoever you are answering, by name when it helps. Don't greet everyone again, introduce yourself again, or repeat what was already said.");
@@ -306,6 +324,19 @@ internal static partial class PersonaFraming
         {
             builder.AppendLine($"- You may remember things {user} told you privately. Use that knowledge naturally, but don't volunteer private or sensitive details to others in the group unless {user} has brought them up or sharing them is clearly appropriate.");
         }
+    }
+
+    /// <summary>
+    /// What a contact is told when the user asks them to keep the conversation going without writing anything new.
+    /// </summary>
+    private static string ContinueRule(string user)
+    {
+        return $"{UpperFirst(user)} hasn't written anything new; keep the conversation going naturally. Build on what was just said if you have something meaningful to add, otherwise bring up something related or ask a thoughtful question. Don't repeat or sum up what was already said, don't greet anyone again, and don't act as if {user} said something new.";
+    }
+
+    private static string UpperFirst(string text)
+    {
+        return text.Length > 0 && char.IsLower(text[0]) ? char.ToUpperInvariant(text[0]) + text[1..] : text;
     }
 
     /// <summary>

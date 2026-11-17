@@ -59,7 +59,13 @@ public enum GroupTrigger
     /// <summary>
     /// The user opened the group, which may let a contact start a conversation (see <see cref="GroupInitiation"/>).
     /// </summary>
-    Opened
+    Opened,
+
+    /// <summary>
+    /// The user asked the group to keep talking without writing anything new. Someone always writes first, whether or
+    /// not the group may start conversations on its own; the others may then add something, as in any round.
+    /// </summary>
+    Continued
 }
 
 /// <summary>
@@ -90,7 +96,12 @@ public enum GroupTurnReason
     /// <summary>
     /// Starting a new conversation unprompted, when the user opened the group.
     /// </summary>
-    Initiating
+    Initiating,
+
+    /// <summary>
+    /// Keeping the conversation going because the user asked for more, without writing anything new.
+    /// </summary>
+    Continuing
 }
 
 /// <summary>
