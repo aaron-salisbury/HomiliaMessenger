@@ -60,6 +60,9 @@ public partial class SettingsViewModel : BaseViewModel
     // redisplay) a newer choice, such as turning web search off right after turning it on.
     private readonly SemaphoreSlim _webSearchSaveGate = new(1, 1);
     private int _webSearchChange;
+    // A key action may refresh the page while a setting is still saving. Wait for that save to finish before showing
+    // database values, including when the save was rejected and the controls need to return to their stored values.
+    private int _webSearchResolvedChange;
 
     public bool IsWebSearchAvailable => _webSearch is not null;
     [ObservableProperty] private bool _webSearchEnabled;
@@ -457,7 +460,7 @@ public partial class SettingsViewModel : BaseViewModel
 
             // The user changed a setting while this was read; showing it would put back the old value, which the
             // pending save would then store. That save shows the result when it is done.
-            if (change == _webSearchChange)
+            if (change == _webSearchChange && change == _webSearchResolvedChange)
             {
                 ShowWebSearch(overview);
             }
@@ -525,7 +528,12 @@ public partial class SettingsViewModel : BaseViewModel
     {
         if (!_refreshingWebSearch && _webSearch is not null)
         {
-            _ = SaveWebSearchSettingsAsync(_webSearch, ++_webSearchChange);
+            WebSearchSettings settings = new(
+                WebSearchEnabled,
+                TavilyEnabled,
+                (int)Math.Round(MonthlyCreditBudget ?? -1),
+                (int)Math.Round(CreditResetDay ?? 0));
+            _ = SaveWebSearchSettingsAsync(_webSearch, ++_webSearchChange, settings);
         }
     }
 
@@ -533,7 +541,7 @@ public partial class SettingsViewModel : BaseViewModel
     /// Saves web search's settings as they are changed. Invalid values are not saved, and the page goes back to what is.
     /// A save superseded by a newer change before its turn is skipped, and does not refresh the page.
     /// </summary>
-    internal async Task SaveWebSearchSettingsAsync(IWebSearchService webSearch, int change)
+    internal async Task SaveWebSearchSettingsAsync(IWebSearchService webSearch, int change, WebSearchSettings settings)
     {
         // Let the control finish its own update before it may be put back.
         await Task.Yield();
@@ -546,18 +554,13 @@ public partial class SettingsViewModel : BaseViewModel
                 return;
             }
 
-            WebSearchSettings settings = new(
-                WebSearchEnabled,
-                TavilyEnabled,
-                (int)Math.Round(MonthlyCreditBudget ?? -1),
-                (int)Math.Round(CreditResetDay ?? 0));
-
             try
             {
                 ValidationResult result = await webSearch.SaveSettingsAsync(settings);
 
                 if (change == _webSearchChange)
                 {
+                    _webSearchResolvedChange = change;
                     await RefreshWebSearchAsync();
 
                     if (!result.IsValid)
@@ -570,6 +573,7 @@ public partial class SettingsViewModel : BaseViewModel
             {
                 if (change == _webSearchChange)
                 {
+                    _webSearchResolvedChange = change;
                     await RefreshWebSearchAsync();
                     WebSearchStatus = "Could not save web search settings: " + error.Message;
                 }

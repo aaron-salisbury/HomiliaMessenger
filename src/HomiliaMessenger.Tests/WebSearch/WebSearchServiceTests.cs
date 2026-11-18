@@ -358,6 +358,7 @@ public sealed class WebSearchServiceTests
         WebSearchOverview overview = await restarted.GetOverviewAsync(TestContext.CancellationToken);
 
         Assert.AreEqual(new DateOnly(2026, 11, 10), overview.PeriodStart);
+        Assert.IsTrue(overview.Settings.Enabled);
         Assert.AreEqual(1, overview.CreditsUsed);
 
         // Editing the key keeps the count.

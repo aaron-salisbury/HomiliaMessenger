@@ -115,6 +115,41 @@ public sealed class WebSearchRaceTests
     }
 
     [TestMethod]
+    public async Task SavingTheKeyWhileEnableIsPendingDoesNotUndoTheChoice()
+    {
+        SlowSaves webSearch = new();
+        SettingsViewModel settings = new(new ThemeService(new DesktopSettings(Path.GetTempPath())), new SpeechSettingsTests.EmptyLocalModels(), webSearch: webSearch);
+        await settings.InitializeAsync();
+
+        settings.WebSearchEnabled = true;
+        await WaitUntilAsync(() => webSearch.Saving);
+        settings.TavilyKeyInput = "tvly-test";
+        await settings.SaveTavilyKeyCommand.ExecuteAsync(null);
+
+        Assert.IsTrue(settings.WebSearchEnabled);
+
+        webSearch.FirstSave.SetResult();
+        await WaitUntilAsync(() => !webSearch.Saving && webSearch.Overviews >= 3);
+        Assert.IsTrue(webSearch.Current.Enabled);
+        Assert.IsTrue(settings.WebSearchEnabled);
+    }
+
+    [TestMethod]
+    public async Task EnabledSettingIsShownAfterRestart()
+    {
+        TestDatabase database = await TestDatabase.CreateAsync(TestContext);
+        await database.Services.GetRequiredService<IWebSearchService>()
+            .SaveSettingsAsync(new WebSearchSettings(true), TestContext.CancellationToken);
+
+        using TestDatabase reopened = await database.ReopenAsync(TestContext);
+        SettingsViewModel settings = new(new ThemeService(new DesktopSettings(Path.GetTempPath())),
+            new SpeechSettingsTests.EmptyLocalModels(), webSearch: reopened.Services.GetRequiredService<IWebSearchService>());
+        await settings.InitializeAsync();
+
+        Assert.IsTrue(settings.WebSearchEnabled);
+    }
+
+    [TestMethod]
     public async Task ARefreshReadBeforeANewerChangeDoesNotPutTheOldValueBack()
     {
         SlowSaves webSearch = new();

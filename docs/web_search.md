@@ -19,6 +19,8 @@ These are rules, not a model's tool calling, because the small local models this
 2. In **Settings → Web Search**, tick **Let contacts search the web**, paste the key, and choose **Save key**. The key is stored in the operating system's credential store (Windows Credential Manager, or the Secret Service through `secret-tool` on Linux), never in the database, settings files, or logs.
 3. Optionally choose **Check key**. It asks Tavily's usage endpoint whether the key works and how many credits it has used, which costs nothing.
 
+Your choice to allow contacts to search is saved and remains on after you restart the app. Web search stays off until you turn it on, and you can turn it off again at any time.
+
 To stop all external searching, untick **Let contacts search the web** (or **Use Tavily**), or remove the key.
 
 ## Credits and the local budget
