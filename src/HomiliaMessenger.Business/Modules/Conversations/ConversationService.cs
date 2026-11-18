@@ -308,7 +308,17 @@ internal sealed class ConversationService : IConversationService
         }
     }
 
-    public async Task<ConversationReply> ReplyAsync(ConversationId conversationId, IProgress<ReplyActivity>? activity = null, CancellationToken cancellationToken = default)
+    public Task<ConversationReply> ReplyAsync(ConversationId conversationId, IProgress<ReplyActivity>? activity = null, CancellationToken cancellationToken = default)
+    {
+        return ReplyDirectAsync(conversationId, continuing: false, activity, cancellationToken);
+    }
+
+    public Task<ConversationReply> ContinueAsync(ConversationId conversationId, IProgress<ReplyActivity>? activity = null, CancellationToken cancellationToken = default)
+    {
+        return ReplyDirectAsync(conversationId, continuing: true, activity, cancellationToken);
+    }
+
+    private async Task<ConversationReply> ReplyDirectAsync(ConversationId conversationId, bool continuing, IProgress<ReplyActivity>? activity, CancellationToken cancellationToken)
     {
         Conversation? conversation = await _store.GetAsync(conversationId, cancellationToken);
 
@@ -324,7 +334,7 @@ internal sealed class ConversationService : IConversationService
             return new ConversationReply(ReplyStatus.NotFound, null, "The conversation no longer exists.");
         }
 
-        return await ReplyAsContactAsync(conversation, contact, [], null, activity, cancellationToken);
+        return await ReplyAsContactAsync(conversation, contact, [], null, continuing, activity, cancellationToken);
     }
 
     public async Task<ConversationReply> ReplyInGroupAsync(ConversationId conversationId, GroupTurn turn, IProgress<ReplyActivity>? activity = null, CancellationToken cancellationToken = default)
@@ -344,7 +354,7 @@ internal sealed class ConversationService : IConversationService
             return new ConversationReply(ReplyStatus.NotFound, null, "The contact is no longer in this group.");
         }
 
-        ConversationReply reply = await ReplyAsContactAsync(conversation, speaker, [.. contacts.Where(contact => contact.Id != speaker.Id)], turn.Reason, activity, cancellationToken);
+        ConversationReply reply = await ReplyAsContactAsync(conversation, speaker, [.. contacts.Where(contact => contact.Id != speaker.Id)], turn.Reason, turn.Reason == GroupTurnReason.Continuing, activity, cancellationToken);
 
         // A hello, once written, starts the group's cooldown on starting conversations.
         if (turn.Reason == GroupTurnReason.Greeting && reply.Message is { } greeting)
@@ -358,9 +368,10 @@ internal sealed class ConversationService : IConversationService
     /// <summary>
     /// Asks <paramref name="contact"/>'s own agent, with their own persona and memories, for their next message, and
     /// saves it as theirs. In a group, <paramref name="others"/> are the other contacts and <paramref name="reason"/>
-    /// why the contact is writing.
+    /// why the contact is writing. <paramref name="continuing"/> says the user asked for more without writing anything
+    /// new; that request is part of this prompt only, never a message.
     /// </summary>
-    private async Task<ConversationReply> ReplyAsContactAsync(Conversation conversation, Contact contact, IReadOnlyList<Contact> others, GroupTurnReason? reason, IProgress<ReplyActivity>? activity, CancellationToken cancellationToken)
+    private async Task<ConversationReply> ReplyAsContactAsync(Conversation conversation, Contact contact, IReadOnlyList<Contact> others, GroupTurnReason? reason, bool continuing, IProgress<ReplyActivity>? activity, CancellationToken cancellationToken)
     {
         AgentAssignment assignment = contact.Agent ?? SimulatedAgent.ASSIGNMENT;
         IConversationAgent? agent = FindAgent(assignment);
@@ -372,6 +383,12 @@ internal sealed class ConversationService : IConversationService
         }
 
         IReadOnlyList<ChatMessage> messages = await _store.ListMessagesAsync(conversation.Id, cancellationToken);
+
+        if (continuing && messages.Count == 0)
+        {
+            return new ConversationReply(ReplyStatus.Unavailable, null, "There is no conversation to continue yet.");
+        }
+
         UserProfile user = await _profile.GetAsync(cancellationToken);
         DateOnly today = DateOnly.FromDateTime(_timeProvider.GetUtcNow().UtcDateTime);
 
@@ -386,8 +403,9 @@ internal sealed class ConversationService : IConversationService
         // Canned replies could make no use of what was found, and in a group only a reply to the user's own latest
         // message looks anything up, so contacts answering each other do not search again. Only the latest messages
         // decide, and only a short query made from them is sent; the results inform this reply alone and are kept with
-        // it for the user to see.
-        bool mayLookUp = agent is not SimulatedAgent && (reason is null || recent.LastOrDefault()?.Sender == MessageSender.User);
+        // it for the user to see. Keeping a conversation going looks nothing up again unless the user's message is the
+        // latest.
+        bool mayLookUp = agent is not SimulatedAgent && ((reason is null && !continuing) || recent.LastOrDefault()?.Sender == MessageSender.User);
         WebLookup? lookup = mayLookUp
             ? await _webSearch.LookUpForReplyAsync(recent, PrivateNames([contact, .. others], user), agent.ReplyAsync, assignment.Model.Trim(), () => activity?.Report(ReplyActivity.SearchingWeb), cancellationToken)
             : null;
@@ -396,7 +414,7 @@ internal sealed class ConversationService : IConversationService
         IReadOnlyList<string> remembered = [.. recalled.Select(memory => memory.Text)];
         AgentRequest request = reason is { } why
             ? PersonaFraming.BuildGroup(contact, user, conversation, others, why, remembered, recent, assignment.Model.Trim(), today, lookup?.Sources)
-            : PersonaFraming.Build(contact, user, remembered, recent, assignment.Model.Trim(), today, lookup?.Sources);
+            : PersonaFraming.Build(contact, user, remembered, recent, assignment.Model.Trim(), today, lookup?.Sources, continuing);
         AgentReply answer = await agent.ReplyAsync(request, cancellationToken);
 
         if (answer.Status != ReplyStatus.Success)
@@ -404,13 +422,20 @@ internal sealed class ConversationService : IConversationService
             return new ConversationReply(answer.Status, null, answer.Problem);
         }
 
-        string? text = reason is null
+        string? text = reason is null && !continuing
             ? PersonaFraming.CleanReply(answer.Text, contact, request)
             : PersonaFraming.CleanGroupReply(answer.Text, contact, user, others, request);
 
         if (text is null)
         {
             return new ConversationReply(ReplyStatus.InvalidResponse, null, $"{contact.DisplayName}'s agent replied with nothing usable.");
+        }
+
+        // Asked for more, a contact who only says again what they last said has added nothing.
+        if (continuing && messages.LastOrDefault(message => conversation.SenderOf(message) == contact.Id) is { } previous
+            && string.Equals(previous.Text.Trim(), text.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return new ConversationReply(ReplyStatus.InvalidResponse, null, $"{contact.DisplayName} had nothing new to add.");
         }
 
         if (text.Length > ChatMessageValidator.MAX_TEXT_LENGTH)

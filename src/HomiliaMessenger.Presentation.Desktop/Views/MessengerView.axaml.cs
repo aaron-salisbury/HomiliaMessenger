@@ -166,6 +166,22 @@ public partial class MessengerView : UserControl
         model.InviteContactCommand.Execute(contact);
     }
 
+    private void ContinueWithSender_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { DataContext: MessageItem { Sender: { } contact } } && _attachedModel is { } model && model.ContinueWithCommand.CanExecute(contact))
+        {
+            model.ContinueWithCommand.Execute(contact);
+        }
+    }
+
+    private void ContinueGroup_Click(object? sender, RoutedEventArgs e)
+    {
+        if (_attachedModel is { } model && model.ContinueGroupCommand.CanExecute(null))
+        {
+            model.ContinueGroupCommand.Execute(null);
+        }
+    }
+
     private void DeleteConversation_Click(object? sender, RoutedEventArgs e)
     {
         if (sender is MenuItem { DataContext: ConversationListItem item } && _attachedModel is { } model)

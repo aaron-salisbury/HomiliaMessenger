@@ -39,6 +39,15 @@ After you write, the group takes a round of at most three messages, then waits f
 
 Writing again during a round sets it aside and starts a new one that answers your new message. The stop button in the header ends a round at once. A contact who cannot reply (say their model is not downloaded) is shown as a problem and passed over for the rest of the round, so the other can still answer.
 
+## Asking the group to keep talking
+
+The small button beneath the photo of whoever wrote last offers two choices:
+
+- **Continue with [name]** asks that contact for one more message, and only that one: the other contact is not prompted to answer it.
+- **Continue group conversation** lets the group decide who writes next, as it does after you write: someone spoken to by name answers, otherwise whoever is likelier to speak up, never the contact who just wrote. That first message is always written, since you asked; the other contact may then add something, within the usual round of at most three messages.
+
+Either way nothing is written as you: the contact is told, in that one prompt, that you have not written anything new and to build on the conversation, or bring up something related, without repeating themselves. It works whether or not the group may start conversations on its own, and does not use up that chance. While a round is under way the button is disabled; writing, stopping, or leaving the group ends it as it ends any round. In a private chat the same button asks the contact straight away.
+
 ## Contacts starting conversations
 
 While you have a group open, its contacts may now and then start a conversation without waiting for you:

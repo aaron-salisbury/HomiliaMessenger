@@ -98,6 +98,12 @@ internal sealed partial class GroupCoordinator
             return DecideOpening(situation);
         }
 
+        // Until someone has written, including after a chosen contact could not.
+        if (situation.Cycle.Trigger == GroupTrigger.Continued && WrittenThisRound(situation.Cycle) == 0)
+        {
+            return DecideContinuation(situation);
+        }
+
         ChatMessage? last = situation.Messages.LastOrDefault();
 
         if (last is null)
@@ -166,6 +172,47 @@ internal sealed partial class GroupCoordinator
             .First();
 
         return new GroupDecision(starter.Id, GroupTurnReason.Initiating, _options.InitiationChance);
+    }
+
+    /// <summary>
+    /// The first turn when the user asks the group to keep talking: whoever has most reason to write next does, chosen as
+    /// any next turn is (spoken to by name, otherwise by personality and share of the talking, never the contact who just
+    /// wrote), except that someone always writes, since the user asked. They are told to keep the conversation going, even
+    /// when spoken to by name, since the user has written nothing new; only a message of the user's still waiting for an
+    /// answer is answered as usual. When nobody else can write (say, their model failed), the contact who just wrote
+    /// continues.
+    /// </summary>
+    private GroupDecision DecideContinuation(GroupSituation situation)
+    {
+        ChatMessage? last = situation.Messages.LastOrDefault();
+
+        if (last is null)
+        {
+            return GroupDecision.Wait;
+        }
+
+        if (situation.Conversation.SenderOf(last) is not { } lastSender)
+        {
+            // The user's own message is still waiting for an answer.
+            return AnswerUser(situation, last);
+        }
+
+        if (FollowContact(situation, lastSender, last).Speaker is { } speaker)
+        {
+            return new GroupDecision(speaker, GroupTurnReason.Continuing);
+        }
+
+        return situation.Contacts.Any(contact => contact.Id == lastSender)
+            ? new GroupDecision(lastSender, GroupTurnReason.Continuing)
+            : GroupDecision.Wait;
+    }
+
+    /// <summary>
+    /// How many messages contacts have written in the round: its turns, less those whose contact could not write.
+    /// </summary>
+    private static int WrittenThisRound(GroupCycle cycle)
+    {
+        return Math.Max(0, cycle.TurnsTaken - cycle.Unavailable.Count);
     }
 
     private GroupDecision AnswerUser(GroupSituation situation, ChatMessage message)
@@ -242,9 +289,9 @@ internal sealed partial class GroupCoordinator
     /// </summary>
     private static int RoundStart(GroupSituation situation)
     {
-        if (situation.Cycle.Trigger == GroupTrigger.Opened)
+        if (situation.Cycle.Trigger is GroupTrigger.Opened or GroupTrigger.Continued)
         {
-            return Math.Max(0, situation.Messages.Count - situation.Cycle.TurnsTaken);
+            return Math.Max(0, situation.Messages.Count - WrittenThisRound(situation.Cycle));
         }
 
         for (int index = situation.Messages.Count - 1; index >= 0; index--)

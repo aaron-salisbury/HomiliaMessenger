@@ -67,6 +67,9 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     private readonly HashSet<ConversationId> _openingRounds = [];
     private readonly SemaphoreSlim _initiationGate = new(1, 1);
 
+    // The message whose avatar carries the continue-conversation button: the open thread's latest from a contact.
+    private MessageItem? _continueTarget;
+
     private bool _syncingListSelection;
     private bool _syncingInitiation;
     private int _threadVersion;
@@ -185,6 +188,12 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
 
     public bool IsGroupThread => ActiveGroup is not null;
 
+    /// <summary>
+    /// Whether the open chat's contacts can be asked to keep talking without a new message: a contact has written in it,
+    /// and no reply or round is under way.
+    /// </summary>
+    public bool CanContinue => _continueTarget is not null && ActiveConversationId is { } id && !_pendingReplies.ContainsKey(id);
+
     public bool HasReplyProblem => ReplyProblem is not null;
 
     /// <summary>
@@ -240,6 +249,91 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         _contacts = contacts ?? throw new ArgumentNullException(nameof(contacts));
         _memories = memories ?? throw new ArgumentNullException(nameof(memories));
         _speech = speech;
+        Messages.CollectionChanged += (_, _) => UpdateContinueTarget();
+    }
+
+    /// <summary>
+    /// Moves the continue-conversation button to the latest message from a contact, where it shows once per thread.
+    /// </summary>
+    private void UpdateContinueTarget()
+    {
+        MessageItem? target = Messages.LastOrDefault(item => !item.IsFromUser);
+
+        if (target is not null && !target.CanCarryContinue)
+        {
+            target = null;
+        }
+
+        if (!ReferenceEquals(target, _continueTarget))
+        {
+            if (_continueTarget is not null)
+            {
+                _continueTarget.ShowsContinue = false;
+            }
+
+            if (target is not null)
+            {
+                target.ShowsContinue = true;
+            }
+
+            _continueTarget = target;
+        }
+
+        NotifyCanContinue();
+    }
+
+    private void NotifyCanContinue()
+    {
+        OnPropertyChanged(nameof(CanContinue));
+        ContinueCommand.NotifyCanExecuteChanged();
+        ContinueWithCommand.NotifyCanExecuteChanged();
+        ContinueGroupCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// Asks the open direct chat's contact to keep the conversation going, without the user writing anything.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanContinue))]
+    private void Continue()
+    {
+        if (ActiveGroup is not null || ActiveContact is null || ActiveConversationId is not { } conversationId || !CanContinue)
+        {
+            return;
+        }
+
+        ReplyProblem = null;
+        StartReply(conversationId, continuing: true);
+    }
+
+    /// <summary>
+    /// Asks one of the open group's contacts to write next, once, without the user writing anything.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanContinue))]
+    private void ContinueWith(Contact? contact)
+    {
+        if (ActiveGroup is not { } group || contact is null || !GroupContacts.Any(member => member.Id == contact.Id) || !CanContinue)
+        {
+            return;
+        }
+
+        ReplyProblem = null;
+        StartGroupRound(group.Id, GroupTrigger.Continued, new GroupTurn(contact.Id, GroupTurnReason.Continuing));
+    }
+
+    /// <summary>
+    /// Asks the open group to keep talking: the group decides who writes next, and the others may join in, within a
+    /// round's usual limits. This works whether or not the group may start conversations on its own.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanContinue))]
+    private void ContinueGroup()
+    {
+        if (ActiveGroup is not { } group || !CanContinue)
+        {
+            return;
+        }
+
+        ReplyProblem = null;
+        StartGroupRound(group.Id, GroupTrigger.Continued);
     }
 
     partial void OnActiveContactChanged(Contact? oldValue, Contact? newValue)
@@ -1135,14 +1229,15 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         }
     }
 
-    private void StartReply(ConversationId conversationId)
+    /// <param name="continuing">Whether the contact keeps the conversation going rather than answering the user.</param>
+    private void StartReply(ConversationId conversationId, bool continuing = false)
     {
         CancelReply(conversationId);
 
         CancellationTokenSource pending = new();
         _pendingReplies[conversationId] = pending;
         UpdateTyping();
-        _ = ReplyAsync(conversationId, pending);
+        _ = ReplyAsync(conversationId, pending, continuing);
     }
 
     private void CancelReply(ConversationId conversationId)
@@ -1171,7 +1266,7 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         }
     }
 
-    private async Task ReplyAsync(ConversationId conversationId, CancellationTokenSource pending)
+    private async Task ReplyAsync(ConversationId conversationId, CancellationTokenSource pending, bool continuing)
     {
         ChatMessage? reply = null;
         string? problem = null;
@@ -1180,7 +1275,9 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         {
             // Reported on this (the UI) thread, since Progress captures it.
             Progress<ReplyActivity> activity = new(stage => ShowActivity(conversationId, pending, stage));
-            ConversationReply result = await _conversations.ReplyAsync(conversationId, activity, pending.Token);
+            ConversationReply result = continuing
+                ? await _conversations.ContinueAsync(conversationId, activity, pending.Token)
+                : await _conversations.ReplyAsync(conversationId, activity, pending.Token);
             reply = result.Message;
 
             // A deleted conversation needs no explanation.
@@ -1216,11 +1313,12 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     }
 
     /// <summary>
-    /// Starts a round of the group taking turns: after the user writes, or when the user opens the group. Each turn, the
-    /// group decides who writes next, if anyone; the round ends when it decides to wait for the user, after at most a few
-    /// messages, or as soon as the user writes again, stops it, or leaves the group.
+    /// Starts a round of the group taking turns: after the user writes, when the user opens the group, or when the user
+    /// asks it to continue. Each turn, the group decides who writes next, if anyone; the round ends when it decides to
+    /// wait for the user, after at most a few messages, or as soon as the user writes again, stops it, or leaves the group.
     /// </summary>
-    private void StartGroupRound(ConversationId conversationId, GroupTrigger trigger)
+    /// <param name="only">The one turn the round consists of, when the user chose who writes.</param>
+    private void StartGroupRound(ConversationId conversationId, GroupTrigger trigger, GroupTurn? only = null)
     {
         CancelReply(conversationId);
 
@@ -1233,10 +1331,10 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         }
 
         UpdateTyping();
-        _ = RunGroupRoundAsync(conversationId, trigger, pending);
+        _ = RunGroupRoundAsync(conversationId, trigger, pending, only);
     }
 
-    private async Task RunGroupRoundAsync(ConversationId conversationId, GroupTrigger trigger, CancellationTokenSource pending)
+    private async Task RunGroupRoundAsync(ConversationId conversationId, GroupTrigger trigger, CancellationTokenSource pending, GroupTurn? only)
     {
         GroupCycle cycle = new(trigger);
         bool replied = false;
@@ -1246,7 +1344,9 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         {
             while (!pending.IsCancellationRequested && ActiveGroup?.Id == conversationId)
             {
-                GroupTurn? turn = await _conversations.PlanGroupTurnAsync(conversationId, cycle, pending.Token);
+                GroupTurn? turn = only is null
+                    ? await _conversations.PlanGroupTurnAsync(conversationId, cycle, pending.Token)
+                    : cycle.TurnsTaken == 0 ? only : null;
 
                 // Only an open group talks; one left meanwhile has been canceled.
                 if (turn is null || pending.IsCancellationRequested || ActiveGroup?.Id != conversationId)
@@ -1303,6 +1403,10 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         if (problem is not null && current)
         {
             ShowProblem(conversationId, problem);
+        }
+        else if (current && trigger == GroupTrigger.Continued && cycle.TurnsTaken == 0)
+        {
+            Status = "No one in the group had anything to add.";
         }
 
         if (replied)
@@ -1481,6 +1585,7 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     {
         IsContactTyping = ActiveConversationId is { } active && IsTyping(active);
         CanStopReplies = IsReplyPending;
+        NotifyCanContinue();
         IsContactSearching = IsContactTyping && _searching.Contains(ActiveConversationId!.Value);
         OnPropertyChanged(nameof(TypingContact));
         OnPropertyChanged(nameof(ActiveSubtitle));

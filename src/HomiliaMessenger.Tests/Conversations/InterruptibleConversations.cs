@@ -47,6 +47,7 @@ internal sealed class InterruptibleConversations(IConversationService inner) : I
     public Task<ConversationReply> ReplyInGroupAsync(ConversationId conversationId, GroupTurn turn, IProgress<ReplyActivity>? activity = null, CancellationToken cancellationToken = default) => inner.ReplyInGroupAsync(conversationId, turn, activity, cancellationToken);
     public Task<SendMessageResult> SendAsync(ContactId contactId, string text, CancellationToken cancellationToken = default) => inner.SendAsync(contactId, text, cancellationToken);
     public Task<ConversationReply> ReplyAsync(ConversationId conversationId, IProgress<ReplyActivity>? activity = null, CancellationToken cancellationToken = default) => inner.ReplyAsync(conversationId, activity, cancellationToken);
+    public Task<ConversationReply> ContinueAsync(ConversationId conversationId, IProgress<ReplyActivity>? activity = null, CancellationToken cancellationToken = default) => inner.ContinueAsync(conversationId, activity, cancellationToken);
     public Task<Conversation?> UpdateMemoryAsync(ConversationId conversationId, CancellationToken cancellationToken = default) => inner.UpdateMemoryAsync(conversationId, cancellationToken);
     public Task<bool> DeleteAsync(ConversationId conversationId, CancellationToken cancellationToken = default) => inner.DeleteAsync(conversationId, cancellationToken);
 }

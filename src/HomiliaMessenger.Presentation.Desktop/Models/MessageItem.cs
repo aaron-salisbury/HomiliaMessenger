@@ -28,6 +28,14 @@ public sealed partial class MessageItem : ObservableObject
     [NotifyPropertyChangedFor(nameof(ShowsAvatar))]
     private bool _isLastInGroup = true;
 
+    /// <summary>
+    /// Whether the continue-conversation button shows beneath this message's avatar: only on the thread's latest message
+    /// from a contact.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ContinuesDirectChat), nameof(ContinuesGroup))]
+    private bool _showsContinue;
+
     private MessageItem(ChatMessage message, bool isFirstInGroup, string? timeSeparator, Contact? sender, bool namesSender)
     {
         Message = message;
@@ -70,6 +78,21 @@ public sealed partial class MessageItem : ObservableObject
     /// Whether the sender's name is shown above the message: in a group, on the first of each run of their messages.
     /// </summary>
     public bool ShowsSenderName => _namesSender && !IsFromUser && IsFirstInGroup && Sender is not null;
+
+    /// <summary>
+    /// Whether this message may carry the continue-conversation button: a contact's message whose sender is known.
+    /// </summary>
+    internal bool CanCarryContinue => !IsFromUser && Sender is not null;
+
+    /// <summary>
+    /// The continue button for a direct chat, which asks the contact straight away.
+    /// </summary>
+    public bool ContinuesDirectChat => ShowsContinue && !_namesSender;
+
+    /// <summary>
+    /// The continue button for a group, which offers a choice of who continues.
+    /// </summary>
+    public bool ContinuesGroup => ShowsContinue && _namesSender;
 
     /// <summary>
     /// What the contact searched for before writing this reply, or <see langword="null"/> when nothing was looked up.

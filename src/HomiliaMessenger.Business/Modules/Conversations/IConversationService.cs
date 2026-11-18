@@ -107,6 +107,14 @@ public interface IConversationService
     Task<ConversationReply> ReplyAsync(ConversationId conversationId, IProgress<ReplyActivity>? activity = null, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Asks a direct conversation's contact to keep the conversation going without a new message from the user, and
+    /// saves what they write as in <see cref="ReplyAsync"/>. Nothing is saved for the request itself: the contact is told
+    /// for this reply only. A reply that only repeats the contact's last message is not saved. In a group, ask for a
+    /// <see cref="GroupTurnReason.Continuing"/> turn, or a <see cref="GroupTrigger.Continued"/> round, instead.
+    /// </summary>
+    Task<ConversationReply> ContinueAsync(ConversationId conversationId, IProgress<ReplyActivity>? activity = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Learns the lasting facts in older messages as the contact's memories, once there are too many messages to give an
     /// agent as they are, and embeds memories that are waiting for a vector. Meant to run after a reply, in the
     /// background. Contacts with simulated replies learn nothing.
