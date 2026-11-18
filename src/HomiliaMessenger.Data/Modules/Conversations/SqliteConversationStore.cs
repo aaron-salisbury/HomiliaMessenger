@@ -17,10 +17,12 @@ internal sealed class SqliteConversationStore : IConversationStore
 {
     private const string TIMESTAMP_FORMAT = "O";
 
-    // The last message is found by rowid so equal timestamps still resolve to the most recently inserted message.
+    // The last message is found by rowid so equal timestamps still resolve to the most recently inserted message. Its
+    // picture, if any, is not read: listing needs only what it shows, so it comes back with an empty PNG.
     private const string SELECT_CONVERSATION_SQL = """
         SELECT c.Id, c.Kind, c.ContactId, c.Title, c.StartedAtUtc, c.MemoryThroughMessageId, c.Initiation, c.LastInitiationAtUtc,
-               m.Id AS MessageId, m.Sender, m.SenderContactId, m.Text, m.SentAtUtc, m.AgentProvider, m.AgentModel, m.WebSearch
+               m.Id AS MessageId, m.Sender, m.SenderContactId, m.Text, m.SentAtUtc, m.AgentProvider, m.AgentModel, m.WebSearch,
+               CASE WHEN m.ImagePng IS NULL THEN NULL ELSE X'' END AS ImagePng, m.ImageDescription
         FROM Conversation c
         LEFT JOIN ChatMessage m ON m.rowid = (
             SELECT rowid FROM ChatMessage WHERE ConversationId = c.Id ORDER BY SentAtUtc DESC, rowid DESC LIMIT 1)
@@ -196,10 +198,12 @@ internal sealed class SqliteConversationStore : IConversationStore
         return count != 0;
     }
 
-    public async Task<IReadOnlyList<ChatMessage>> ListMessagesAsync(ConversationId conversationId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<ChatMessage>> ListMessagesAsync(ConversationId conversationId, CancellationToken cancellationToken = default, bool withPictures = true)
     {
-        const string sql = """
-            SELECT Id, ConversationId, Sender, SenderContactId, Text, SentAtUtc, AgentProvider, AgentModel, WebSearch
+        // Without pictures, a message with one still says what it shows, with an empty PNG, as the conversation list does.
+        string picture = withPictures ? "ImagePng" : "CASE WHEN ImagePng IS NULL THEN NULL ELSE X'' END AS ImagePng";
+        string sql = $"""
+            SELECT Id, ConversationId, Sender, SenderContactId, Text, SentAtUtc, AgentProvider, AgentModel, WebSearch, {picture}, ImageDescription
             FROM ChatMessage
             WHERE ConversationId = @ConversationId
             ORDER BY SentAtUtc, rowid
@@ -210,7 +214,7 @@ internal sealed class SqliteConversationStore : IConversationStore
         IEnumerable<MessageRow> rows = await connection.QueryAsync<MessageRow>(new CommandDefinition(
             sql, new { ConversationId = ToKey(conversationId.Value) }, cancellationToken: cancellationToken));
 
-        return [.. rows.Select(row => Map(row.Id, row.ConversationId, row.Sender, row.SenderContactId, row.Text, row.SentAtUtc, row.AgentProvider, row.AgentModel, row.WebSearch))];
+        return [.. rows.Select(row => Map(row.Id, row.ConversationId, row.Sender, row.SenderContactId, row.Text, row.SentAtUtc, row.AgentProvider, row.AgentModel, row.WebSearch, row.ImagePng, row.ImageDescription))];
     }
 
     public async Task<bool> AddMessageAsync(ChatMessage message, CancellationToken cancellationToken = default, bool onlyIfFirst = false)
@@ -220,8 +224,8 @@ internal sealed class SqliteConversationStore : IConversationStore
         // Inserting only when the conversation exists lets a reply that finishes after its conversation was deleted
         // report that, rather than failing on the foreign key. A contact's message must come from someone taking part.
         const string sql = """
-            INSERT INTO ChatMessage (Id, ConversationId, Sender, SenderContactId, Text, SentAtUtc, AgentProvider, AgentModel, WebSearch)
-            SELECT @Id, @ConversationId, @Sender, @SenderContactId, @Text, @SentAtUtc, @AgentProvider, @AgentModel, @WebSearch
+            INSERT INTO ChatMessage (Id, ConversationId, Sender, SenderContactId, Text, SentAtUtc, AgentProvider, AgentModel, WebSearch, ImagePng, ImageDescription)
+            SELECT @Id, @ConversationId, @Sender, @SenderContactId, @Text, @SentAtUtc, @AgentProvider, @AgentModel, @WebSearch, @ImagePng, @ImageDescription
             WHERE EXISTS (
                 SELECT 1 FROM Conversation c
                 WHERE c.Id = @ConversationId
@@ -244,6 +248,8 @@ internal sealed class SqliteConversationStore : IConversationStore
             AgentProvider = message.Agent?.Provider,
             AgentModel = message.Agent?.Model,
             WebSearch = message.WebSearch is null ? null : WebSearchJson.Write(message.WebSearch),
+            ImagePng = message.Image?.Png,
+            ImageDescription = message.Image?.Description,
             OnlyIfFirst = onlyIfFirst ? 1 : 0
         }, cancellationToken: cancellationToken));
 
@@ -318,11 +324,11 @@ internal sealed class SqliteConversationStore : IConversationStore
             LastInitiationAtUtc = row.LastInitiationAtUtc is null ? null : FromText(row.LastInitiationAtUtc),
             LastMessage = row.MessageId is null || row.Sender is null || row.Text is null || row.SentAtUtc is null
                 ? null
-                : Map(row.MessageId, row.Id, row.Sender.Value, row.SenderContactId, row.Text, row.SentAtUtc, row.AgentProvider, row.AgentModel, row.WebSearch)
+                : Map(row.MessageId, row.Id, row.Sender.Value, row.SenderContactId, row.Text, row.SentAtUtc, row.AgentProvider, row.AgentModel, row.WebSearch, row.ImagePng, row.ImageDescription)
         };
     }
 
-    private static ChatMessage Map(string id, string conversationId, long sender, string? senderContactId, string text, string sentAtUtc, string? agentProvider, string? agentModel, string? webSearch)
+    private static ChatMessage Map(string id, string conversationId, long sender, string? senderContactId, string text, string sentAtUtc, string? agentProvider, string? agentModel, string? webSearch, byte[]? imagePng, string? imageDescription)
     {
         return new()
         {
@@ -333,7 +339,8 @@ internal sealed class SqliteConversationStore : IConversationStore
             Text = text,
             SentAtUtc = FromText(sentAtUtc),
             Agent = agentProvider is null || agentModel is null ? null : new AgentAssignment(agentProvider, agentModel),
-            WebSearch = WebSearchJson.ReadLookup(webSearch)
+            WebSearch = WebSearchJson.ReadLookup(webSearch),
+            Image = imagePng is null ? null : new MessageImage(imagePng, imageDescription ?? "Sent a picture")
         };
     }
 
@@ -355,6 +362,8 @@ internal sealed class SqliteConversationStore : IConversationStore
         public string? AgentProvider { get; set; }
         public string? AgentModel { get; set; }
         public string? WebSearch { get; set; }
+        public byte[]? ImagePng { get; set; }
+        public string? ImageDescription { get; set; }
     }
 
     private sealed class ParticipantRow
@@ -375,5 +384,7 @@ internal sealed class SqliteConversationStore : IConversationStore
         public string? AgentProvider { get; set; }
         public string? AgentModel { get; set; }
         public string? WebSearch { get; set; }
+        public byte[]? ImagePng { get; set; }
+        public string? ImageDescription { get; set; }
     }
 }

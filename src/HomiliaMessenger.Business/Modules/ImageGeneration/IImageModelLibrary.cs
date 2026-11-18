@@ -7,14 +7,38 @@ using System.Threading.Tasks;
 namespace HomiliaMessenger.Business.Modules.ImageGeneration;
 
 /// <summary>
-/// An image model that can run on this computer, kept apart from conversational and embedding models.
+/// What an image model is used for. Each use chooses its own model; one model may serve both.
+/// </summary>
+[Flags]
+public enum ImageModelPurpose
+{
+    None = 0,
+
+    /// <summary>
+    /// Contact photos, generated from a description on the Contacts page.
+    /// </summary>
+    Portraits = 1,
+
+    /// <summary>
+    /// Selfies contacts send in chats, which also need face matching (see <see cref="FaceMatching"/>).
+    /// </summary>
+    Selfies = 2
+}
+
+/// <summary>
+/// An image model that can run on this computer, kept apart from conversational and embedding models, as listed for one
+/// purpose.
 /// </summary>
 /// <param name="LicenseUrl">Where the model's license can be read, when known.</param>
-/// <param name="IsSelected">Whether images are generated with it, once it is downloaded.</param>
+/// <param name="DownloadBytes">The size of everything the purpose needs: for selfies, the model and face matching.</param>
+/// <param name="IsDownloaded">Whether everything the purpose needs is downloaded.</param>
+/// <param name="IsSelected">Whether images for this purpose are generated with it, once it is downloaded.</param>
 /// <param name="IsUserAdded">Whether the user added it from Hugging Face; removing it forgets it too.</param>
 /// <param name="IsVerified">
-/// Whether the model and its settings were tested with this app's runtime. A model added from Hugging Face is not.
+/// Whether the model and its settings were tested with this app's runtime for this purpose. A model added from Hugging
+/// Face is not.
 /// </param>
+/// <param name="Purposes">Everything the model is offered for, which may be more than the purpose it is listed for.</param>
 public sealed record ImageModel(
     string Id,
     string DisplayName,
@@ -26,7 +50,16 @@ public sealed record ImageModel(
     bool IsSelected,
     bool IsUserAdded,
     bool IsVerified,
-    ImageGenerationSettings Settings);
+    ImageGenerationSettings Settings,
+    ImageModelPurpose Purposes = ImageModelPurpose.Portraits);
+
+/// <summary>
+/// What selfies need besides an image model: IP-Adapter Plus-Face, which carries a contact's face from their photo into
+/// the selfie, and the image encoder that reads the photo for it. Shared by every selfie model.
+/// </summary>
+/// <param name="DownloadBytes">What is downloaded.</param>
+/// <param name="DiskBytes">What is kept once prepared: the encoder is made smaller after downloading.</param>
+public sealed record FaceMatching(string Name, string License, string? LicenseUrl, long DownloadBytes, long DiskBytes, bool IsDownloaded);
 
 /// <summary>
 /// The kind of model a GGUF file holds, as far as its tensors show.
@@ -97,23 +130,35 @@ public sealed record ImageModelLookup(HuggingFaceLookupStatus Status, string Rep
 /// </summary>
 public interface IImageModelLibrary
 {
-    IReadOnlyList<ImageModel> List();
+    /// <summary>
+    /// The models offered for <paramref name="purpose"/>, whether each is downloaded, and which is in use for it.
+    /// </summary>
+    IReadOnlyList<ImageModel> List(ImageModelPurpose purpose = ImageModelPurpose.Portraits);
 
     /// <summary>
-    /// Downloads and verifies a model. When no model is in use yet, the downloaded one is used.
+    /// Face matching, which selfies need with any model.
     /// </summary>
-    Task<LocalModelDownloadResult> DownloadAsync(string modelId, IProgress<LocalModelDownloadProgress>? progress = null, CancellationToken cancellationToken = default);
+    FaceMatching GetFaceMatching();
 
     /// <summary>
-    /// Removes a downloaded model, freeing its disk space; one the user added is forgotten too. When it was in use and
-    /// another model is downloaded, that one is used instead.
+    /// Downloads and verifies a model and, for selfies, face matching, skipping what is already downloaded. When no model
+    /// is in use for the purpose yet, the downloaded one is used.
     /// </summary>
-    Task<bool> DeleteAsync(string modelId, CancellationToken cancellationToken = default);
+    Task<LocalModelDownloadResult> DownloadAsync(string modelId, ImageModelPurpose purpose = ImageModelPurpose.Portraits, IProgress<LocalModelDownloadProgress>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Chooses the model photos are generated with. Returns <see langword="false"/> for an unknown model.
+    /// Removes what <paramref name="purpose"/> alone needs of a model, freeing its disk space. For contact photos, or for
+    /// a model offered only for selfies, that is the model itself (one the user added is forgotten too); for a model that
+    /// also makes contact photos, removing it from selfies removes face matching instead and keeps the model. When the
+    /// removed model was in use and another is downloaded, that one is used instead.
     /// </summary>
-    bool Select(string modelId);
+    Task<bool> DeleteAsync(string modelId, ImageModelPurpose purpose = ImageModelPurpose.Portraits, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Chooses the model images for <paramref name="purpose"/> are generated with. Returns <see langword="false"/> for an
+    /// unknown model, or one not offered for the purpose.
+    /// </summary>
+    bool Select(string modelId, ImageModelPurpose purpose = ImageModelPurpose.Portraits);
 
     /// <summary>
     /// Lists the GGUF files in a Hugging Face repository, given as <c>owner/name</c> or its address, and reads each one's
@@ -122,8 +167,9 @@ public interface IImageModelLibrary
     Task<ImageModelLookup> LookUpAsync(string repository, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Adds a supported file from a lookup to the models offered, with the settings the user gave for it, ready to
-    /// download. Its compatibility is not verified.
+    /// Adds a supported file from a lookup to the models offered for <paramref name="purpose"/>, with the settings the
+    /// user gave for it, ready to download. Its compatibility is not verified. A file already added for the other purpose
+    /// is offered for this one too.
     /// </summary>
-    Task<LocalModelAddResult> AddAsync(ImageModelLookup lookup, ImageModelFile file, ImageGenerationSettings settings, CancellationToken cancellationToken = default);
+    Task<LocalModelAddResult> AddAsync(ImageModelLookup lookup, ImageModelFile file, ImageGenerationSettings settings, ImageModelPurpose purpose = ImageModelPurpose.Portraits, CancellationToken cancellationToken = default);
 }

@@ -60,7 +60,27 @@ public sealed record ChatMessage
     /// nothing was looked up. Kept for the user to see, and never given to agents or learned as a memory.
     /// </summary>
     public WebLookup? WebSearch { get; init; }
+
+    /// <summary>
+    /// A picture sent with the message, such as a contact's selfie; <see langword="null"/> for text alone. A message with
+    /// a picture may have no text.
+    /// </summary>
+    public MessageImage? Image { get; init; }
+
+    /// <summary>
+    /// The message as agents read it: its text, after a note of any picture sent with it, since agents cannot see
+    /// pictures.
+    /// </summary>
+    public string AgentText => Image is null
+        ? Text
+        : string.IsNullOrWhiteSpace(Text) ? $"[{Image.Description}]" : $"[{Image.Description}] {Text}";
 }
+
+/// <summary>
+/// A picture in a message, as a PNG file, and what it shows in words, for agents and for listing conversations.
+/// </summary>
+/// <param name="Description">What the picture shows, such as "Sent a selfie: laughing at a bus stop in pouring rain".</param>
+public sealed record MessageImage(byte[] Png, string Description);
 
 /// <summary>
 /// Whether a conversation is the user's private chat with one contact, or a group chat with several.

@@ -94,7 +94,7 @@ public sealed class HuggingFaceImageModelTests
         ImageModelLibrary library = new([builtIn], folder.Path, hub, new ImageGenerationGate(), NullLogger<ImageModelLibrary>.Instance);
 
         ImageModelLookup lookup = await library.LookUpAsync(REPO, TestContext.CancellationToken);
-        LocalModelAddResult added = await library.AddAsync(lookup, lookup.Files.Single(), SETTINGS, TestContext.CancellationToken);
+        LocalModelAddResult added = await library.AddAsync(lookup, lookup.Files.Single(), SETTINGS, cancellationToken: TestContext.CancellationToken);
 
         Assert.AreEqual("built-in", lookup.Files.Single().KnownModelId);
         Assert.IsFalse(lookup.Files.Single().IsSupported);
@@ -150,8 +150,8 @@ public sealed class HuggingFaceImageModelTests
         ImageModelLookup lookup = await library.LookUpAsync(REPO, TestContext.CancellationToken);
         ImageGenerationSettings lcm = new(512, 512, "lcm", null, 4, 1f);
 
-        LocalModelAddResult added = await library.AddAsync(lookup, lookup.Files.Single(), lcm, TestContext.CancellationToken);
-        LocalModelAddResult again = await library.AddAsync(lookup, lookup.Files.Single(), lcm, TestContext.CancellationToken);
+        LocalModelAddResult added = await library.AddAsync(lookup, lookup.Files.Single(), lcm, cancellationToken: TestContext.CancellationToken);
+        LocalModelAddResult again = await library.AddAsync(lookup, lookup.Files.Single(), lcm, cancellationToken: TestContext.CancellationToken);
         ImageModelLibrary restarted = CreateLibrary(folder.Path, hub);
         ImageModelDefinition model = restarted.Find(added.ModelId)!;
         LocalModelDownloadResult download = await restarted.DownloadAsync(model.Id, cancellationToken: TestContext.CancellationToken);
@@ -166,7 +166,7 @@ public sealed class HuggingFaceImageModelTests
         Assert.AreEqual(LocalModelDownloadStatus.Success, download.Status);
         Assert.AreEqual(model.Id, restarted.Active?.Id);
 
-        Assert.IsTrue(await restarted.DeleteAsync(model.Id, TestContext.CancellationToken));
+        Assert.IsTrue(await restarted.DeleteAsync(model.Id, cancellationToken: TestContext.CancellationToken));
         Assert.IsNull(CreateLibrary(folder.Path, hub).Find(model.Id));
     }
 
@@ -179,9 +179,9 @@ public sealed class HuggingFaceImageModelTests
         ImageModelLibrary library = CreateLibrary(folder.Path, hub);
         ImageModelLookup lookup = await library.LookUpAsync(REPO, TestContext.CancellationToken);
 
-        LocalModelAddResult languageModel = await library.AddAsync(lookup, lookup.Files.Single(file => file.File.Path == "chat.gguf"), SETTINGS, TestContext.CancellationToken);
-        LocalModelAddResult badSettings = await library.AddAsync(lookup, lookup.Files.Single(file => file.File.Path == "portrait.gguf"), SETTINGS with { Steps = 0 }, TestContext.CancellationToken);
-        LocalModelAddResult stale = await library.AddAsync(lookup with { Revision = null }, lookup.Files.Single(file => file.File.Path == "portrait.gguf"), SETTINGS, TestContext.CancellationToken);
+        LocalModelAddResult languageModel = await library.AddAsync(lookup, lookup.Files.Single(file => file.File.Path == "chat.gguf"), SETTINGS, cancellationToken: TestContext.CancellationToken);
+        LocalModelAddResult badSettings = await library.AddAsync(lookup, lookup.Files.Single(file => file.File.Path == "portrait.gguf"), SETTINGS with { Steps = 0 }, cancellationToken: TestContext.CancellationToken);
+        LocalModelAddResult stale = await library.AddAsync(lookup with { Revision = null }, lookup.Files.Single(file => file.File.Path == "portrait.gguf"), SETTINGS, cancellationToken: TestContext.CancellationToken);
 
         Assert.IsFalse(languageModel.IsSuccessful);
         Assert.Contains("language model", languageModel.Problem!);

@@ -9,14 +9,14 @@
         xmlns:i="using:Material.Icons.Avalonia"
         Width="660" Height="700" MinWidth="500" MinHeight="480"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False" CanMinimize="False"
-        Title="Add an image model from Hugging Face">
+        Title="{Binding Title}">
 
     <Grid RowDefinitions="Auto,Auto,Auto,*,Auto,Auto" Margin="24,20,24,20">
 
         <StackPanel Grid.Row="0" Spacing="6" Margin="0,0,0,14">
             <StackPanel Orientation="Horizontal" Spacing="10">
                 <i:MaterialIcon Kind="ImageAutoAdjust" Width="22" Height="22" Opacity="0.8" />
-                <TextBlock Text="Add an image model from Hugging Face" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding Title}" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
             </StackPanel>
             <TextBlock TextWrapping="Wrap" FontSize="12" Opacity="0.75"
                        Text="For experimenting. Only Stable Diffusion 1.x models in GGUF format, with the text encoder and VAE in the same file, can run here. Each file's header is read to check what it holds; nothing else is downloaded until you add one." />
@@ -60,7 +60,7 @@
                     <TextBlock Text="Compatibility unverified" FontWeight="SemiBold" VerticalAlignment="Center" />
                 </StackPanel>
                 <TextBlock TextWrapping="Wrap" FontSize="12"
-                           Text="This file looks like a complete Stable Diffusion 1.x model, but it has not been tested with this app. Enter the settings its model card recommends; the defaults suit an ordinary checkpoint. Photos are 512×512." />
+                           Text="{Binding SettingsHint}" />
                 <TextBlock Text="{Binding SuggestionHint}" IsVisible="{Binding SuggestionHint, Converter={x:Static ObjectConverters.IsNotNull}}"
                            TextWrapping="Wrap" FontSize="12" FontStyle="Italic" />
                 <Grid ColumnDefinitions="Auto,Auto,16,Auto,Auto,16,Auto,Auto" HorizontalAlignment="Left">

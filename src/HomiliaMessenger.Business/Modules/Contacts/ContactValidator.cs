@@ -70,6 +70,9 @@ internal sealed class ContactValidator : AbstractValidator<Contact>
         RuleFor(contact => contact.Photo)
             .Must(photo => photo is null || photo.Length <= MAX_PHOTO_BYTES)
             .WithMessage("Contact photo exceeds the 8 MiB limit.");
+
+        // The description a photo was generated from, which is as long as a description may be.
+        RuleFor(contact => contact.Appearance).MaximumLength(ImageGeneration.PortraitRequest.MAX_DESCRIPTION_LENGTH);
     }
 
     private DateOnly UtcToday()

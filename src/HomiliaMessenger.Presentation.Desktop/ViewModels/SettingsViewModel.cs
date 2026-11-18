@@ -106,6 +106,18 @@ public partial class SettingsViewModel : BaseViewModel
     public string ImageModelsHint { get; } = "Generate contact photos from a description, on this computer. Download an image model, then choose Generate photo beside a contact's photo on the Contacts page. Optional; works without a GPU, using about 4 GB of memory while a photo is made.";
 
     /// <summary>
+    /// Models contacts take selfies with, which also need face matching. A model may be listed under both.
+    /// </summary>
+    public ObservableCollection<ImageModelItem> SelfieModels { get; } = [];
+
+    public string SelfieModelsHint { get; } = "Let contacts send selfies in chats: the camera button in a chat asks for one, and the contact decides what it shows from the conversation. A selfie keeps the face in the contact's profile photo, so it needs a contact with a photo, and face matching besides the model. Only one person is in each selfie; in a group, the most likely contact is chosen. Optional; works without a GPU, using about 4.5 GB of memory while a selfie is made.";
+
+    /// <summary>
+    /// Whether face matching, which every selfie model needs, is downloaded, and what it takes.
+    /// </summary>
+    [ObservableProperty] private string _faceMatchingStatus = string.Empty;
+
+    /// <summary>
     /// Why photos cannot be generated in this build or on this system, when that is so; downloading a model would not help.
     /// </summary>
     [ObservableProperty] private string? _imageRuntimeProblem;
@@ -212,7 +224,8 @@ public partial class SettingsViewModel : BaseViewModel
     }
 
     /// <summary>
-    /// Lists the image models, or shows their current state when they are already listed.
+    /// Lists the image models for contact photos and for selfies, or shows their current state when they are already
+    /// listed. Both lists change together: a model downloaded for one purpose may serve the other.
     /// </summary>
     private void RefreshImageModels()
     {
@@ -223,47 +236,77 @@ public partial class SettingsViewModel : BaseViewModel
 
         ImageGeneratorAvailability? availability = _imageGenerator?.GetAvailability();
         ImageRuntimeProblem = availability is { IsRuntimeIncluded: false } ? availability.Problem : null;
+        RefreshImageList(ImageModels, ImageModelPurpose.Portraits);
+        RefreshImageList(SelfieModels, ImageModelPurpose.Selfies);
 
-        if (ImageModels.Count == 0)
+        FaceMatching faceMatching = _imageModels.GetFaceMatching();
+        FaceMatchingStatus = faceMatching.IsDownloaded
+            ? $"Face matching ({faceMatching.Name}, {faceMatching.License}) is downloaded: {FormatSize(faceMatching.DiskBytes)}."
+            : $"Face matching ({faceMatching.Name}, {faceMatching.License}) is not downloaded. Downloading a selfie model downloads it too: {FormatSize(faceMatching.DownloadBytes)}, made {FormatSize(faceMatching.DiskBytes)} once prepared.";
+    }
+
+    private void RefreshImageList(ObservableCollection<ImageModelItem> items, ImageModelPurpose purpose)
+    {
+        if (items.Count == 0)
         {
-            foreach (ImageModel model in _imageModels.List())
+            foreach (ImageModel model in _imageModels!.List(purpose))
             {
-                ImageModels.Add(CreateImageItem(model));
+                items.Add(CreateImageItem(model, items, purpose));
             }
 
             return;
         }
 
-        foreach (ImageModelItem item in ImageModels.Where(item => !item.IsDownloading).ToList())
+        foreach (ImageModelItem item in items.Where(item => !item.IsDownloading).ToList())
         {
             item.Refresh();
         }
+
+        // A model added for the other purpose may now be offered for this one too.
+        foreach (ImageModel model in _imageModels!.List(purpose).Where(model => items.All(item => item.Id != model.Id)))
+        {
+            items.Add(CreateImageItem(model, items, purpose));
+        }
     }
 
-    private ImageModelItem CreateImageItem(ImageModel model)
+    private ImageModelItem CreateImageItem(ImageModel model, ObservableCollection<ImageModelItem> items, ImageModelPurpose purpose)
     {
-        ImageModelItem item = new(model, _imageModels!, ConfirmWithViewAsync, RefreshImageModels);
-        item.Removed += (_, _) => ImageModels.Remove(item);
+        ImageModelItem item = new(model, _imageModels!, ConfirmWithViewAsync, RefreshImageModels, purpose);
+        item.Removed += (_, _) => items.Remove(item);
         return item;
     }
 
     /// <summary>
-    /// Adds a Stable Diffusion 1.x model from Hugging Face, then starts downloading it.
+    /// Adds a Stable Diffusion 1.x model from Hugging Face for contact photos, then starts downloading it.
     /// </summary>
     [RelayCommand]
-    private async Task AddImageModelAsync()
+    private Task AddImageModelAsync()
     {
-        if (_imageModels is null || ShowAddImageModelAsync is null || await ShowAddImageModelAsync(new AddImageModelViewModel(_imageModels)) is not { } modelId)
+        return AddImageModelForAsync(ImageModels, ImageModelPurpose.Portraits);
+    }
+
+    /// <summary>
+    /// Adds a Stable Diffusion 1.x model from Hugging Face for selfies, then starts downloading it with face matching.
+    /// </summary>
+    [RelayCommand]
+    private Task AddSelfieModelAsync()
+    {
+        return AddImageModelForAsync(SelfieModels, ImageModelPurpose.Selfies);
+    }
+
+    private async Task AddImageModelForAsync(ObservableCollection<ImageModelItem> items, ImageModelPurpose purpose)
+    {
+        if (_imageModels is null || ShowAddImageModelAsync is null || await ShowAddImageModelAsync(new AddImageModelViewModel(_imageModels, purpose)) is not { } modelId)
         {
             return;
         }
 
-        ImageModelItem? item = ImageModels.FirstOrDefault(existing => existing.Id == modelId);
+        ImageModelItem? item = items.FirstOrDefault(existing => existing.Id == modelId);
 
-        if (item is null && _imageModels.List().FirstOrDefault(model => model.Id == modelId) is { } added)
+        if (item is null && _imageModels.List(purpose).FirstOrDefault(model => model.Id == modelId) is { } added)
         {
-            item = CreateImageItem(added);
-            ImageModels.Add(item);
+            item = CreateImageItem(added, items, purpose);
+            items.Add(item);
         }
 
         if (item is not null && item.DownloadCommand.CanExecute(null))
@@ -271,6 +314,12 @@ public partial class SettingsViewModel : BaseViewModel
             await item.DownloadCommand.ExecuteAsync(null);
         }
     }
+
+    private static string FormatSize(long bytes)
+    {
+        return bytes >= 1_000_000_000 ? $"{bytes / 1_000_000_000d:0.0} GB" : $"{bytes / 1_000_000d:0} MB";
+    }
+
 
     private static async Task EmbedMemoriesAsync(IMemoryService memories)
     {

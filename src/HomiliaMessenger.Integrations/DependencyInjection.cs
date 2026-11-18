@@ -88,9 +88,12 @@ public static class DependencyInjection
             provider.GetRequiredService<IHttpClientFactory>(),
             provider.GetRequiredService<ICredentialStore>(),
             provider.GetRequiredService<ImageGenerationGate>(),
+            provider.GetRequiredService<IStableDiffusionBackend>(),
             provider.GetRequiredService<ILogger<ImageModelLibrary>>()));
         services.AddSingleton<IImageModelLibrary>(provider => provider.GetRequiredService<ImageModelLibrary>());
-        services.AddSingleton<IImageGenerator>(provider =>
+
+        // One generator draws contact photos and selfies (with face matching), sharing the one-at-a-time gate.
+        services.AddSingleton(provider =>
         {
             OnnxModelHost onnx = provider.GetRequiredService<OnnxModelHost>();
             LlamaModelHost llama = provider.GetRequiredService<LlamaModelHost>();
@@ -102,6 +105,8 @@ public static class DependencyInjection
                 provider.GetRequiredService<ILogger<StableDiffusionImageGenerator>>(),
                 draw => onnx.HoldUnloadedAsync(() => llama.HoldUnloadedAsync(draw)));
         });
+        services.AddSingleton<IImageGenerator>(provider => provider.GetRequiredService<StableDiffusionImageGenerator>());
+        services.AddSingleton<ISelfieImageGenerator>(provider => provider.GetRequiredService<StableDiffusionImageGenerator>());
 
         services.AddSingleton<ITextToSpeech>(provider => new KokoroSpeech(
             Path.Combine(applicationDataDirectory, "Speech", "Kokoro"),

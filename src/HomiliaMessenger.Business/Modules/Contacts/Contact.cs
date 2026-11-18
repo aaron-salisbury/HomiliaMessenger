@@ -63,6 +63,13 @@ public sealed record Contact
     /// <summary>The optional voice used for spoken replies. Independent of the contact's current gender.</summary>
     public string? VoiceId { get; init; }
     public byte[]? Photo { get; init; }
+
+    /// <summary>
+    /// How the contact looks in <see cref="Photo"/>, in the user's words, when the photo was generated from a
+    /// description; <see langword="null"/> for a photo chosen from a file, or none. Selfies use it to draw the same person.
+    /// </summary>
+    public string? Appearance { get; init; }
+
     public bool IsFavorite { get; init; }
 
     /// <summary>

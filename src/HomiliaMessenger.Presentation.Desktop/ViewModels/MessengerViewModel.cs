@@ -4,7 +4,9 @@ using HomiliaMessenger.Business.Base.Extensions;
 using HomiliaMessenger.Business.Modules.Agents;
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Business.Modules.Conversations;
+using HomiliaMessenger.Business.Modules.ImageGeneration;
 using HomiliaMessenger.Business.Modules.Memories;
+using HomiliaMessenger.Business.Modules.Selfies;
 using HomiliaMessenger.Business.Modules.Speech;
 using HomiliaMessenger.Presentation.Desktop.Base.Controls.RibbonControls;
 using HomiliaMessenger.Presentation.Desktop.Models;
@@ -24,7 +26,43 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     private readonly IContactService _contacts;
     private readonly IMemoryService _memories;
     private readonly ITextToSpeech? _speech;
+    private readonly ISelfieService? _selfies;
     private CancellationTokenSource? _speechSession;
+
+    // The selfie being taken, in whichever chat asked for it. Images are drawn one at a time, so there is at most one; it
+    // goes on while the user chats, here or elsewhere, and arrives in its chat when ready.
+    private PendingSelfie? _selfie;
+
+    /// <summary>
+    /// Whether the selfie button shows: in an open chat, when selfies are part of this app.
+    /// </summary>
+    [ObservableProperty] private bool _isSelfieButtonVisible;
+
+    /// <summary>
+    /// Whether the open chat's contacts can be asked for a selfie now.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(AskForSelfieCommand))]
+    private bool _canAskForSelfie;
+
+    /// <summary>
+    /// What the selfie button does, or why it cannot.
+    /// </summary>
+    [ObservableProperty] private string _selfieHint = "Ask for a selfie";
+
+    /// <summary>
+    /// Whether the open chat shows a selfie being taken, beneath its messages.
+    /// </summary>
+    [ObservableProperty] private bool _isSelfieInThread;
+
+    /// <summary>
+    /// Who is taking the selfie shown being taken, once known.
+    /// </summary>
+    [ObservableProperty] private Contact? _selfieContact;
+
+    [ObservableProperty] private string _selfieStatus = string.Empty;
+    [ObservableProperty] private double _selfieProgress;
+    [ObservableProperty] private bool _isSelfieProgressIndeterminate = true;
 
     // Replies are spoken one after another, in the order they are shown, never over each other.
     private Task _speechQueue = Task.CompletedTask;
@@ -243,13 +281,227 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         }
     }
 
-    public MessengerViewModel(IConversationService conversations, IContactService contacts, IMemoryService memories, ITextToSpeech? speech = null)
+    public MessengerViewModel(IConversationService conversations, IContactService contacts, IMemoryService memories, ITextToSpeech? speech = null, ISelfieService? selfies = null)
     {
         _conversations = conversations ?? throw new ArgumentNullException(nameof(conversations));
         _contacts = contacts ?? throw new ArgumentNullException(nameof(contacts));
         _memories = memories ?? throw new ArgumentNullException(nameof(memories));
         _speech = speech;
+        _selfies = selfies;
         Messages.CollectionChanged += (_, _) => UpdateContinueTarget();
+    }
+
+    partial void OnActiveConversationIdChanged(ConversationId? value)
+    {
+        UpdateSelfie();
+    }
+
+    /// <summary>
+    /// Asks the open chat for a selfie: its contact, or in a group whoever it most likely is. The selfie is taken in the
+    /// background and arrives in the chat like a message; the chat goes on meanwhile.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanAskForSelfie))]
+    private void AskForSelfie()
+    {
+        if (_selfies is null || ActiveConversationId is not { } conversationId || _selfie is not null || !CanAskForSelfie)
+        {
+            return;
+        }
+
+        PendingSelfie pending = new(conversationId, new CancellationTokenSource())
+        {
+            Subject = ActiveContact?.Id,
+            Status = "Asking for a selfie…"
+        };
+
+        _selfie = pending;
+        ReplyProblem = null;
+        UpdateSelfie();
+        _ = TakeSelfieAsync(pending);
+    }
+
+    /// <summary>
+    /// Stops the selfie being taken in the open chat. It stops between drawing steps; the last stage finishes first.
+    /// </summary>
+    [RelayCommand]
+    private void StopSelfie()
+    {
+        if (_selfie is { } pending && pending.ConversationId == ActiveConversationId && !pending.Cancel.IsCancellationRequested)
+        {
+            pending.Cancel.Cancel();
+            pending.Status = "Stopping…";
+            UpdateSelfie();
+        }
+    }
+
+    private async Task TakeSelfieAsync(PendingSelfie pending)
+    {
+        SelfieResult? result = null;
+        string? problem = null;
+
+        try
+        {
+            // Reported on this (the UI) thread, since Progress captures it.
+            Progress<SelfieProgress> progress = new(update => ShowSelfieProgress(pending, update));
+            result = await _selfies!.TakeAsync(pending.ConversationId, progress, pending.Cancel.Token);
+
+            // A stopped selfie, or one for a chat deleted meanwhile, needs no explanation.
+            if (result.Status is not (Business.Modules.Selfies.SelfieStatus.Success or Business.Modules.Selfies.SelfieStatus.Canceled or Business.Modules.Selfies.SelfieStatus.NotFound))
+            {
+                problem = result.Problem ?? "The selfie could not be taken.";
+            }
+        }
+        catch (OperationCanceledException) when (pending.Cancel.IsCancellationRequested)
+        {
+            // Stopped, or the chat was deleted.
+        }
+        catch (Exception error)
+        {
+            problem = "The selfie could not be taken: " + error.Message;
+        }
+        finally
+        {
+            if (ReferenceEquals(_selfie, pending))
+            {
+                _selfie = null;
+            }
+
+            pending.Cancel.Dispose();
+        }
+
+        if (problem is not null)
+        {
+            ShowProblem(pending.ConversationId, problem);
+        }
+
+        if (result?.Message is { } selfie)
+        {
+            ShowReply(pending.ConversationId, selfie);
+            Status = ActiveConversationId == pending.ConversationId ? CountStatus() : $"{ContactName(pending.Subject) ?? "A contact"} sent a selfie.";
+        }
+
+        UpdateSelfie();
+    }
+
+    private void ShowSelfieProgress(PendingSelfie pending, SelfieProgress update)
+    {
+        if (!ReferenceEquals(_selfie, pending) || pending.Cancel.IsCancellationRequested)
+        {
+            return;
+        }
+
+        pending.Subject = update.Subject;
+        string name = ContactName(update.Subject) ?? "Your contact";
+
+        switch (update.Stage)
+        {
+            case SelfieStage.Planning:
+                pending.Status = $"{name} is getting ready for a selfie…";
+                pending.Progress = null;
+                break;
+            case SelfieStage.Drawing when update.Image is { Stage: ImageGenerationStage.Sampling, Total: > 0 } image:
+                pending.Status = $"{name} is taking a selfie…";
+                pending.Progress = 10 + (75d * Math.Clamp(image.Completed, 0, image.Total) / image.Total);
+                break;
+            case SelfieStage.Drawing when update.Image is { Stage: ImageGenerationStage.Decoding }:
+                pending.Status = $"{name} is taking a selfie… almost done";
+                pending.Progress = 90;
+                break;
+            case SelfieStage.Drawing:
+                pending.Status = $"{name} is taking a selfie…";
+                pending.Progress = null;
+                break;
+        }
+
+        UpdateSelfie();
+    }
+
+    /// <summary>
+    /// Brings the selfie button, and the selfie being taken in the open chat, up to date.
+    /// </summary>
+    private void UpdateSelfie()
+    {
+        IsSelfieButtonVisible = _selfies is not null && HasActiveThread;
+
+        PendingSelfie? pending = _selfie;
+        bool here = pending is not null && pending.ConversationId == ActiveConversationId;
+        IsSelfieInThread = here;
+
+        if (here)
+        {
+            SelfieContact = ActiveContacts().FirstOrDefault(contact => contact.Id == pending!.Subject);
+            SelfieStatus = pending!.Status;
+            IsSelfieProgressIndeterminate = pending.Progress is null;
+            SelfieProgress = pending.Progress ?? 0;
+        }
+
+        if (_selfies is null || !HasActiveThread)
+        {
+            CanAskForSelfie = false;
+            return;
+        }
+
+        if (pending is not null)
+        {
+            CanAskForSelfie = false;
+            SelfieHint = here ? pending.Status : "A selfie is being taken in another chat. Ask again when it arrives.";
+            return;
+        }
+
+        List<Contact> contacts = [.. ActiveContacts()];
+        SelfieAvailability availability = _selfies.GetAvailability(contacts);
+
+        if (!availability.IsReady)
+        {
+            CanAskForSelfie = false;
+            SelfieHint = availability.Problem ?? "Selfies are not available.";
+            return;
+        }
+
+        if (ActiveConversationId is null)
+        {
+            CanAskForSelfie = false;
+            SelfieHint = $"Say something to {ActiveContact?.DisplayName} first; a selfie shows what is going on in the chat.";
+            return;
+        }
+
+        CanAskForSelfie = true;
+        SelfieHint = IsGroupThread ? "Ask for a selfie: the group decides who sends it" : $"Ask {ActiveContact?.DisplayName} for a selfie";
+    }
+
+    /// <summary>
+    /// Shows a problem with something the user did in the view, such as saving a picture.
+    /// </summary>
+    public void ReportProblem(string problem)
+    {
+        Status = problem;
+    }
+
+    private string? ContactName(ContactId? id)
+    {
+        return id is null ? null : (ActiveContacts().FirstOrDefault(contact => contact.Id == id) ?? Contacts.FirstOrDefault(contact => contact.Id == id))?.DisplayName;
+    }
+
+    /// <summary>
+    /// A selfie being taken: in which chat, by whom once known, and how far along.
+    /// </summary>
+    private sealed class PendingSelfie
+    {
+        public PendingSelfie(ConversationId conversationId, CancellationTokenSource cancel)
+        {
+            ConversationId = conversationId;
+            Cancel = cancel;
+        }
+
+        public ConversationId ConversationId { get; }
+        public CancellationTokenSource Cancel { get; }
+        public ContactId? Subject { get; set; }
+        public string Status { get; set; } = string.Empty;
+
+        /// <summary>
+        /// From 0 to 100, or <see langword="null"/> while how long it takes is not known.
+        /// </summary>
+        public double? Progress { get; set; }
     }
 
     /// <summary>
@@ -342,6 +594,8 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         {
             StopSpeech();
         }
+
+        UpdateSelfie();
     }
 
     partial void OnActiveGroupChanged(Conversation? oldValue, Conversation? newValue)
@@ -361,6 +615,8 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         {
             _syncingInitiation = false;
         }
+
+        UpdateSelfie();
     }
 
     partial void OnIsGroupInitiationOnChanged(bool value)
@@ -505,7 +761,8 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     /// </summary>
     private void Voice(ChatMessage reply)
     {
-        if (!IsSpeechOn || _speech is null || _speechSession is not { } session)
+        // A selfie sent without words has nothing to say.
+        if (!IsSpeechOn || _speech is null || _speechSession is not { } session || string.IsNullOrWhiteSpace(reply.Text))
         {
             return;
         }
@@ -621,6 +878,8 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
 
             await RefreshActiveThreadAsync(contactsById, conversations);
 
+            // Photos may have been added, and a selfie model downloaded, meanwhile.
+            UpdateSelfie();
             Status = CountStatus();
             return true;
         }
@@ -1630,7 +1889,14 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         }
 
         CancelReply(item.Id);
+
+        if (_selfie is { } pending && pending.ConversationId == item.Id)
+        {
+            pending.Cancel.Cancel();
+        }
+
         Conversations.Remove(item);
+
         VisibleConversations.Remove(item);
         HasConversations = Conversations.Count > 0;
 

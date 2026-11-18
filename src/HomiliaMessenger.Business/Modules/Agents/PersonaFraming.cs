@@ -114,7 +114,7 @@ internal static partial class PersonaFraming
             bool own = sender == speaker.Id;
             MessageSender side = own ? MessageSender.Contact : MessageSender.User;
             string author = sender is { } id ? names.GetValueOrDefault(id, "Someone") : userName;
-            string text = own ? message.Text : $"{author}: {message.Text}";
+            string text = own ? message.AgentText : $"{author}: {message.AgentText}";
 
             if (turns.Count == 0 && own)
             {
@@ -409,11 +409,11 @@ internal static partial class PersonaFraming
         {
             if (turns.Count > 0 && turns[^1].Sender == message.Sender)
             {
-                turns[^1] = turns[^1] with { Text = turns[^1].Text + "\n" + message.Text };
+                turns[^1] = turns[^1] with { Text = turns[^1].Text + "\n" + message.AgentText };
             }
             else
             {
-                turns.Add(new AgentTurn(message.Sender, message.Text));
+                turns.Add(new AgentTurn(message.Sender, message.AgentText));
             }
         }
 
@@ -428,7 +428,7 @@ internal static partial class PersonaFraming
     {
         ArgumentNullException.ThrowIfNull(messages);
 
-        long total = messages.Sum(message => (long)message.Text.Length);
+        long total = messages.Sum(message => (long)message.AgentText.Length);
         long offset = 0;
         long nextBoundary = 0;
         int start = Math.Max(messages.Count - 1, 0);
@@ -446,7 +446,7 @@ internal static partial class PersonaFraming
                 nextBoundary = ((offset / MEMORY_STEP_CHARACTERS) + 1) * MEMORY_STEP_CHARACTERS;
             }
 
-            offset += messages[index].Text.Length;
+            offset += messages[index].AgentText.Length;
         }
 
         return start;

@@ -137,7 +137,19 @@ internal sealed class FakeBackend : IStableDiffusionBackend
 
     public List<(string Prompt, ImageGenerationSettings Settings, long Seed)> Requests { get; } = [];
 
-    public IStableDiffusionContext Open(string modelPath)
+    /// <summary>
+    /// Every drawing asked for, with what face matching it was opened with.
+    /// </summary>
+    public List<(Drawing Drawing, FaceMatchingFiles? FaceMatching)> Drawings { get; } = [];
+
+    /// <summary>
+    /// Conversions asked for, as input and output paths. Each writes an output of <see cref="ConvertedBytes"/> bytes.
+    /// </summary>
+    public List<(string Input, string Output)> Conversions { get; } = [];
+
+    public long ConvertedBytes { get; set; } = FaceMatchingCatalog.PREPARED_ENCODER_BYTES;
+
+    public IStableDiffusionContext Open(string modelPath, FaceMatchingFiles? faceMatching = null)
     {
         if (OpenFailure is not null)
         {
@@ -145,28 +157,50 @@ internal sealed class FakeBackend : IStableDiffusionBackend
         }
 
         Interlocked.Increment(ref _opened);
-        return new Context(this);
+        return new Context(this, faceMatching);
+    }
+
+    /// <summary>
+    /// Called while a conversion runs, as when the user pauses meanwhile.
+    /// </summary>
+    public Action? Converting { get; set; }
+
+    public void ConvertToQ8(string inputPath, string outputPath)
+    {
+        lock (Conversions)
+        {
+            Conversions.Add((inputPath, outputPath));
+        }
+
+        using FileStream output = File.Create(outputPath);
+        output.SetLength(ConvertedBytes);
+        Converting?.Invoke();
     }
 
     private sealed class Context : IStableDiffusionContext
     {
         private readonly FakeBackend _backend;
+        private readonly FaceMatchingFiles? _faceMatching;
         private volatile bool _canceled;
         private bool _isDisposed;
 
-        public Context(FakeBackend backend)
+        public Context(FakeBackend backend, FaceMatchingFiles? faceMatching)
         {
             _backend = backend;
+            _faceMatching = faceMatching;
         }
 
-        public GeneratedImage Generate(string prompt, ImageGenerationSettings settings, long seed, Action<ImageGenerationStage, long, long> progress)
+        public GeneratedImage Generate(Drawing drawing, ImageGenerationSettings settings, Action<ImageGenerationStage, long, long> progress)
         {
             ObjectDisposedException.ThrowIf(_isDisposed, this);
+            long seed = drawing.Seed;
 
             lock (_backend.Requests)
             {
-                _backend.Requests.Add((prompt, settings, seed));
+                _backend.Requests.Add((drawing.Prompt, settings, seed));
+                _backend.Drawings.Add((drawing, _faceMatching));
             }
+
 
             progress(ImageGenerationStage.Preparing, 0, 0);
 

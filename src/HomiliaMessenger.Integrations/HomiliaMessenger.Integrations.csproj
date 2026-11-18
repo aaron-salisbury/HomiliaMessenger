@@ -20,6 +20,8 @@
     <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.30.0" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.12" />
     <PackageReference Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.18.0" />
+    <!-- Decodes contact photos for selfies' face matching. The version Avalonia ships, so no second native library. -->
+    <PackageReference Include="SkiaSharp" Version="3.119.4" />
     <!-- Use the existing ONNX Runtime supplied by GenAI, rather than a second native runtime. -->
     <PackageReference Include="KokoroSharp" Version="0.8.4" GeneratePathProperty="true" ExcludeAssets="build;buildTransitive" />
   </ItemGroup>

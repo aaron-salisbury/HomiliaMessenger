@@ -121,10 +121,23 @@ public partial class AddImageModelViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(AddCommand))]
     private bool _acceptsUnverified;
 
-    public AddImageModelViewModel(IImageModelLibrary library)
+    /// <param name="purpose">What the model is added for: contact photos, or selfies.</param>
+    public AddImageModelViewModel(IImageModelLibrary library, ImageModelPurpose purpose = ImageModelPurpose.Portraits)
     {
         _library = library ?? throw new ArgumentNullException(nameof(library));
+        Purpose = purpose;
     }
+
+    public ImageModelPurpose Purpose { get; }
+
+    public string Title => Purpose == ImageModelPurpose.Selfies ? "Add a selfie model from Hugging Face" : "Add an image model from Hugging Face";
+
+    /// <summary>
+    /// What the settings below apply to, and the size images are drawn at.
+    /// </summary>
+    public string SettingsHint => Purpose == ImageModelPurpose.Selfies
+        ? $"This file looks like a complete Stable Diffusion 1.x model, but it has not been tested with this app or with face matching. Enter the settings its model card recommends; the defaults suit an ordinary checkpoint. Selfies are {ImageGenerationSettings.SELFIE_WIDTH}×{ImageGenerationSettings.SELFIE_HEIGHT}, and keep the contact's face with face matching, which is downloaded with the model if needed."
+        : "This file looks like a complete Stable Diffusion 1.x model, but it has not been tested with this app. Enter the settings its model card recommends; the defaults suit an ordinary checkpoint. Photos are 512×512.";
 
     /// <summary>
     /// Raised once a model has been added, with <see cref="AddedModelId"/> set.
@@ -160,7 +173,9 @@ public partial class AddImageModelViewModel : ObservableObject
     /// The settings as entered, or <see langword="null"/> when a value is missing.
     /// </summary>
     internal ImageGenerationSettings? Settings => Steps is { } steps && GuidanceScale is { } guidance
-        ? new ImageGenerationSettings(512, 512, Sampler, null, (int)steps, (float)guidance)
+        ? Purpose == ImageModelPurpose.Selfies
+            ? new ImageGenerationSettings(ImageGenerationSettings.SELFIE_WIDTH, ImageGenerationSettings.SELFIE_HEIGHT, Sampler, null, (int)steps, (float)guidance)
+            : new ImageGenerationSettings(512, 512, Sampler, null, (int)steps, (float)guidance)
         : null;
 
     partial void OnFilesChanged(IReadOnlyList<ImageModelFileOption> value)
@@ -257,7 +272,8 @@ public partial class AddImageModelViewModel : ObservableObject
 
         try
         {
-            LocalModelAddResult result = await _library.AddAsync(_lookup, SelectedFile.File, settings);
+            LocalModelAddResult result = await _library.AddAsync(_lookup, SelectedFile.File, settings, Purpose);
+
 
             if (result.IsSuccessful)
             {

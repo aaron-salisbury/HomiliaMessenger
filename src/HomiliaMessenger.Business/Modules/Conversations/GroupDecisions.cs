@@ -48,7 +48,7 @@ internal static class GroupDecisions
         foreach (ChatMessage message in messages.TakeLast(RECENT_MESSAGES))
         {
             string author = conversation.SenderOf(message) is { } id ? names.GetValueOrDefault(id, "Someone") : userName;
-            chat.AppendLine($"{author}: {message.Text.ReplaceLineEndings(" ")}");
+            chat.AppendLine($"{author}: {message.AgentText.ReplaceLineEndings(" ")}");
         }
 
         chat.Append($"Would {name} send a message now?");

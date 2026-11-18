@@ -142,7 +142,11 @@ public interface IConversationStore
     /// </summary>
     Task<Conversation> GetOrAddAsync(Conversation conversation, CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<ChatMessage>> ListMessagesAsync(ConversationId conversationId, CancellationToken cancellationToken = default);
+    /// <param name="withPictures">
+    /// Whether to read pictures sent with messages; without them, a message with a picture has only what it shows, with an
+    /// empty PNG, which is all agents need.
+    /// </param>
+    Task<IReadOnlyList<ChatMessage>> ListMessagesAsync(ConversationId conversationId, CancellationToken cancellationToken = default, bool withPictures = true);
 
     /// <summary>
     /// Adds a message to its conversation. Returns <see langword="false"/> when the conversation does not exist, when

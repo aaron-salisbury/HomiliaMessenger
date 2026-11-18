@@ -23,8 +23,12 @@ public sealed class WebSearchMigrationTests
         await using (SqliteConnection connection = await database.Services.GetRequiredService<IApplicationDatabase>()
             .OpenConnectionAsync(TestContext.CancellationToken))
         {
+            // A database from before the repair: without the column, and without the migrations that came after it.
             await connection.ExecuteAsync("ALTER TABLE WebSearchSettings DROP COLUMN PausedForQuota");
-            await connection.ExecuteAsync("DELETE FROM SchemaMigration WHERE Version = 9");
+            await connection.ExecuteAsync("ALTER TABLE ChatMessage DROP COLUMN ImagePng");
+            await connection.ExecuteAsync("ALTER TABLE ChatMessage DROP COLUMN ImageDescription");
+            await connection.ExecuteAsync("ALTER TABLE Contact DROP COLUMN Appearance");
+            await connection.ExecuteAsync("DELETE FROM SchemaMigration WHERE Version >= 9");
         }
 
         using TestDatabase reopened = await database.ReopenAsync(TestContext);
