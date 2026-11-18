@@ -185,7 +185,8 @@ public sealed class GroupConversationTests
         Assert.DoesNotContain(turn => turn.Text.Contains("Big news at work", StringComparison.Ordinal), toElena.Turns, "A private chat is never given to another contact.");
 
         // Each speaker sees who said what, and is stopped from writing for anyone else.
-        Assert.AreEqual(new AgentTurn(MessageSender.User, "Aaron: Made progress on it today, Marcus!\nMarcus: Marcus here."), toElena.Turns[^1]);
+        Assert.AreEqual(new AgentTurn(MessageSender.User, "Aaron: Made progress on it today, Marcus!\nMarcus: Marcus here.\n[Elena's turn to write in the group chat. Add something of your own to what was just said: a reaction, a different view, a joke, or a question. You can disagree if you would.]"), toElena.Turns[^1]);
+        Assert.EndsWith("[Marcus's turn to write in the group chat. You were just spoken to by name, so answer that.]", toMarcus.Turns[^1].Text);
         Assert.Contains("Marcus:", toElena.StopTexts!);
         Assert.Contains("Aaron:", toElena.StopTexts!);
     }

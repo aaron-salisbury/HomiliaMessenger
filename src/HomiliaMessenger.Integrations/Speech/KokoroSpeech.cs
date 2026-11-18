@@ -230,12 +230,29 @@ internal sealed class KokoroSpeech : ITextToSpeech, IAsyncDisposable
 
                 int[] tokens = Tokenizer.Tokenize(speechText, voiceId[0] == 'b' ? "en-gb" : "en-us");
 
-                foreach (int[] segment in Segments(tokens))
+                // Each segment is synthesized while the one before it plays, so there is no pause between them for
+                // synthesis, which is slower while a model is writing the next reply.
+                Task playing = Task.CompletedTask;
+
+                try
                 {
-                    stop.Token.ThrowIfCancellationRequested();
-                    float[] samples = _model.Infer(segment, voice.Features);
-                    stop.Token.ThrowIfCancellationRequested();
-                    await _play(samples, stop.Token).ConfigureAwait(false);
+                    foreach (int[] segment in Segments(tokens))
+                    {
+                        stop.Token.ThrowIfCancellationRequested();
+                        float[] samples = _model.Infer(segment, voice.Features);
+                        await playing.ConfigureAwait(false);
+                        stop.Token.ThrowIfCancellationRequested();
+                        playing = _play(samples, stop.Token);
+                    }
+
+                    await playing.ConfigureAwait(false);
+                }
+                catch when (!playing.IsCompleted)
+                {
+                    // Synthesis failed or was canceled mid-segment: stop what is playing before giving up.
+                    await stop.CancelAsync().ConfigureAwait(false);
+                    await playing.ContinueWith(_ => { }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default).ConfigureAwait(false);
+                    throw;
                 }
             }, stop.Token).ConfigureAwait(false);
             return SpeechResult.Success;
