@@ -149,7 +149,7 @@ public sealed class ContinueConversationTests
         Conversation group = await GroupTestKit.CreateGroupAsync(database, TestContext, marcus, elena);
         await service.SendAsync(group.Id, "Marcus, how was the shop?", TestContext.CancellationToken);
         await service.ReplyInGroupAsync(group.Id, new GroupTurn(marcus.Id, GroupTurnReason.Addressed), cancellationToken: TestContext.CancellationToken);
-        agent.Answer = request => request.Instructions.Contains(CONTINUE_RULE, StringComparison.Ordinal) ? AgentReply.Success("Oh, and the Triumph runs again.") : null;
+        agent.Answer = request => request.Turns[^1].Text.Contains(CONTINUE_RULE, StringComparison.Ordinal) ? AgentReply.Success("Oh, and the Triumph runs again.") : null;
 
         ConversationReply reply = await service.ReplyInGroupAsync(group.Id, new GroupTurn(marcus.Id, GroupTurnReason.Continuing), cancellationToken: TestContext.CancellationToken);
         IReadOnlyList<ChatMessage> messages = await service.ListMessagesAsync(group.Id, TestContext.CancellationToken);
@@ -159,7 +159,10 @@ public sealed class ContinueConversationTests
         Assert.AreSequenceEqual(new ContactId?[] { null, marcus.Id, marcus.Id }, messages.Select(group.SenderOf).ToArray());
         Assert.AreEqual("model-a", request.Model);
         Assert.StartsWith("You are Marcus, a real person in a group chat", request.Instructions);
-        Assert.AreEqual(new AgentTurn(MessageSender.User, "[Marcus's turn to write in the group chat]"), request.Turns[^1]);
+        Assert.AreEqual(MessageSender.User, request.Turns[^1].Sender);
+        Assert.StartsWith("[Marcus's turn to write in the group chat. ", request.Turns[^1].Text);
+        Assert.Contains(CONTINUE_RULE, request.Turns[^1].Text);
+        Assert.DoesNotContain(CONTINUE_RULE, request.Instructions, "Why the contact is writing closes the chat, so the instructions stay the same from turn to turn.");
     }
 
     [TestMethod]
@@ -186,7 +189,7 @@ public sealed class ContinueConversationTests
         Assert.IsTrue(replies.All(reply => reply.Sender == MessageSender.Contact));
         Assert.IsTrue(replies.Zip(replies.Skip(1)).All(pair => pair.First.SenderContactId != pair.Second.SenderContactId));
         Assert.HasCount(1, messages.Where(message => message.Sender == MessageSender.User), "No message is written for the user.");
-        Assert.Contains(CONTINUE_RULE, agent.ReplyRequests[^replies.Count].Instructions);
+        Assert.Contains(CONTINUE_RULE, agent.ReplyRequests[^replies.Count].Turns[^1].Text);
         Assert.AreEqual(GroupInitiation.Off, stored.Initiation);
         Assert.IsNull(stored.LastInitiationAtUtc, "Continuing does not use up the group's chance to start a conversation.");
     }

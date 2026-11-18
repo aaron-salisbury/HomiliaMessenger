@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,9 +21,12 @@ namespace HomiliaMessenger.Integrations.LocalModels;
 /// </summary>
 /// <remarks>
 /// As with ONNX, contacts on the same model share its loaded weights and context, one generation at a time; the cache is
-/// reused only for the tokens a prompt has in common with the previous one, so contacts never share conversation state.
-/// A context per contact (or a sequence per contact in one context) would keep each contact's cache warm, at the cost of
-/// that much more memory per contact; with small CPU contexts and two contacts, rereading the prompt is the better trade.
+/// reused only for the tokens a prompt has in common with the one it was read for, so contacts never share conversation
+/// state. When a prompt replaces one it shares little with, such as when contacts take turns in a group or a short
+/// question is put to the model between replies, the replaced cache is set aside in memory (up to
+/// <see cref="SAVED_BUDGET_BYTES"/>, least recently used dropped first) and restored when a later prompt continues it.
+/// Reading a prompt afresh on a CPU takes tens of seconds for a mid-sized model, where restoring its cache takes a
+/// fraction of one.
 /// </remarks>
 internal sealed class LlamaModelHost : IAsyncDisposable, IDisposable
 {
@@ -32,6 +36,11 @@ internal sealed class LlamaModelHost : IAsyncDisposable, IDisposable
     internal const long CACHE_BUDGET_BYTES = 768L * 1024 * 1024;
     internal const int MIN_CONTEXT_TOKENS = 1024;
     internal const int MAX_CONTEXT_TOKENS = 4096;
+
+    // Caches set aside for prompts that may be continued later stay within this much memory, and only those that would
+    // take at least this many tokens to read again are kept.
+    internal const long SAVED_BUDGET_BYTES = CACHE_BUDGET_BYTES;
+    internal const int MIN_SAVED_TOKENS = 128;
 
     private const uint BATCH_SIZE = 512;
 
@@ -47,6 +56,9 @@ internal sealed class LlamaModelHost : IAsyncDisposable, IDisposable
     private readonly ILogger<LlamaModelHost> _logger;
     private readonly ITimer _idleTimer;
     private readonly List<LLamaToken> _cached = [];
+
+    // Caches set aside, least recently used first.
+    private readonly List<SavedCache> _saved = [];
     private LLamaWeights? _weights;
     private LLamaContext? _context;
     private string? _loadedDirectory;
@@ -348,12 +360,38 @@ internal sealed class LlamaModelHost : IAsyncDisposable, IDisposable
     /// </summary>
     private int ReadPrompt(LLamaContext context, LLamaToken[] prompt)
     {
-        int reusable = 0;
-        int limit = Math.Min(_cached.Count, prompt.Length - 1);
+        int reusable = SharedLength(_cached, prompt);
+        SavedCache? resumed = null;
+        int resumable = reusable;
 
-        while (reusable < limit && _cached[reusable] == prompt[reusable])
+        foreach (SavedCache saved in _saved)
         {
-            reusable++;
+            int shared = SharedLength(saved.Tokens, prompt);
+
+            if (shared > resumable)
+            {
+                resumed = saved;
+                resumable = shared;
+            }
+        }
+
+        if (resumed is not null)
+        {
+            _saved.Remove(resumed);
+        }
+
+        // What this prompt would discard is set aside first, should a later prompt continue it.
+        if (_cached.Count - reusable >= MIN_SAVED_TOKENS)
+        {
+            SetAside(context, resumed?.Bytes ?? 0);
+        }
+
+        if (resumed is not null)
+        {
+            using (resumed)
+            {
+                reusable = Restore(context, resumed) ? resumable : 0;
+            }
         }
 
         context.NativeHandle.MemorySequenceRemove(LLamaSeqId.Zero, reusable, -1);
@@ -385,6 +423,122 @@ internal sealed class LlamaModelHost : IAsyncDisposable, IDisposable
         }
 
         return batch.TokenCount - 1;
+    }
+
+    /// <summary>
+    /// How many tokens at the start of <paramref name="prompt"/> <paramref name="cached"/> already holds, short of the
+    /// prompt's last token, which is always read again for its predictions.
+    /// </summary>
+    internal static int SharedLength(IReadOnlyList<LLamaToken> cached, LLamaToken[] prompt)
+    {
+        int shared = 0;
+        int limit = Math.Min(cached.Count, prompt.Length - 1);
+
+        while (shared < limit && cached[shared] == prompt[shared])
+        {
+            shared++;
+        }
+
+        return shared;
+    }
+
+    /// <summary>
+    /// Copies the cache out of the context, to be restored by a later prompt that continues it, dropping the least
+    /// recently used caches set aside to stay within <see cref="SAVED_BUDGET_BYTES"/>. A cache that a newer one
+    /// continues is dropped too, since the newer one serves every prompt the older would. Room is made before the copy is
+    /// taken, so the caches set aside never hold more than the budget at once.
+    /// </summary>
+    /// <param name="reserved">Memory still held by a cache set aside that is about to be restored.</param>
+    private void SetAside(LLamaContext context, long reserved)
+    {
+        LLamaToken[] tokens = [.. _cached];
+
+        for (int index = _saved.Count - 1; index >= 0; index--)
+        {
+            LLamaToken[] older = _saved[index].Tokens;
+
+            if (older.Length <= tokens.Length && Enumerable.Range(0, older.Length).All(position => older[position] == tokens[position]))
+            {
+                _saved[index].Dispose();
+                _saved.RemoveAt(index);
+            }
+        }
+
+        long needed = (long)context.NativeHandle.GetStateSize(LLamaSeqId.Zero);
+
+        if (needed + reserved > SAVED_BUDGET_BYTES)
+        {
+            return;
+        }
+
+        long total = _saved.Sum(cache => cache.Bytes) + reserved;
+
+        while (total + needed > SAVED_BUDGET_BYTES && _saved.Count > 0)
+        {
+            total -= _saved[0].Bytes;
+            _saved[0].Dispose();
+            _saved.RemoveAt(0);
+        }
+
+        try
+        {
+            _saved.Add(new SavedCache(tokens, context.GetState(LLamaSeqId.Zero)));
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            // Setting aside only saves time later; without it, a later prompt is read afresh. The context's own cache is
+            // untouched.
+            _logger.LogWarning(error, "Could not set aside the prompt cache of {Tokens} tokens.", tokens.Length);
+        }
+    }
+
+    /// <summary>
+    /// Loads a cache set aside into the context in place of its own. Returns <see langword="false"/>, leaving the cache
+    /// empty, if it could not be loaded.
+    /// </summary>
+    private bool Restore(LLamaContext context, SavedCache saved)
+    {
+        try
+        {
+            context.NativeHandle.MemorySequenceRemove(LLamaSeqId.Zero, 0, -1);
+            context.LoadState(saved.State, LLamaSeqId.Zero);
+            _cached.Clear();
+            _cached.AddRange(saved.Tokens);
+            return true;
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            _logger.LogWarning(error, "Could not restore a prompt cache of {Tokens} tokens; reading the prompt afresh.", saved.Tokens.Length);
+            ClearCache();
+            return false;
+        }
+    }
+
+    private void DropSaved()
+    {
+        foreach (SavedCache saved in _saved)
+        {
+            saved.Dispose();
+        }
+
+        _saved.Clear();
+    }
+
+    /// <summary>
+    /// A prompt's cache copied out of the context, and the tokens it holds.
+    /// </summary>
+    private sealed class SavedCache(LLamaToken[] tokens, LLamaContext.SequenceState state) : IDisposable
+    {
+        public LLamaToken[] Tokens { get; } = tokens;
+
+        public LLamaContext.SequenceState State { get; } = state;
+
+        public long Bytes { get; } = (long)state.Size;
+
+        public void Dispose()
+        {
+            State.Dispose();
+        }
     }
 
     /// <summary>
@@ -434,6 +588,7 @@ internal sealed class LlamaModelHost : IAsyncDisposable, IDisposable
 
     private void UnloadCore()
     {
+        DropSaved();
         _context?.Dispose();
         _weights?.Dispose();
         _context = null;

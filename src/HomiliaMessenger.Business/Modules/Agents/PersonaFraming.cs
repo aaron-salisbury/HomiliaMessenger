@@ -18,9 +18,9 @@ namespace HomiliaMessenger.Business.Modules.Agents;
 internal static partial class PersonaFraming
 {
     /// <summary>
-    /// Who else is in a group chat, and why the persona is writing now.
+    /// Who else is in a group chat.
     /// </summary>
-    internal sealed record GroupFrame(IReadOnlyList<Contact> Others, GroupTurnReason Reason);
+    internal sealed record GroupFrame(IReadOnlyList<Contact> Others);
 
     /// <summary>
     /// Memory is the most recent messages within this many characters. Small models on a CPU are slow to read long
@@ -66,6 +66,11 @@ internal static partial class PersonaFraming
     /// group, and the group's recent messages, each attributed to whoever wrote it. Only the speaker's own memories are
     /// given; what the other contacts remember is never included.
     /// </summary>
+    /// <remarks>
+    /// Why the speaker is writing now changes from turn to turn, so it closes the conversation rather than sitting in the
+    /// instructions: the instructions and the messages before it then stay the same from one of the speaker's turns to
+    /// the next, and a local model reads only what is new (see <c>LlamaModelHost</c>).
+    /// </remarks>
     /// <param name="messages">The group's messages after the speaker's memory checkpoint, oldest first.</param>
     internal static AgentRequest BuildGroup(Contact speaker, UserProfile user, Conversation conversation, IReadOnlyList<Contact> others, GroupTurnReason reason, IReadOnlyList<string> memories, IReadOnlyList<ChatMessage> messages, string model, DateOnly today, IReadOnlyList<WebSearchResult>? lookedUp = null)
     {
@@ -76,7 +81,7 @@ internal static partial class PersonaFraming
         ArgumentNullException.ThrowIfNull(memories);
         ArgumentNullException.ThrowIfNull(messages);
 
-        GroupFrame group = new(others, reason);
+        GroupFrame group = new(others);
         List<string> stops = [.. StopTexts(speaker, user)];
 
         foreach (Contact other in others)
@@ -87,16 +92,17 @@ internal static partial class PersonaFraming
             }
         }
 
-        return new AgentRequest(model, Instructions(speaker, user, memories, today, lookedUp, group), GroupMemory(speaker, user, conversation, others, messages), stops);
+        return new AgentRequest(model, Instructions(speaker, user, memories, today, lookedUp, group), GroupMemory(speaker, user, conversation, others, messages, reason), stops);
     }
 
     /// <summary>
     /// The group's recent messages as turns for <paramref name="speaker"/>: their own messages as their turns, and
     /// everyone else's as the other side, each line labelled with who wrote it, so the speaker knows who said what. The
     /// turns always end with the other side, closing with a note that it is the speaker's turn when nobody else has
-    /// written since they did, since a chat template asks the model to answer the other side's last turn.
+    /// written since they did, since a chat template asks the model to answer the other side's last turn. Given
+    /// <paramref name="reason"/>, the turns always close with that note, saying why the speaker is writing now.
     /// </summary>
-    internal static IReadOnlyList<AgentTurn> GroupMemory(Contact speaker, UserProfile user, Conversation conversation, IReadOnlyList<Contact> others, IReadOnlyList<ChatMessage> messages)
+    internal static IReadOnlyList<AgentTurn> GroupMemory(Contact speaker, UserProfile user, Conversation conversation, IReadOnlyList<Contact> others, IReadOnlyList<ChatMessage> messages, GroupTurnReason? reason = null)
     {
         ArgumentNullException.ThrowIfNull(speaker);
         ArgumentNullException.ThrowIfNull(user);
@@ -132,12 +138,37 @@ internal static partial class PersonaFraming
             }
         }
 
+        string note = reason is { } why
+            ? $"[{speaker.DisplayName}'s turn to write in the group chat. {TurnRule(why, string.IsNullOrWhiteSpace(user.Name) ? "your friend" : user.Name.Trim(), JoinNames([.. others.Select(other => other.DisplayName)]))}]"
+            : $"[{speaker.DisplayName}'s turn to write in the group chat]";
+
         if (turns.Count == 0 || turns[^1].Sender != MessageSender.User)
         {
-            turns.Add(new AgentTurn(MessageSender.User, $"[{speaker.DisplayName}'s turn to write in the group chat]"));
+            turns.Add(new AgentTurn(MessageSender.User, note));
+        }
+        else if (reason is not null)
+        {
+            turns[^1] = turns[^1] with { Text = turns[^1].Text + "\n" + note };
         }
 
         return turns;
+    }
+
+    /// <summary>
+    /// Why a contact is writing in a group now, and so what their message should do.
+    /// </summary>
+    private static string TurnRule(GroupTurnReason reason, string user, string othersNames)
+    {
+        return reason switch
+        {
+            GroupTurnReason.Addressed => "You were just spoken to by name, so answer that.",
+            GroupTurnReason.Answering => $"Answer {user}'s latest message.",
+            GroupTurnReason.FollowingUp => "Add something of your own to what was just said: a reaction, a different view, a joke, or a question. You can disagree if you would.",
+            GroupTurnReason.Greeting => $"You were just added to this group chat. Say a brief, natural hello to {user} and {othersNames}, with no long introduction.",
+            GroupTurnReason.Initiating => "Nobody has written for a while. Start something new, naturally: a bit of news from your life, a question for the group, or a follow-up on something talked about before.",
+            GroupTurnReason.Continuing => ContinueRule(user),
+            _ => "Reply to the group as you would."
+        };
     }
 
     /// <summary>
@@ -276,7 +307,7 @@ internal static partial class PersonaFraming
         }
         else
         {
-            AppendGroupRules(builder, name, userName, othersNames!, group, remembers);
+            AppendGroupRules(builder, name, userName, othersNames!, remembers);
         }
 
         builder.AppendLine("- Draw on your background and personality when it fits, including what you would rather not talk about.");
@@ -302,22 +333,13 @@ internal static partial class PersonaFraming
         return builder.ToString();
     }
 
-    private static void AppendGroupRules(StringBuilder builder, string name, string? userName, string othersNames, GroupFrame group, bool remembers)
+    private static void AppendGroupRules(StringBuilder builder, string name, string? userName, string othersNames, bool remembers)
     {
         string user = userName ?? "your friend";
 
         builder.AppendLine($"- Write only {name}'s next message in the group chat, the way {name} would actually text: casual and natural, usually one or two short sentences.");
         builder.AppendLine($"- Never write messages for {user} or {othersNames}, and never start with anyone's name and a colon.");
-        builder.AppendLine(group.Reason switch
-        {
-            GroupTurnReason.Addressed => "- You were just spoken to by name, so answer that.",
-            GroupTurnReason.Answering => $"- Answer {user}'s latest message.",
-            GroupTurnReason.FollowingUp => "- Add something of your own to what was just said: a reaction, a different view, a joke, or a question. You can disagree if you would.",
-            GroupTurnReason.Greeting => $"- You were just added to this group chat. Say a brief, natural hello to {user} and {othersNames}, with no long introduction.",
-            GroupTurnReason.Initiating => "- Nobody has written for a while. Start something new, naturally: a bit of news from your life, a question for the group, or a follow-up on something talked about before.",
-            GroupTurnReason.Continuing => $"- {ContinueRule(user)}",
-            _ => $"- Reply to the group as {name} would."
-        });
+        builder.AppendLine("- The last line of the chat says why it is your turn; write the message it asks for.");
         builder.AppendLine("- Talk to whoever you are answering, by name when it helps. Don't greet everyone again, introduce yourself again, or repeat what was already said.");
 
         if (remembers)
