@@ -41,6 +41,10 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
     // The description last used to generate a photo, offered again so it can be adjusted rather than retyped.
     private string? _portraitDescription;
 
+    // The description the contact's photo was generated from, kept with the contact so selfies draw the same person;
+    // null for a photo chosen from a file.
+    private string? _appearance;
+
     [ObservableProperty] private string? _givenName;
     [ObservableProperty] private string? _familyName;
     [ObservableProperty] private string? _nickname;
@@ -125,6 +129,8 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
             Agent = AgentOptions.FirstOrDefault(option => option.Assignment == contact.Agent) ?? AgentOption.None;
             IsFavorite = contact.IsFavorite;
             LoadStoredPhoto(contact.Photo);
+            _appearance = contact.Appearance;
+            _portraitDescription = contact.Appearance;
         }
 
         RefreshVoices(voices ?? [], isSpeechAvailable);
@@ -325,6 +331,7 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
         if (_photo is not null)
         {
             SetPhoto(null);
+            _appearance = null;
             UpdateDirty();
         }
     }
@@ -334,6 +341,7 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
         try
         {
             SetPhoto(await PhotoFile.ReadAsync(stream));
+            _appearance = null;
             UpdateDirty();
             MessageRaised?.Invoke(this, "Photo selected. Save the contact to keep it.");
         }
@@ -370,6 +378,7 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
             try
             {
                 SetPhoto(photo);
+                _appearance = generator.ChosenDescription;
                 UpdateDirty();
                 MessageRaised?.Invoke(this, "Photo generated. Save the contact to keep it.");
             }
@@ -434,7 +443,9 @@ public partial class ContactDetailViewModel : ObservableObject, IDisposable
             Background = Clean(Background),
             Agent = _agentAssignment,
             VoiceId = _voiceId,
+            Appearance = _appearance,
             IsFavorite = IsFavorite
+
         };
     }
 

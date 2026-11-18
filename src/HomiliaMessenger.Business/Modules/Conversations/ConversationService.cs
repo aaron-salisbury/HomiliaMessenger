@@ -211,7 +211,7 @@ internal sealed class ConversationService : IConversationService
             return null;
         }
 
-        IReadOnlyList<ChatMessage> messages = await _store.ListMessagesAsync(conversationId, cancellationToken);
+        IReadOnlyList<ChatMessage> messages = await _store.ListMessagesAsync(conversationId, cancellationToken, withPictures: false);
         DateTimeOffset now = _timeProvider.GetUtcNow();
 
         if (cycle.Trigger == GroupTrigger.Opened && cycle.TurnsTaken == 0)
@@ -382,7 +382,7 @@ internal sealed class ConversationService : IConversationService
             return new ConversationReply(ReplyStatus.Unavailable, null, $"There is no agent provider named \"{assignment.Provider}\". Available providers: {known}.");
         }
 
-        IReadOnlyList<ChatMessage> messages = await _store.ListMessagesAsync(conversation.Id, cancellationToken);
+        IReadOnlyList<ChatMessage> messages = await _store.ListMessagesAsync(conversation.Id, cancellationToken, withPictures: false);
 
         if (continuing && messages.Count == 0)
         {
@@ -510,7 +510,7 @@ internal sealed class ConversationService : IConversationService
     /// </summary>
     private async Task<Conversation?> LearnAsync(Conversation conversation, Contact contact, IReadOnlyList<Contact> contacts, AgentAssignment assignment, IConversationAgent agent, CancellationToken cancellationToken)
     {
-        IReadOnlyList<ChatMessage> messages = await _store.ListMessagesAsync(conversation.Id, cancellationToken);
+        IReadOnlyList<ChatMessage> messages = await _store.ListMessagesAsync(conversation.Id, cancellationToken, withPictures: false);
         MessageId? checkpoint = conversation.MemoryThroughFor(contact.Id);
         int start = MemoryNotes.FirstUnremembered(messages, checkpoint);
 

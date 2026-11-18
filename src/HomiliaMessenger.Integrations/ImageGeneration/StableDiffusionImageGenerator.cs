@@ -8,23 +8,33 @@ using System.Threading.Tasks;
 namespace HomiliaMessenger.Integrations.ImageGeneration;
 
 /// <summary>
-/// Generates images with the active image model in stable-diffusion.cpp, in this process and on the CPU.
+/// Generates contact photos and selfies with the image model chosen for each, in stable-diffusion.cpp, in this process and
+/// on the CPU.
 /// </summary>
 /// <remarks>
 /// <para>
-/// A Stable Diffusion 1.x model needs about 3.7 GB of memory while it draws (measured with DreamShaper 8 LCM Q8_0), so
-/// only one image is generated at a time, idle conversation models are released first, and the model is loaded for each
-/// image and released as soon as it is done rather than kept in memory between photos. Loading its weights takes a few
-/// of the roughly 18 seconds an image takes on a fast desktop CPU, a cost paid again by "Regenerate" but not worth
-/// holding gigabytes of memory for.
+/// A Stable Diffusion 1.x model needs about 3.7 GB of memory while it draws (measured with DreamShaper 8 LCM Q8_0), and
+/// about 4.5 GB with face matching for a selfie, so only one image is generated at a time, idle conversation models are
+/// released first, and the model is loaded for each image and released as soon as it is done rather than kept in memory
+/// between images. Loading its weights takes a few of the seconds an image takes, a cost paid again by "Generate another"
+/// but not worth holding gigabytes of memory for.
 /// </para>
 /// <para>
 /// Drawing runs on a thread of its own, never the UI's. Canceling asks the runtime to stop, which it does between
 /// sampling steps; its last stage, decoding, cannot be interrupted, so a cancellation then takes effect when it ends.
 /// </para>
+/// <para>
+/// Selfies draw one person: Stable Diffusion 1.x mixes up the features of two in one picture, and face matching takes
+/// one face. A model that draws several people could take more of the request's subjects.
+/// </para>
 /// </remarks>
-internal sealed class StableDiffusionImageGenerator : IImageGenerator
+internal sealed class StableDiffusionImageGenerator : IImageGenerator, ISelfieImageGenerator
 {
+    /// <summary>
+    /// How many people a selfie shows with a Stable Diffusion 1.x model.
+    /// </summary>
+    internal const int MAX_SELFIE_SUBJECTS = 1;
+
     private readonly ImageModelLibrary _library;
     private readonly IStableDiffusionBackend _backend;
     private readonly ImageGenerationGate _gate;
@@ -55,20 +65,85 @@ internal sealed class StableDiffusionImageGenerator : IImageGenerator
             : new ImageGeneratorAvailability(false, null, true, "Download an image model in Settings to generate photos.");
     }
 
-    public async Task<ImageGenerationResult> GenerateAsync(ImageGenerationRequest request, IProgress<ImageGenerationProgress>? progress = null, CancellationToken cancellationToken = default)
+    SelfieGeneratorAvailability ISelfieImageGenerator.GetAvailability()
+    {
+        return SelfieAvailability();
+    }
+
+    internal SelfieGeneratorAvailability SelfieAvailability()
+    {
+        if (_backend.RuntimeProblem is { } problem)
+        {
+            return new SelfieGeneratorAvailability(false, null, 0, false, problem);
+        }
+
+        if (_library.ActiveFor(ImageModelPurpose.Selfies) is not { } model)
+        {
+            return new SelfieGeneratorAvailability(false, null, MAX_SELFIE_SUBJECTS, true, "Download a selfie model in Settings to ask for selfies.");
+        }
+
+        return _library.IsFaceMatchingReady
+            ? new SelfieGeneratorAvailability(true, model.DisplayName, MAX_SELFIE_SUBJECTS, true, null)
+            : new SelfieGeneratorAvailability(false, model.DisplayName, MAX_SELFIE_SUBJECTS, true, "Download face matching in Settings, under Selfies, to ask for selfies.");
+    }
+
+    public Task<ImageGenerationResult> GenerateAsync(ImageGenerationRequest request, IProgress<ImageGenerationProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
 
         if (string.IsNullOrWhiteSpace(request.Prompt))
         {
-            return ImageGenerationResult.Failed("There is nothing to draw: the prompt is empty.");
+            return Task.FromResult(ImageGenerationResult.Failed("There is nothing to draw: the prompt is empty."));
         }
 
         if (GetAvailability() is { IsReady: false } availability)
         {
-            return ImageGenerationResult.Unavailable(availability.Problem ?? "Image generation is not available.");
+            return Task.FromResult(ImageGenerationResult.Unavailable(availability.Problem ?? "Image generation is not available."));
         }
 
+        return DrawAsync(ImageModelPurpose.Portraits, new Drawing(request.Prompt, request.Seed), null, "photo", progress, cancellationToken);
+    }
+
+    public Task<ImageGenerationResult> GenerateAsync(SelfieImageRequest request, IProgress<ImageGenerationProgress>? progress = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (request.Subjects.Count == 0)
+        {
+            return Task.FromResult(ImageGenerationResult.Failed("There is no one to draw in the selfie."));
+        }
+
+        if (SelfieAvailability() is { IsReady: false } availability)
+        {
+            return Task.FromResult(ImageGenerationResult.Unavailable(availability.Problem ?? "Selfies are not available."));
+        }
+
+        SelfieSubject subject = request.Subjects[0];
+        GeneratedImage face;
+
+        try
+        {
+            face = FaceReference.FromPhoto(subject.Photo);
+        }
+        catch (Exception error) when (error is InvalidDataException or ArgumentException)
+        {
+            _logger.LogWarning(error, "A contact's photo could not be read for a selfie.");
+            return Task.FromResult(ImageGenerationResult.Failed($"{subject.Name}'s profile photo could not be read for the selfie. Try another photo."));
+        }
+
+        SelfiePrompt prompt = SelfiePromptComposer.Compose(subject, request.Scene);
+        _logger.LogDebug("Selfie prompt: {Prompt} Negative: {Negative}", prompt.Prompt, prompt.NegativePrompt);
+        Drawing drawing = new(prompt.Prompt, request.Seed, prompt.NegativePrompt, face, FaceMatchingCatalog.STRENGTH);
+
+        return DrawAsync(ImageModelPurpose.Selfies, drawing, _library.FaceMatchingPaths, "selfie", progress, cancellationToken);
+    }
+
+    /// <summary>
+    /// Draws with the model chosen for <paramref name="purpose"/>, one image at a time.
+    /// </summary>
+    /// <param name="what">What is drawn, for problems: "photo" or "selfie".</param>
+    private async Task<ImageGenerationResult> DrawAsync(ImageModelPurpose purpose, Drawing drawing, FaceMatchingFiles? faceMatching, string what, IProgress<ImageGenerationProgress>? progress, CancellationToken cancellationToken)
+    {
         if (!_gate.TryEnter())
         {
             return ImageGenerationResult.Busy;
@@ -76,12 +151,14 @@ internal sealed class StableDiffusionImageGenerator : IImageGenerator
 
         try
         {
-            if (_library.Active is not { } model)
+            if (_library.ActiveFor(purpose) is not { } model)
             {
-                return ImageGenerationResult.Unavailable("Download an image model in Settings to generate photos.");
+                return ImageGenerationResult.Unavailable($"Download an image model in Settings to generate a {what}.");
             }
 
-            if (model.Settings.Problem() is { } settingsProblem)
+            ImageGenerationSettings settings = model.SettingsFor(purpose);
+
+            if (settings.Problem() is { } settingsProblem)
             {
                 return ImageGenerationResult.Failed($"{model.DisplayName}'s settings cannot be used: {settingsProblem}");
             }
@@ -91,31 +168,31 @@ internal sealed class StableDiffusionImageGenerator : IImageGenerator
 
             string path = _library.CheckpointPath(model);
 
-            if (!File.Exists(path))
+            if (!File.Exists(path) || (faceMatching is not null && (!File.Exists(faceMatching.ImageEncoderPath) || !File.Exists(faceMatching.AdapterPath))))
             {
-                return ImageGenerationResult.Unavailable($"{model.DisplayName}'s file is missing. Download it again in Settings.");
+                return ImageGenerationResult.Unavailable($"{model.DisplayName}'s files are missing. Download it again in Settings.");
             }
 
             GeneratedImage? image = null;
 
-            async Task DrawAsync()
+            async Task DrawInBackgroundAsync()
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 image = await Task.Factory.StartNew(
-                    () => Draw(path, model.Settings, request, progress, cancellationToken),
+                    () => Draw(path, faceMatching, settings, drawing, progress, cancellationToken),
                     CancellationToken.None,
                     TaskCreationOptions.LongRunning,
                     TaskScheduler.Default).ConfigureAwait(false);
             }
 
-            await (_withoutConversationModelsAsync?.Invoke(DrawAsync) ?? DrawAsync()).ConfigureAwait(false);
+            await (_withoutConversationModelsAsync?.Invoke(DrawInBackgroundAsync) ?? DrawInBackgroundAsync()).ConfigureAwait(false);
 
             if (image is null)
             {
-                return ImageGenerationResult.Failed("Could not generate the photo.");
+                return ImageGenerationResult.Failed($"Could not generate the {what}.");
             }
 
-            _logger.LogInformation("Generated a {Width}×{Height} image with {ModelId}.", image.Width, image.Height, model.Id);
+            _logger.LogInformation("Generated a {Width}×{Height} {What} with {ModelId}.", image.Width, image.Height, what, model.Id);
 
             return ImageGenerationResult.Success(PngEncoder.Encode(image));
         }
@@ -129,8 +206,8 @@ internal sealed class StableDiffusionImageGenerator : IImageGenerator
         {
             _logger.LogError(error, "Image generation failed.");
             return ImageGenerationResult.Failed(error is OutOfMemoryException
-                ? "There was not enough memory to generate the photo. Close other programs and try again."
-                : "Could not generate the photo: " + error.Message);
+                ? $"There was not enough memory to generate the {what}. Close other programs and try again."
+                : $"Could not generate the {what}: " + error.Message);
         }
         finally
         {
@@ -141,15 +218,15 @@ internal sealed class StableDiffusionImageGenerator : IImageGenerator
     /// <summary>
     /// Loads the model, draws, and releases the model, on the calling (background) thread.
     /// </summary>
-    private GeneratedImage Draw(string path, ImageGenerationSettings settings, ImageGenerationRequest request, IProgress<ImageGenerationProgress>? progress, CancellationToken cancellationToken)
+    private GeneratedImage Draw(string path, FaceMatchingFiles? faceMatching, ImageGenerationSettings settings, Drawing drawing, IProgress<ImageGenerationProgress>? progress, CancellationToken cancellationToken)
     {
-        using IStableDiffusionContext context = _backend.Open(path);
+        using IStableDiffusionContext context = _backend.Open(path, faceMatching);
 
         // Disposed before the context, waiting for a cancellation in progress, so it never reaches a released context.
         using CancellationTokenRegistration registration = cancellationToken.Register(context.Cancel);
         cancellationToken.ThrowIfCancellationRequested();
 
-        return context.Generate(request.Prompt, settings, request.Seed, (stage, completed, total) =>
+        return context.Generate(drawing, settings, (stage, completed, total) =>
         {
             progress?.Report(new ImageGenerationProgress(stage, completed, total));
         });

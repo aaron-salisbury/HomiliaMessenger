@@ -39,7 +39,7 @@ public static class DependencyInjection
         string databasePath = Path.Combine(applicationDataDirectory, DATABASE_FILE_NAME);
         services.AddSingleton<IApplicationDatabase>(_ => new ApplicationDatabase(databasePath));
         services.AddSingleton<ApplicationDatabaseInitializer>(provider => new ApplicationDatabaseInitializer(
-            provider.GetRequiredService<IApplicationDatabase>(), [new CreateContactsMigration(), new CreateConversationsMigration(), new AddRelationshipsAndUserProfileMigration(), new AddConversationMemoryMigration(), new AddContactVoiceMigration(), new AddContactMemoriesMigration(), new AddWebSearchMigration(), new AddGroupConversationsMigration(), new RepairWebSearchSettingsMigration()]));
+            provider.GetRequiredService<IApplicationDatabase>(), [new CreateContactsMigration(), new CreateConversationsMigration(), new AddRelationshipsAndUserProfileMigration(), new AddConversationMemoryMigration(), new AddContactVoiceMigration(), new AddContactMemoriesMigration(), new AddWebSearchMigration(), new AddGroupConversationsMigration(), new RepairWebSearchSettingsMigration(), new AddSelfiesMigration()]));
 
         services.AddScoped<IContactStore, SqliteContactStore>();
         services.AddScoped<IConversationStore, SqliteConversationStore>();

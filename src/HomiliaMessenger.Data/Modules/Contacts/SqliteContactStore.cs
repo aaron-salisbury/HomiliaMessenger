@@ -13,7 +13,7 @@ namespace HomiliaMessenger.Data.Modules.Contacts;
 internal sealed class SqliteContactStore : IContactStore
 {
     private const string SELECT_CONTACT_SQL = """
-        SELECT Id, GivenName, FamilyName, Nickname, Birthday, Gender, Relationship, Personality, Background, AgentProvider, AgentModel, VoiceId, Photo, IsFavorite
+        SELECT Id, GivenName, FamilyName, Nickname, Birthday, Gender, Relationship, Personality, Background, AgentProvider, AgentModel, VoiceId, Photo, Appearance, IsFavorite
         FROM Contact
         """;
 
@@ -50,13 +50,13 @@ internal sealed class SqliteContactStore : IContactStore
         ArgumentNullException.ThrowIfNull(contact);
 
         const string sql = """
-            INSERT INTO Contact (Id, GivenName, FamilyName, Nickname, Birthday, Gender, Relationship, Personality, Background, AgentProvider, AgentModel, VoiceId, Photo, IsFavorite)
-            VALUES (@Id, @GivenName, @FamilyName, @Nickname, @Birthday, @Gender, @Relationship, @Personality, @Background, @AgentProvider, @AgentModel, @VoiceId, @Photo, @IsFavorite)
+            INSERT INTO Contact (Id, GivenName, FamilyName, Nickname, Birthday, Gender, Relationship, Personality, Background, AgentProvider, AgentModel, VoiceId, Photo, Appearance, IsFavorite)
+            VALUES (@Id, @GivenName, @FamilyName, @Nickname, @Birthday, @Gender, @Relationship, @Personality, @Background, @AgentProvider, @AgentModel, @VoiceId, @Photo, @Appearance, @IsFavorite)
             ON CONFLICT(Id) DO UPDATE SET
                 GivenName=excluded.GivenName, FamilyName=excluded.FamilyName, Nickname=excluded.Nickname,
                 Birthday=excluded.Birthday, Gender=excluded.Gender, Relationship=excluded.Relationship, Personality=excluded.Personality, Background=excluded.Background,
                 AgentProvider=excluded.AgentProvider, AgentModel=excluded.AgentModel, VoiceId=excluded.VoiceId,
-                Photo=excluded.Photo, IsFavorite=excluded.IsFavorite;
+                Photo=excluded.Photo, Appearance=excluded.Appearance, IsFavorite=excluded.IsFavorite;
             """;
 
         await using SqliteConnection connection = await _database.OpenConnectionAsync(cancellationToken);
@@ -76,6 +76,7 @@ internal sealed class SqliteContactStore : IContactStore
             AgentModel = contact.Agent?.Model,
             contact.VoiceId,
             contact.Photo,
+            contact.Appearance,
             contact.IsFavorite
         }, cancellationToken: cancellationToken));
     }
@@ -111,6 +112,7 @@ internal sealed class SqliteContactStore : IContactStore
             Agent = row.AgentProvider is null || row.AgentModel is null ? null : new AgentAssignment(row.AgentProvider, row.AgentModel),
             VoiceId = row.VoiceId,
             Photo = row.Photo,
+            Appearance = row.Appearance,
             IsFavorite = row.IsFavorite
         };
     }
@@ -130,6 +132,7 @@ internal sealed class SqliteContactStore : IContactStore
         public string? AgentModel { get; set; }
         public string? VoiceId { get; set; }
         public byte[]? Photo { get; set; }
+        public string? Appearance { get; set; }
         public bool IsFavorite { get; set; }
     }
 }

@@ -78,6 +78,10 @@ Limitations of that design:
 - **Deterministic rules, model-assisted where cheap.** Membership, turn limits, cooldowns, direct address, cancellation, and the order of model use are plain rules. The one soft decision, whether a contact adds something unasked, uses the contact's own model only when it is already loaded, as a yes-or-no answer that is validated, at most once a round, and never recursively; anything else falls back to rules and chance. No coordinator model is needed or downloaded.
 - **The messenger drives the rounds.** Business decides each turn and writes each message; the messenger asks for turns one at a time while the group is open and stops when it is not. That keeps "only while open" a property of what is on screen, with nothing running in the background.
 
+## Selfies
+
+The camera button asks the group for a selfie. A selfie shows one contact, chosen among those with a profile photo by the coordinator's rules: whoever your latest message spoke to by name, then one it named, then a contact who just offered a picture, then whoever wrote most recently. That contact plans it with their own model and sends it as their message; the others can react to it, reading it as a description. Asking for a selfie is not a round: it neither starts nor stops the group's turn-taking, and arrives even if you leave the group meanwhile. See [Selfies](image_generation.md#selfies).
+
 ## Not included
 
 - Groups of more than two contacts, adding or removing members, and renaming a group (the title is stored, but there is no way to set it yet).

@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using HomiliaMessenger.Business.Modules.Contacts;
 using HomiliaMessenger.Presentation.Desktop.Base.Extensions;
@@ -10,6 +11,7 @@ using HomiliaMessenger.Presentation.Desktop.ViewModels;
 using System;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.IO;
 using System.Threading.Tasks;
 
 namespace HomiliaMessenger.Presentation.Desktop.Views;
@@ -100,6 +102,7 @@ public partial class MessengerView : UserControl
         switch (e.PropertyName)
         {
             case nameof(MessengerViewModel.IsContactTyping):
+            case nameof(MessengerViewModel.IsSelfieInThread):
                 ScrollToEnd();
                 break;
             case nameof(MessengerViewModel.ActiveContact):
@@ -187,6 +190,41 @@ public partial class MessengerView : UserControl
         if (sender is MenuItem { DataContext: ConversationListItem item } && _attachedModel is { } model)
         {
             model.DeleteConversationCommand.Execute(item);
+        }
+    }
+
+    /// <summary>
+    /// Saves a message's picture, such as a selfie, as a PNG file where the user chooses.
+    /// </summary>
+    private async void SavePicture_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { DataContext: MessageItem { ImagePng: { } png } item } || TopLevel.GetTopLevel(this)?.StorageProvider is not { CanSave: true } storage)
+        {
+            return;
+        }
+
+        try
+        {
+            string name = $"{item.SenderName ?? "Selfie"} {item.Message.SentAtUtc.ToLocalTime():yyyy-MM-dd HHmm}.png";
+            IStorageFile? file = await storage.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "Save picture",
+                SuggestedFileName = name,
+                DefaultExtension = "png",
+                FileTypeChoices = [new FilePickerFileType("PNG image") { Patterns = ["*.png"], MimeTypes = ["image/png"] }]
+            });
+
+            if (file is null)
+            {
+                return;
+            }
+
+            await using Stream stream = await file.OpenWriteAsync();
+            await stream.WriteAsync(png);
+        }
+        catch (Exception error)
+        {
+            _attachedModel?.ReportProblem("Could not save the picture: " + error.Message);
         }
     }
 }

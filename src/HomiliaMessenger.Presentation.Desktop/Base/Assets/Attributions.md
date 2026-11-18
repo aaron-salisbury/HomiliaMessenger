@@ -21,6 +21,8 @@
 - **DreamShaper 8 LCM** — by Lykon ([Lykon/dreamshaper-8-lcm](https://huggingface.co/Lykon/dreamshaper-8-lcm)), a fine-tune of Stable Diffusion 1.5, converted to GGUF by [NishQ1/vora-create-sd15](https://huggingface.co/NishQ1/vora-create-sd15). CreativeML Open RAIL-M, with use-based restrictions (Attachment A) that apply to everyone who uses it; downloaded only when requested, with its license.
 - **stable-diffusion.cpp** — [leejet/stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) at commit `5dcfa79`, MIT. Local image generation. Its license notice, and ggml's, are included under `StableDiffusion/<platform>/` in build and publish output.
 - **ggml** — [ggml-org/ggml](https://github.com/ggml-org/ggml), MIT, as built into stable-diffusion.cpp's release (its private copy is renamed `sdml` so it loads beside LLamaSharp's).
+- **IP-Adapter Plus-Face (SD 1.5) and its ViT-H/14 image encoder** — Tencent AI Lab's [IP-Adapter](https://github.com/tencent-ailab/IP-Adapter), weights from [h94/IP-Adapter](https://huggingface.co/h94/IP-Adapter), Apache 2.0. Face matching for selfies; downloaded only when requested, and the encoder converted to Q8_0 on this computer.
+- **SkiaSharp** — [mono/SkiaSharp](https://github.com/mono/SkiaSharp), MIT, the copy Avalonia ships. Reads contact photos for face matching.
 
 ## Speech
 

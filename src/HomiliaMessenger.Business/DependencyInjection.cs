@@ -5,6 +5,7 @@ using HomiliaMessenger.Business.Modules.Conversations;
 using HomiliaMessenger.Business.Modules.ImageGeneration;
 using HomiliaMessenger.Business.Modules.Memories;
 using HomiliaMessenger.Business.Modules.Profile;
+using HomiliaMessenger.Business.Modules.Selfies;
 using HomiliaMessenger.Business.Modules.WebSearch;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -43,6 +44,10 @@ public static class DependencyInjection
         // Integrations registers the local image generator; without it, photos can only be chosen from files.
         services.TryAddSingleton<IImageGenerator, UnavailableImageGenerator>();
         services.AddScoped<IPortraitService, PortraitService>();
+
+        // Selfies need a selfie model with face matching, registered by Integrations; without it, none can be asked for.
+        services.TryAddSingleton<ISelfieImageGenerator, UnavailableSelfieImageGenerator>();
+        services.AddScoped<ISelfieService, SelfieService>();
 
         // Integrations registers Tavily; without it, contacts never search. One instance shares searches in progress and
         // limits how many run at once.

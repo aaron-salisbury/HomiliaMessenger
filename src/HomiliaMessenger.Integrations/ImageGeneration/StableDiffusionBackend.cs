@@ -15,6 +15,19 @@ namespace HomiliaMessenger.Integrations.ImageGeneration;
 internal sealed record GeneratedImage(int Width, int Height, int Channels, byte[] Pixels);
 
 /// <summary>
+/// What selfies add to an image model: IP-Adapter Plus-Face, and the image encoder that reads a photo's face for it.
+/// </summary>
+internal sealed record FaceMatchingFiles(string ImageEncoderPath, string AdapterPath);
+
+/// <summary>
+/// One image to draw: what to draw, what to avoid, and, with face matching, the face to keep.
+/// </summary>
+/// <param name="NegativePrompt">What to steer away from; only takes effect with guidance above 1.</param>
+/// <param name="Face">The photo whose face the image keeps, as RGB pixels; needs a context opened with face matching.</param>
+/// <param name="FaceStrength">How strongly the face is kept, from 0 to 1.</param>
+internal sealed record Drawing(string Prompt, long Seed, string? NegativePrompt = null, GeneratedImage? Face = null, float FaceStrength = 0);
+
+/// <summary>
 /// Opens image models in a runtime. The seam between image generation's lifecycle (one at a time, cancellation, release)
 /// and the native runtime, so the lifecycle can be tested without it.
 /// </summary>
@@ -27,9 +40,17 @@ internal interface IStableDiffusionBackend
     string? RuntimeProblem { get; }
 
     /// <summary>
-    /// Loads a model. The caller owns the context and must dispose it, which releases the model's memory.
+    /// Loads a model, with face matching when given. The caller owns the context and must dispose it, which releases the
+    /// model's memory.
     /// </summary>
-    IStableDiffusionContext Open(string modelPath);
+    IStableDiffusionContext Open(string modelPath, FaceMatchingFiles? faceMatching = null);
+
+    /// <summary>
+    /// Converts a model file to a GGUF file whose weights are in Q8_0, as the runtime's command-line tool does with
+    /// <c>-M convert --type q8_0</c>. Blocks until done.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The runtime is unavailable or the conversion failed.</exception>
+    void ConvertToQ8(string inputPath, string outputPath);
 }
 
 /// <summary>
@@ -41,7 +62,7 @@ internal interface IStableDiffusionContext : IDisposable
     /// Draws an image, blocking until it is done.
     /// </summary>
     /// <exception cref="OperationCanceledException"><see cref="Cancel"/> was called.</exception>
-    GeneratedImage Generate(string prompt, ImageGenerationSettings settings, long seed, Action<ImageGenerationStage, long, long> progress);
+    GeneratedImage Generate(Drawing drawing, ImageGenerationSettings settings, Action<ImageGenerationStage, long, long> progress);
 
     /// <summary>
     /// Asks a generation in progress, or the next one, to stop. Safe to call from any thread.
@@ -91,9 +112,37 @@ internal sealed class NativeStableDiffusionBackend : IStableDiffusionBackend
         }
     }
 
-    public IStableDiffusionContext Open(string modelPath)
+    public IStableDiffusionContext Open(string modelPath, FaceMatchingFiles? faceMatching = null)
     {
-        return new NativeStableDiffusionContext(Load(), modelPath);
+        return new NativeStableDiffusionContext(Load(), modelPath, faceMatching);
+    }
+
+    public void ConvertToQ8(string inputPath, string outputPath)
+    {
+        StableDiffusionNative native = Load();
+        IntPtr input = Marshal.StringToCoTaskMemUTF8(inputPath);
+        IntPtr output = Marshal.StringToCoTaskMemUTF8(outputPath);
+
+        // Unused paths and the type rules are empty strings, never null, as the runtime's command-line tool passes them:
+        // the converter reads each as a string.
+        IntPtr empty = Marshal.StringToCoTaskMemUTF8(string.Empty);
+
+        try
+        {
+            NativeStableDiffusionContext.LastError = null;
+
+            if (!native.Convert(input, empty, empty, empty, empty, empty, output, StableDiffusionNative.SD_TYPE_Q8_0, empty, false, native.PhysicalCores(), IntPtr.Zero, 0))
+            {
+                string? problem = NativeStableDiffusionContext.LastError;
+                throw new InvalidOperationException("The file could not be converted" + (problem is null ? "." : ": " + problem));
+            }
+        }
+        finally
+        {
+            Marshal.FreeCoTaskMem(empty);
+            Marshal.FreeCoTaskMem(output);
+            Marshal.FreeCoTaskMem(input);
+        }
     }
 
     private StableDiffusionNative Load()
@@ -187,18 +236,27 @@ internal sealed class NativeStableDiffusionContext : IStableDiffusionContext
     internal static string? LastError { get; set; }
 
     /// <exception cref="InvalidOperationException">The model could not be loaded.</exception>
-    internal NativeStableDiffusionContext(StableDiffusionNative native, string modelPath)
+    internal NativeStableDiffusionContext(StableDiffusionNative native, string modelPath, FaceMatchingFiles? faceMatching = null)
     {
         _native = native;
         IntPtr parameters = Marshal.AllocHGlobal(StableDiffusionNative.PARAMS_BUFFER_BYTES);
         IntPtr path = Marshal.StringToCoTaskMemUTF8(modelPath);
         IntPtr backend = Marshal.StringToCoTaskMemUTF8("cpu");
+        IntPtr imageEncoder = faceMatching is null ? IntPtr.Zero : Marshal.StringToCoTaskMemUTF8(faceMatching.ImageEncoderPath);
+        IntPtr adapter = faceMatching is null ? IntPtr.Zero : Marshal.StringToCoTaskMemUTF8(faceMatching.AdapterPath);
 
         try
         {
             StableDiffusionNative.Clear(parameters);
             native.ContextParamsInit(parameters);
             Marshal.WriteIntPtr(parameters, StableDiffusionNative.ContextOffsets.MODEL_PATH, path);
+
+            if (faceMatching is not null)
+            {
+                Marshal.WriteIntPtr(parameters, StableDiffusionNative.ContextOffsets.CLIP_VISION, imageEncoder);
+                Marshal.WriteIntPtr(parameters, StableDiffusionNative.ContextOffsets.IP_ADAPTER, adapter);
+                HasFaceMatching = true;
+            }
 
             // CPU only for now; a GPU backend would be chosen here.
             Marshal.WriteIntPtr(parameters, StableDiffusionNative.ContextOffsets.BACKEND, backend);
@@ -214,6 +272,8 @@ internal sealed class NativeStableDiffusionContext : IStableDiffusionContext
         }
         finally
         {
+            Marshal.FreeCoTaskMem(adapter);
+            Marshal.FreeCoTaskMem(imageEncoder);
             Marshal.FreeCoTaskMem(backend);
             Marshal.FreeCoTaskMem(path);
             Marshal.FreeHGlobal(parameters);
@@ -229,11 +289,21 @@ internal sealed class NativeStableDiffusionContext : IStableDiffusionContext
         native.SetGenerationProgressCallback(_handle.DangerousGetHandle(), PROGRESS_CALLBACK, GCHandle.ToIntPtr(_self));
     }
 
-    public GeneratedImage Generate(string prompt, ImageGenerationSettings settings, long seed, Action<ImageGenerationStage, long, long> progress)
+    /// <summary>
+    /// Whether the model was opened with face matching, so a drawing can keep a face.
+    /// </summary>
+    internal bool HasFaceMatching { get; }
+
+    public GeneratedImage Generate(Drawing drawing, ImageGenerationSettings settings, Action<ImageGenerationStage, long, long> progress)
     {
-        ArgumentNullException.ThrowIfNull(prompt);
+        ArgumentNullException.ThrowIfNull(drawing);
         ArgumentNullException.ThrowIfNull(settings);
         ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (drawing.Face is { } face && (!HasFaceMatching || face.Channels != 3 || face.Pixels.Length != face.Width * face.Height * 3))
+        {
+            throw new InvalidOperationException(HasFaceMatching ? "The face to keep must be RGB pixels." : "The model was opened without face matching.");
+        }
 
         IntPtr context = _handle.DangerousGetHandle();
         int sampler = WithString(settings.Sampler, name => _native.SampleMethodFromName(name));
@@ -253,7 +323,9 @@ internal sealed class NativeStableDiffusionContext : IStableDiffusionContext
         }
 
         IntPtr parameters = Marshal.AllocHGlobal(StableDiffusionNative.PARAMS_BUFFER_BYTES);
-        IntPtr promptText = Marshal.StringToCoTaskMemUTF8(prompt);
+        IntPtr promptText = Marshal.StringToCoTaskMemUTF8(drawing.Prompt);
+        IntPtr negativeText = drawing.NegativePrompt is null ? IntPtr.Zero : Marshal.StringToCoTaskMemUTF8(drawing.NegativePrompt);
+        IntPtr facePixels = IntPtr.Zero;
         IntPtr result = IntPtr.Zero;
         _progress = progress;
 
@@ -268,7 +340,23 @@ internal sealed class NativeStableDiffusionContext : IStableDiffusionContext
             Marshal.WriteInt32(parameters, StableDiffusionNative.ImageOffsets.SAMPLE_METHOD, sampler);
             Marshal.WriteInt32(parameters, StableDiffusionNative.ImageOffsets.SCHEDULER, scheduler);
             Marshal.WriteInt32(parameters, StableDiffusionNative.ImageOffsets.SAMPLE_STEPS, settings.Steps);
-            Marshal.WriteInt64(parameters, StableDiffusionNative.ImageOffsets.SEED, seed);
+            Marshal.WriteInt64(parameters, StableDiffusionNative.ImageOffsets.SEED, drawing.Seed);
+
+            if (negativeText != IntPtr.Zero)
+            {
+                Marshal.WriteIntPtr(parameters, StableDiffusionNative.ImageOffsets.NEGATIVE_PROMPT, negativeText);
+            }
+
+            if (drawing.Face is { } reference)
+            {
+                facePixels = Marshal.AllocHGlobal(reference.Pixels.Length);
+                Marshal.Copy(reference.Pixels, 0, facePixels, reference.Pixels.Length);
+                Marshal.WriteInt32(parameters, StableDiffusionNative.ImageOffsets.IP_ADAPTER_IMAGE_WIDTH, reference.Width);
+                Marshal.WriteInt32(parameters, StableDiffusionNative.ImageOffsets.IP_ADAPTER_IMAGE_HEIGHT, reference.Height);
+                Marshal.WriteInt32(parameters, StableDiffusionNative.ImageOffsets.IP_ADAPTER_IMAGE_CHANNELS, 3);
+                Marshal.WriteIntPtr(parameters, StableDiffusionNative.ImageOffsets.IP_ADAPTER_IMAGE_DATA, facePixels);
+                StableDiffusionNative.WriteSingle(parameters, StableDiffusionNative.ImageOffsets.IP_ADAPTER_STRENGTH, drawing.FaceStrength);
+            }
 
             // The runtime clears any earlier cancellation when it starts, so one asked for before then is checked here,
             // and asked again from the progress callback once it has started.
@@ -301,8 +389,15 @@ internal sealed class NativeStableDiffusionContext : IStableDiffusionContext
                 _native.FreeImageResult(result);
             }
 
+            if (facePixels != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(facePixels);
+            }
+
+            Marshal.FreeCoTaskMem(negativeText);
             Marshal.FreeCoTaskMem(promptText);
             Marshal.FreeHGlobal(parameters);
+
         }
     }
 

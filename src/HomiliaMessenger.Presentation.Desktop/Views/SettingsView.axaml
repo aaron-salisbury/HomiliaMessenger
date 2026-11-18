@@ -14,7 +14,48 @@
 			<Setter Property="FontSize" Value="18"/>
 			<Setter Property="FontWeight" Value="Bold"/>
 		</Style>
+		<Style Selector="TextBlock.subsection-header">
+			<Setter Property="FontSize" Value="15"/>
+			<Setter Property="FontWeight" Value="SemiBold"/>
+			<Setter Property="Margin" Value="0,8,0,0"/>
+		</Style>
 	</UserControl.Styles>
+
+	<UserControl.DataTemplates>
+		<!-- An image model, for contact photos or selfies. -->
+		<DataTemplate DataType="m:ImageModelItem">
+			<Border Margin="0,6,0,0" Padding="12" CornerRadius="8" Background="{DynamicResource SystemControlBackgroundBaseLowBrush}">
+				<Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
+					<TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding DisplayName}" FontWeight="SemiBold" />
+					<TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding SizeText}" FontSize="12" Opacity="0.7" TextWrapping="Wrap" />
+					<TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding Description}" TextWrapping="Wrap" Margin="0,4,0,0" />
+					<StackPanel Grid.Row="3" Grid.Column="0" Orientation="Horizontal" Spacing="12" Margin="0,4,0,0">
+						<HyperlinkButton Content="License" NavigateUri="{Binding LicenseUrl}" IsVisible="{Binding HasLicenseUrl}" FontSize="12" Padding="0" />
+						<TextBlock Text="{Binding SettingsText}" IsVisible="{Binding IsUserAdded}" FontSize="12" Opacity="0.7" VerticalAlignment="Center" />
+					</StackPanel>
+
+					<StackPanel Grid.Row="0" Grid.RowSpan="4" Grid.Column="1" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0" VerticalAlignment="Top">
+						<Button Command="{Binding DownloadCommand}" IsVisible="{Binding CanDownload}" Classes="accent">
+							<StackPanel Orientation="Horizontal" Spacing="6">
+								<i:MaterialIcon Kind="Download" />
+								<TextBlock Text="Download" />
+							</StackPanel>
+						</Button>
+						<Button Command="{Binding CancelCommand}" IsVisible="{Binding IsDownloading}" Content="Pause" />
+						<Button Command="{Binding ChooseCommand}" IsVisible="{Binding CanChoose}" Content="Use" />
+						<Button Command="{Binding DeleteCommand}" IsVisible="{Binding CanRemove}" ToolTip.Tip="{Binding RemoveHint}">
+							<i:MaterialIcon Kind="TrashCanOutline" />
+						</Button>
+					</StackPanel>
+
+					<StackPanel Grid.Row="4" Grid.ColumnSpan="2" Spacing="4" Margin="0,8,0,0">
+						<ProgressBar Value="{Binding ProgressPercent}" Maximum="100" IsVisible="{Binding IsDownloading}" />
+						<TextBlock Text="{Binding Status}" FontSize="12" TextWrapping="Wrap" />
+					</StackPanel>
+				</Grid>
+			</Border>
+		</DataTemplate>
+	</UserControl.DataTemplates>
 
 	<Border>
 		<ScrollViewer>
@@ -117,53 +158,31 @@
 
 					<StackPanel Spacing="8" IsVisible="{Binding IsImageGenerationAvailable}">
 						<TextBlock Text="Image Generation" Classes="section-header" />
-						<TextBlock Text="{Binding ImageModelsHint}" TextWrapping="Wrap" Opacity="0.75" />
 						<TextBlock Text="{Binding ImageRuntimeProblem}" IsVisible="{Binding ImageRuntimeProblem, Converter={x:Static ObjectConverters.IsNotNull}}"
 								   TextWrapping="Wrap" Foreground="{DynamicResource SystemControlErrorTextForegroundBrush}" />
+
+						<TextBlock Text="Profile photos" Classes="subsection-header" />
+						<TextBlock Text="{Binding ImageModelsHint}" TextWrapping="Wrap" Opacity="0.75" />
 						<Button Command="{Binding AddImageModelCommand}" HorizontalAlignment="Left">
 							<StackPanel Orientation="Horizontal" Spacing="6">
 								<i:MaterialIcon Kind="Plus" />
 								<TextBlock Text="Add from Hugging Face" />
 							</StackPanel>
 						</Button>
+						<ItemsControl ItemsSource="{Binding ImageModels}" />
 
-						<ItemsControl ItemsSource="{Binding ImageModels}">
-							<ItemsControl.ItemTemplate>
-								<DataTemplate x:DataType="m:ImageModelItem">
-									<Border Margin="0,6,0,0" Padding="12" CornerRadius="8" Background="{DynamicResource SystemControlBackgroundBaseLowBrush}">
-										<Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
-											<TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding DisplayName}" FontWeight="SemiBold" />
-											<TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding SizeText}" FontSize="12" Opacity="0.7" />
-											<TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding Description}" TextWrapping="Wrap" Margin="0,4,0,0" />
-											<StackPanel Grid.Row="3" Grid.Column="0" Orientation="Horizontal" Spacing="12" Margin="0,4,0,0">
-												<HyperlinkButton Content="License" NavigateUri="{Binding LicenseUrl}" IsVisible="{Binding HasLicenseUrl}" FontSize="12" Padding="0" />
-												<TextBlock Text="{Binding SettingsText}" IsVisible="{Binding IsUserAdded}" FontSize="12" Opacity="0.7" VerticalAlignment="Center" />
-											</StackPanel>
-
-											<StackPanel Grid.Row="0" Grid.RowSpan="4" Grid.Column="1" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0" VerticalAlignment="Top">
-												<Button Command="{Binding DownloadCommand}" IsVisible="{Binding CanDownload}" Classes="accent">
-													<StackPanel Orientation="Horizontal" Spacing="6">
-														<i:MaterialIcon Kind="Download" />
-														<TextBlock Text="Download" />
-													</StackPanel>
-												</Button>
-												<Button Command="{Binding CancelCommand}" IsVisible="{Binding IsDownloading}" Content="Pause" />
-												<Button Command="{Binding ChooseCommand}" IsVisible="{Binding CanChoose}" Content="Use" />
-												<Button Command="{Binding DeleteCommand}" IsVisible="{Binding CanRemove}" ToolTip.Tip="Remove model">
-													<i:MaterialIcon Kind="TrashCanOutline" />
-												</Button>
-											</StackPanel>
-
-											<StackPanel Grid.Row="4" Grid.ColumnSpan="2" Spacing="4" Margin="0,8,0,0">
-												<ProgressBar Value="{Binding ProgressPercent}" Maximum="100" IsVisible="{Binding IsDownloading}" />
-												<TextBlock Text="{Binding Status}" FontSize="12" TextWrapping="Wrap" />
-											</StackPanel>
-										</Grid>
-									</Border>
-								</DataTemplate>
-							</ItemsControl.ItemTemplate>
-						</ItemsControl>
+						<TextBlock Text="Selfies" Classes="subsection-header" />
+						<TextBlock Text="{Binding SelfieModelsHint}" TextWrapping="Wrap" Opacity="0.75" />
+						<TextBlock Text="{Binding FaceMatchingStatus}" TextWrapping="Wrap" FontSize="12" />
+						<Button Command="{Binding AddSelfieModelCommand}" HorizontalAlignment="Left">
+							<StackPanel Orientation="Horizontal" Spacing="6">
+								<i:MaterialIcon Kind="Plus" />
+								<TextBlock Text="Add from Hugging Face" />
+							</StackPanel>
+						</Button>
+						<ItemsControl ItemsSource="{Binding SelfieModels}" />
 					</StackPanel>
+
 
                     <StackPanel Spacing="8">
                         <TextBlock Text="Text to Speech" Classes="section-header" />

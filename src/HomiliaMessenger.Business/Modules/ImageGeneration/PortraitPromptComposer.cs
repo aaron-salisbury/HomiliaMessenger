@@ -7,6 +7,12 @@ using System.Text.RegularExpressions;
 namespace HomiliaMessenger.Business.Modules.ImageGeneration;
 
 /// <summary>
+/// A description of a person's photo, split into who they are, what they wear, and where they are.
+/// </summary>
+/// <param name="Person">The person and their attributes, such as "older man with a long white beard and eyeglasses".</param>
+public sealed record PortraitParts(string? Person, string? Clothing, string? Setting);
+
+/// <summary>
 /// Turns a user's description of a person into a short, subject-first portrait prompt: the person and their attributes,
 /// then clothing, then framing, then the setting, then a brief style phrase. The user's own words are kept as written;
 /// nothing about who the person is (age, gender, ethnicity, build) is ever added.
@@ -119,6 +125,32 @@ public static partial class PortraitPromptComposer
         }
 
         return prompt;
+    }
+
+    /// <summary>
+    /// Splits <paramref name="description"/> as <see cref="Compose"/> reads it: the person and their attributes, their
+    /// clothing, and the setting, each <see langword="null"/> when the description names none. Used to draw the same
+    /// person somewhere else, as in a selfie, without the photo's setting.
+    /// </summary>
+    public static PortraitParts Split(string description)
+    {
+        ArgumentNullException.ThrowIfNull(description);
+
+        List<string> person = [];
+        List<string> clothing = [];
+        List<string> setting = [];
+
+        foreach (string sentence in ClauseSeparator().Split(Normalize(description)))
+        {
+            ClassifyClauses(sentence.Trim(), person, clothing, setting);
+        }
+
+        static string? Join(List<string> clauses)
+        {
+            return clauses.Count == 0 ? null : string.Join(", ", clauses);
+        }
+
+        return new PortraitParts(Join(person), Join(clothing)?.Replace("wearing ", string.Empty, StringComparison.OrdinalIgnoreCase), Join(setting));
     }
 
     /// <summary>

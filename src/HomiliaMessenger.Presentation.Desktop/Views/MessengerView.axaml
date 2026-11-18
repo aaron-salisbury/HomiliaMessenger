@@ -409,7 +409,23 @@
                                         <Grid Grid.Column="1" Classes="bubbleRow" Classes.mine="{Binding IsFromUser}" ColumnDefinitions="*,Auto">
                                             <Border Grid.Column="0" Classes="bubble" Classes.mine="{Binding IsFromUser}" Classes.first="{Binding IsFirstInGroup}"
                                                     Classes.last="{Binding IsLastInGroup}" ToolTip.Tip="{Binding SentAtToolTip}">
-                                                <SelectableTextBlock Text="{Binding Text}" TextWrapping="Wrap" />
+                                                <StackPanel Spacing="6">
+                                                    <!-- A selfie, with what it shows as its tooltip and accessible name. -->
+                                                    <Border IsVisible="{Binding HasImage}" CornerRadius="12" ClipToBounds="True" HorizontalAlignment="Left" Margin="-4,-2,-4,0">
+                                                        <Border.ContextMenu>
+                                                            <ContextMenu>
+                                                                <MenuItem Header="Save picture…" Click="SavePicture_Click">
+                                                                    <MenuItem.Icon>
+                                                                        <i:MaterialIcon Kind="ContentSaveOutline" />
+                                                                    </MenuItem.Icon>
+                                                                </MenuItem>
+                                                            </ContextMenu>
+                                                        </Border.ContextMenu>
+                                                        <Image Source="{Binding ImagePng, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=512}" Width="256" Stretch="Uniform"
+                                                               ToolTip.Tip="{Binding ImageDescription}" AutomationProperties.Name="{Binding ImageDescription}" />
+                                                    </Border>
+                                                    <SelectableTextBlock Text="{Binding Text}" TextWrapping="Wrap" IsVisible="{Binding HasText}" />
+                                                </StackPanel>
                                             </Border>
                                             <!-- What the contact looked up online for this reply, and where it came from. -->
                                             <Button Grid.Column="1" Margin="4,0,0,0" IsVisible="{Binding HasSources}" VerticalAlignment="Bottom" Padding="4" Opacity="0.6"
@@ -468,7 +484,33 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
+                    <!-- A selfie being taken: who is taking it, how far along, and a way to stop it. The chat goes on meanwhile. -->
+                    <Grid ColumnDefinitions="Auto,*" Margin="0,8,0,0" IsVisible="{Binding IsSelfieInThread}">
+                        <Ellipse Grid.Column="0" Width="28" Height="28" Margin="0,0,8,0" VerticalAlignment="Bottom">
+                            <Ellipse.Fill>
+                                <ImageBrush Source="{Binding SelfieContact.Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}, FallbackValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                            </Ellipse.Fill>
+                        </Ellipse>
+                        <Border Grid.Column="1" Classes="bubble first last" Padding="14,10">
+                            <StackPanel Spacing="8" Width="240">
+                                <Grid ColumnDefinitions="Auto,8,*">
+                                    <i:MaterialIcon Grid.Column="0" Kind="CameraOutline" Width="18" Height="18" VerticalAlignment="Top" Opacity="0.8" />
+                                    <TextBlock Grid.Column="2" Text="{Binding SelfieStatus}" TextWrapping="Wrap" FontSize="13" />
+                                </Grid>
+                                <ProgressBar Value="{Binding SelfieProgress}" Maximum="100" IsIndeterminate="{Binding IsSelfieProgressIndeterminate}" />
+                                <Button Command="{Binding StopSelfieCommand}" HorizontalAlignment="Left" Padding="8,2" FontSize="12"
+                                        ToolTip.Tip="Stop the selfie" AutomationProperties.Name="Stop the selfie">
+                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                        <i:MaterialIcon Kind="StopCircleOutline" Width="14" Height="14" />
+                                        <TextBlock Text="Stop" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
                     <!-- Typing indicator -->
+
                     <Grid ColumnDefinitions="Auto,*" Margin="0,8,0,0" IsVisible="{Binding IsContactTyping}">
                         <Ellipse Grid.Column="0" Width="28" Height="28" Margin="0,0,8,0" VerticalAlignment="Bottom">
                             <Ellipse.Fill>

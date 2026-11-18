@@ -329,6 +329,73 @@ internal sealed partial class GroupCoordinator
     }
 
     /// <summary>
+    /// The candidates for a selfie the user asked a group for, most likely first: whoever the user's latest message spoke
+    /// to by name, then anyone it named, then a contact who just offered or mentioned a picture, then whoever wrote most
+    /// recently, since they are in the moment. Ties keep the order contacts joined. Deterministic, like turn-taking's
+    /// hard rules, so the same conversation always offers the same person.
+    /// </summary>
+    /// <param name="candidates">The contacts who may be in a selfie: those with a photo.</param>
+    internal static IReadOnlyList<Contact> RankSelfieSubjects(Conversation conversation, IReadOnlyList<Contact> candidates, IReadOnlyList<ChatMessage> messages)
+    {
+        ArgumentNullException.ThrowIfNull(conversation);
+        ArgumentNullException.ThrowIfNull(candidates);
+        ArgumentNullException.ThrowIfNull(messages);
+
+        IReadOnlyList<ChatMessage> recent = [.. messages.TakeLast(SELFIE_CONTEXT_MESSAGES)];
+        ChatMessage? userMessage = recent.LastOrDefault(message => message.Sender == MessageSender.User);
+        IReadOnlyList<Contact> addressed = userMessage is null ? [] : Addressed(userMessage.Text, candidates);
+        Dictionary<ContactId, double> scores = candidates.ToDictionary(contact => contact.Id, _ => 0d);
+
+        foreach (Contact contact in candidates)
+        {
+            if (addressed.Any(spoken => spoken.Id == contact.Id))
+            {
+                scores[contact.Id] += 8;
+            }
+            else if (userMessage is not null && Names(contact).Any(name => MentionPattern(name).IsMatch(userMessage.Text)))
+            {
+                scores[contact.Id] += 4;
+            }
+        }
+
+        // A contact who just offered a picture ("I'll send you a pic!") is the one it is asked of.
+        foreach (ChatMessage message in recent.Where(message => message.Sender == MessageSender.Contact && PicturePattern().IsMatch(message.Text)))
+        {
+            if (conversation.SenderOf(message) is { } sender && scores.ContainsKey(sender))
+            {
+                scores[sender] += 2;
+            }
+        }
+
+        // The latest writers are in the moment: the most recent contact counts most.
+        double weight = 1;
+
+        foreach (ContactId sender in recent.Reverse().Select(conversation.SenderOf).OfType<ContactId>().Distinct())
+        {
+            if (scores.ContainsKey(sender))
+            {
+                scores[sender] += weight;
+                weight /= 2;
+            }
+        }
+
+        return [.. candidates.Select((contact, index) => (contact, index)).OrderByDescending(item => scores[item.contact.Id]).ThenBy(item => item.index).Select(item => item.contact)];
+    }
+
+    /// <summary>
+    /// How many of the latest messages bear on who a selfie should be of.
+    /// </summary>
+    internal const int SELFIE_CONTEXT_MESSAGES = 8;
+
+    private static Regex MentionPattern(string name)
+    {
+        return new Regex($@"(?<![\p{{L}}\p{{N}}])@?{Regex.Escape(name)}(?![\p{{L}}\p{{N}}])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
+    [GeneratedRegex(@"\b(selfie|selfies|pic|pics|picture|pictures|photo|photos|snap|snapshot)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex PicturePattern();
+
+    /// <summary>
     /// From -1 for a reserved personality to 1 for a talkative one, read from words in the contact's description.
     /// </summary>
     internal static double Talkativeness(Contact contact)

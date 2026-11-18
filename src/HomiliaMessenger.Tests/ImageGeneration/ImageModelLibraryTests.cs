@@ -91,7 +91,7 @@ public sealed class ImageModelLibraryTests
         ImageModelLibrary library = CreateLibrary(folder.Path, hub);
         List<LocalModelDownloadProgress> progress = [];
 
-        LocalModelDownloadResult result = await library.DownloadAsync("first", new SynchronousDownloadProgress(progress), TestContext.CancellationToken);
+        LocalModelDownloadResult result = await library.DownloadAsync("first", progress: new SynchronousDownloadProgress(progress), cancellationToken: TestContext.CancellationToken);
 
         Assert.AreEqual(LocalModelDownloadStatus.Success, result.Status);
         Assert.AreEqual("first", library.Active?.Id);
@@ -195,15 +195,15 @@ public sealed class ImageModelLibraryTests
         await library.DownloadAsync("first", cancellationToken: TestContext.CancellationToken);
         await library.DownloadAsync("second", cancellationToken: TestContext.CancellationToken);
 
-        bool removed = await library.DeleteAsync("first", TestContext.CancellationToken);
+        bool removed = await library.DeleteAsync("first", cancellationToken: TestContext.CancellationToken);
         string? afterFirst = library.Active?.Id;
-        await library.DeleteAsync("second", TestContext.CancellationToken);
+        await library.DeleteAsync("second", cancellationToken: TestContext.CancellationToken);
 
         Assert.IsTrue(removed);
         Assert.AreEqual("second", afterFirst);
         Assert.IsNull(library.Active);
         Assert.IsFalse(Directory.Exists(Path.Combine(folder.Path, "first")));
-        Assert.IsFalse(await library.DeleteAsync("missing", TestContext.CancellationToken));
+        Assert.IsFalse(await library.DeleteAsync("missing", cancellationToken: TestContext.CancellationToken));
     }
 
     [TestMethod]
@@ -215,7 +215,7 @@ public sealed class ImageModelLibraryTests
         await library.DownloadAsync("first", cancellationToken: TestContext.CancellationToken);
 
         Assert.IsTrue(gate.TryEnter());
-        Task<bool> deleting = library.DeleteAsync("first", TestContext.CancellationToken);
+        Task<bool> deleting = library.DeleteAsync("first", cancellationToken: TestContext.CancellationToken);
         await Task.Delay(100, TestContext.CancellationToken);
         bool stillThere = File.Exists(library.CheckpointPath(library.Find("first")!));
         gate.Exit();
@@ -234,16 +234,16 @@ public sealed class ImageModelLibraryTests
         using ManualResetEventSlim release = new();
         BlockingProgress progress = new(started, release);
 
-        Task<LocalModelDownloadResult> downloading = Task.Run(() => library.DownloadAsync("first", progress, TestContext.CancellationToken), TestContext.CancellationToken);
+        Task<LocalModelDownloadResult> downloading = Task.Run(() => library.DownloadAsync("first", progress: progress, cancellationToken: TestContext.CancellationToken), TestContext.CancellationToken);
         Assert.IsTrue(started.Wait(TimeSpan.FromSeconds(10), TestContext.CancellationToken));
-        bool removedWhileDownloading = await library.DeleteAsync("first", TestContext.CancellationToken);
+        bool removedWhileDownloading = await library.DeleteAsync("first", cancellationToken: TestContext.CancellationToken);
         release.Set();
         LocalModelDownloadResult result = await downloading;
 
         Assert.IsFalse(removedWhileDownloading);
         Assert.AreEqual(LocalModelDownloadStatus.Success, result.Status);
         Assert.IsTrue(File.Exists(library.CheckpointPath(library.Find("first")!)));
-        Assert.IsTrue(await library.DeleteAsync("first", TestContext.CancellationToken));
+        Assert.IsTrue(await library.DeleteAsync("first", cancellationToken: TestContext.CancellationToken));
     }
 
     /// <summary>

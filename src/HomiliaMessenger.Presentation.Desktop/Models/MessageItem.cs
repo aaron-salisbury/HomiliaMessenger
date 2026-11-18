@@ -52,6 +52,19 @@ public sealed partial class MessageItem : ObservableObject
     public ChatMessage Message { get; }
     public MessageId Id => Message.Id;
     public string Text => Message.Text;
+    public bool HasText => !string.IsNullOrWhiteSpace(Message.Text);
+
+    /// <summary>
+    /// The picture sent with the message, such as a selfie, as a PNG; <see langword="null"/> for text alone.
+    /// </summary>
+    public byte[]? ImagePng => Message.Image?.Png is { Length: > 0 } png ? png : null;
+
+    public bool HasImage => ImagePng is not null;
+
+    /// <summary>
+    /// What the picture shows, in words, as its tooltip and accessible name.
+    /// </summary>
+    public string? ImageDescription => Message.Image?.Description;
     public bool IsFromUser => Message.Sender == MessageSender.User;
     public bool IsFirstInGroup { get; }
 

@@ -71,11 +71,19 @@ public sealed partial class ConversationListItem : ObservableObject
             return Conversation.LastMessage switch
             {
                 null => IsGroup ? "New group" : "No messages yet",
-                { Sender: MessageSender.User } message => "You: " + Flatten(message.Text),
-                ChatMessage message when IsGroup => $"{SenderName(message)}: {Flatten(message.Text)}",
-                ChatMessage message => Flatten(message.Text)
+                { Sender: MessageSender.User } message => "You: " + Flatten(message),
+                ChatMessage message when IsGroup => $"{SenderName(message)}: {Flatten(message)}",
+                ChatMessage message => Flatten(message)
             };
         }
+    }
+
+    /// <summary>
+    /// A message on one line: its text, or for a picture sent without text, that it was sent.
+    /// </summary>
+    private static string Flatten(ChatMessage message)
+    {
+        return message.Image is not null && string.IsNullOrWhiteSpace(message.Text) ? "📷 Selfie" : Flatten(message.Text);
     }
 
     public string LastActivity => MessengerTime.ForList(Conversation.LastActivityAtUtc, DateTimeOffset.Now);

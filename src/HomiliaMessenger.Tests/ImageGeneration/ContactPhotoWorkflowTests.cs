@@ -267,24 +267,29 @@ public sealed class ContactPhotoWorkflowTests
     {
         public int Downloads { get; private set; }
 
-        public IReadOnlyList<ImageModel> List()
+        public IReadOnlyList<ImageModel> List(ImageModelPurpose purpose = ImageModelPurpose.Portraits)
         {
             return [new ImageModel("dreamshaper-8-lcm-q8_0", "DreamShaper 8 LCM", "Portraits.", "CreativeML Open RAIL-M", "https://example.test/license", 1_802_220_721, Downloads > 0, Downloads > 0, false, true,
-                new ImageGenerationSettings(512, 512, "lcm", null, 4, 1f))];
+                new ImageGenerationSettings(512, 512, "lcm", null, 4, 1f), ImageModelPurpose.Portraits | ImageModelPurpose.Selfies)];
         }
 
-        public Task<Business.Modules.Agents.LocalModelDownloadResult> DownloadAsync(string modelId, IProgress<Business.Modules.Agents.LocalModelDownloadProgress>? progress = null, CancellationToken cancellationToken = default)
+        public FaceMatching GetFaceMatching()
+        {
+            return new FaceMatching("IP-Adapter Plus-Face", "Apache 2.0", null, 2_626_556_736, 774_322_936, false);
+        }
+
+        public Task<Business.Modules.Agents.LocalModelDownloadResult> DownloadAsync(string modelId, ImageModelPurpose purpose = ImageModelPurpose.Portraits, IProgress<Business.Modules.Agents.LocalModelDownloadProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             Downloads++;
             return Task.FromResult(Business.Modules.Agents.LocalModelDownloadResult.Success);
         }
 
-        public Task<bool> DeleteAsync(string modelId, CancellationToken cancellationToken = default)
+        public Task<bool> DeleteAsync(string modelId, ImageModelPurpose purpose = ImageModelPurpose.Portraits, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(true);
         }
 
-        public bool Select(string modelId)
+        public bool Select(string modelId, ImageModelPurpose purpose = ImageModelPurpose.Portraits)
         {
             return true;
         }
@@ -294,7 +299,8 @@ public sealed class ContactPhotoWorkflowTests
             throw new NotSupportedException();
         }
 
-        public Task<Business.Modules.Agents.LocalModelAddResult> AddAsync(ImageModelLookup lookup, ImageModelFile file, ImageGenerationSettings settings, CancellationToken cancellationToken = default)
+        public Task<Business.Modules.Agents.LocalModelAddResult> AddAsync(ImageModelLookup lookup, ImageModelFile file, ImageGenerationSettings settings, ImageModelPurpose purpose = ImageModelPurpose.Portraits, CancellationToken cancellationToken = default)
+
         {
             throw new NotSupportedException();
         }

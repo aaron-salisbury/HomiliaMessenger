@@ -29,6 +29,13 @@ public sealed record ImageGenerationSettings(int Width, int Height, string Sampl
     public const float MAX_GUIDANCE_SCALE = 30;
 
     /// <summary>
+    /// The size selfies are drawn at: a portrait canvas, on which Stable Diffusion 1.x drew far fewer duplicated faces than
+    /// on a taller one in the local selfie experiment.
+    /// </summary>
+    public const int SELFIE_WIDTH = 512;
+    public const int SELFIE_HEIGHT = 640;
+
+    /// <summary>
     /// Why these settings cannot be used, or <see langword="null"/> when they can.
     /// </summary>
     public string? Problem()

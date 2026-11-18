@@ -19,6 +19,9 @@ public partial class GeneratePhotoViewModel : ObservableObject, IDisposable
     private readonly IPortraitService _portraits;
     private CancellationTokenSource? _generating;
     private byte[]? _photo;
+
+    // The description the photo shown was generated from, which may differ from the one being edited.
+    private string? _photoDescription;
     private bool _disposed;
 
     [ObservableProperty]
@@ -82,6 +85,11 @@ public partial class GeneratePhotoViewModel : ObservableObject, IDisposable
     public byte[]? ChosenPhoto { get; private set; }
 
     /// <summary>
+    /// The description <see cref="ChosenPhoto"/> was generated from, or <see langword="null"/> when none was chosen.
+    /// </summary>
+    public string? ChosenDescription { get; private set; }
+
+    /// <summary>
     /// Whether the user asked to go to Settings to download an image model.
     /// </summary>
     public bool WantsSettings { get; private set; }
@@ -121,9 +129,11 @@ public partial class GeneratePhotoViewModel : ObservableObject, IDisposable
 
         Progress<ImageGenerationProgress> progress = new(ShowProgress);
 
+        string description = Description;
+
         try
         {
-            PortraitGeneration generation = await _portraits.GenerateAsync(new PortraitRequest(Description), progress, generating.Token);
+            PortraitGeneration generation = await _portraits.GenerateAsync(new PortraitRequest(description), progress, generating.Token);
 
             if (!generation.Validation.IsValid)
             {
@@ -137,6 +147,7 @@ public partial class GeneratePhotoViewModel : ObservableObject, IDisposable
             {
                 case ImageGenerationStatus.Success:
                     ShowPhoto(result.Png!);
+                    _photoDescription = description.Trim();
                     break;
                 case ImageGenerationStatus.Canceled:
                     Status = HasPreview ? "Stopped. The photo shown is unchanged." : "Stopped.";
@@ -233,6 +244,8 @@ public partial class GeneratePhotoViewModel : ObservableObject, IDisposable
     private void UsePhoto()
     {
         ChosenPhoto = _photo is null ? null : [.. _photo];
+        ChosenDescription = _photo is null ? null : _photoDescription;
+
         CloseRequested?.Invoke(this, EventArgs.Empty);
     }
 

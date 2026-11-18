@@ -41,6 +41,11 @@ internal sealed class StableDiffusionNative
     internal const int SCHEDULER_COUNT = 17;
     internal const int SD_CANCEL_ALL = 0;
 
+    /// <summary>
+    /// <c>SD_TYPE_Q8_0</c>, the weight format face matching's image encoder is converted to.
+    /// </summary>
+    internal const int SD_TYPE_Q8_0 = 8;
+
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     internal delegate void LogCallback(int level, IntPtr text, IntPtr data);
 
@@ -91,6 +96,10 @@ internal sealed class StableDiffusionNative
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     internal delegate void CancelFunction(IntPtr context, int mode);
 
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    [return: MarshalAs(UnmanagedType.I1)]
+    internal delegate bool ConvertFunction(IntPtr modelPath, IntPtr clipLPath, IntPtr clipGPath, IntPtr t5xxlPath, IntPtr diffusionModelPath, IntPtr vaePath, IntPtr outputPath, int outputType, IntPtr tensorTypeRules, [MarshalAs(UnmanagedType.I1)] bool convertName, int threads, IntPtr loras, int loraCount);
+
     private StableDiffusionNative(IntPtr library, IntPtr ggml)
     {
         T Export<T>(IntPtr handle, string name) where T : Delegate
@@ -114,6 +123,7 @@ internal sealed class StableDiffusionNative
         GenerateImage = Export<GenerateImageFunction>(library, "generate_image");
         FreeImageResult = Export<FreeFunction>(library, "free_sd_image_generation_result");
         Cancel = Export<CancelFunction>(library, "sd_cancel_generation");
+        Convert = Export<ConvertFunction>(library, "convert_with_components");
         _loadBackends = Export<LoadBackendsFunction>(ggml, "ggml_backend_load_all_from_path");
     }
 
@@ -135,6 +145,7 @@ internal sealed class StableDiffusionNative
     internal GenerateImageFunction GenerateImage { get; }
     internal FreeFunction FreeImageResult { get; }
     internal CancelFunction Cancel { get; }
+    internal ConvertFunction Convert { get; }
 
     /// <summary>
     /// The folder holding the runtime for this system, under the app's folder, whether or not it is there.
@@ -219,11 +230,14 @@ internal sealed class StableDiffusionNative
             ImageParamsInit(image);
 
             bool contextMatches = Marshal.ReadIntPtr(context, ContextOffsets.MODEL_PATH) == IntPtr.Zero
+                && Marshal.ReadIntPtr(context, ContextOffsets.CLIP_VISION) == IntPtr.Zero
+                && Marshal.ReadIntPtr(context, ContextOffsets.IP_ADAPTER) == IntPtr.Zero
                 && Marshal.ReadIntPtr(context, ContextOffsets.BACKEND) == IntPtr.Zero
                 && Marshal.ReadInt32(context, ContextOffsets.THREADS) == PhysicalCores()
                 && Marshal.ReadInt32(context, ContextOffsets.WEIGHT_TYPE) == SD_TYPE_COUNT
                 && Marshal.ReadInt32(context, ContextOffsets.RNG_TYPE) == CUDA_RNG;
             bool imageMatches = Marshal.ReadIntPtr(image, ImageOffsets.PROMPT) == IntPtr.Zero
+                && Marshal.ReadIntPtr(image, ImageOffsets.NEGATIVE_PROMPT) == IntPtr.Zero
                 && Marshal.ReadInt32(image, ImageOffsets.CLIP_SKIP) == -1
                 && Marshal.ReadInt32(image, ImageOffsets.WIDTH) == 512
                 && Marshal.ReadInt32(image, ImageOffsets.HEIGHT) == 512
@@ -233,7 +247,10 @@ internal sealed class StableDiffusionNative
                 && Marshal.ReadInt32(image, ImageOffsets.SAMPLE_STEPS) == 20
                 && ReadSingle(image, ImageOffsets.STRENGTH) == 0.75f
                 && Marshal.ReadInt64(image, ImageOffsets.SEED) == -1
-                && Marshal.ReadInt32(image, ImageOffsets.BATCH_COUNT) == 1;
+                && Marshal.ReadInt32(image, ImageOffsets.BATCH_COUNT) == 1
+                && ReadSingle(image, ImageOffsets.CONTROL_STRENGTH) == 0.9f
+                && Marshal.ReadIntPtr(image, ImageOffsets.IP_ADAPTER_IMAGE_DATA) == IntPtr.Zero
+                && ReadSingle(image, ImageOffsets.IP_ADAPTER_STRENGTH) == 1f;
 
             if (!contextMatches || !imageMatches)
             {
@@ -306,7 +323,7 @@ internal sealed class StableDiffusionNative
     }
 
     /// <summary>
-    /// The leading fields of <c>sd_img_gen_params_t</c>, through <c>batch_count</c>.
+    /// The leading fields of <c>sd_img_gen_params_t</c>, through <c>ip_adapter_strength</c>.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     private struct ImageParamsPrefix
@@ -325,6 +342,10 @@ internal sealed class StableDiffusionNative
         public float Strength;
         public long Seed;
         public int BatchCount;
+        public Image ControlImage;
+        public float ControlStrength;
+        public Image IpAdapterImage;
+        public float IpAdapterStrength;
     }
 
     /// <summary>
@@ -370,6 +391,8 @@ internal sealed class StableDiffusionNative
     internal static class ContextOffsets
     {
         internal static readonly int MODEL_PATH = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.ModelPath));
+        internal static readonly int CLIP_VISION = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.ClipVision));
+        internal static readonly int IP_ADAPTER = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.IpAdapter));
         internal static readonly int THREADS = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.Threads));
         internal static readonly int WEIGHT_TYPE = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.WeightType));
         internal static readonly int RNG_TYPE = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.RngType));
@@ -381,6 +404,7 @@ internal sealed class StableDiffusionNative
         private static readonly int SAMPLE = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.SampleParams));
 
         internal static readonly int PROMPT = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.Prompt));
+        internal static readonly int NEGATIVE_PROMPT = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.NegativePrompt));
         internal static readonly int CLIP_SKIP = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.ClipSkip));
         internal static readonly int WIDTH = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.Width));
         internal static readonly int HEIGHT = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.Height));
@@ -392,5 +416,12 @@ internal sealed class StableDiffusionNative
         internal static readonly int STRENGTH = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.Strength));
         internal static readonly int SEED = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.Seed));
         internal static readonly int BATCH_COUNT = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.BatchCount));
+        internal static readonly int CONTROL_STRENGTH = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.ControlStrength));
+        internal static readonly int IP_ADAPTER_IMAGE = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.IpAdapterImage));
+        internal static readonly int IP_ADAPTER_IMAGE_WIDTH = IP_ADAPTER_IMAGE + (int)Marshal.OffsetOf<Image>(nameof(Image.Width));
+        internal static readonly int IP_ADAPTER_IMAGE_HEIGHT = IP_ADAPTER_IMAGE + (int)Marshal.OffsetOf<Image>(nameof(Image.Height));
+        internal static readonly int IP_ADAPTER_IMAGE_CHANNELS = IP_ADAPTER_IMAGE + (int)Marshal.OffsetOf<Image>(nameof(Image.Channel));
+        internal static readonly int IP_ADAPTER_IMAGE_DATA = IP_ADAPTER_IMAGE + (int)Marshal.OffsetOf<Image>(nameof(Image.Data));
+        internal static readonly int IP_ADAPTER_STRENGTH = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.IpAdapterStrength));
     }
 }

@@ -1,6 +1,6 @@
-# Contact Photo Generation
+# Image Generation: Contact Photos and Selfies
 
-Contacts' photos can be generated on this computer from a description of the person, as an alternative to choosing a photo file. The feature is optional: it needs a 1.8 GB image model, downloaded only when you ask for it in Settings. It runs on the CPU without a GPU, account, or online service.
+Contacts' photos can be generated on this computer from a description of the person, as an alternative to choosing a photo file. The feature is optional: it needs a 1.8 GB image model, downloaded only when you ask for it in Settings. It runs on the CPU without a GPU, account, or online service. The same models can also take selfies contacts send in chats (see [Selfies](#selfies)).
 
 The aim is a polished, slightly idealized photographic portrait, a believable profile picture rather than documentary realism, that keeps the attributes you asked for.
 
@@ -65,6 +65,74 @@ Generation runs on a background thread, so the app stays responsive.
 
 **Quality.** Faces are usually coherent and the style polished, but this is a small, fast model: eyes, mouths, and especially hands are sometimes malformed, and a requested attribute is occasionally missed. Generating another is the remedy. No face restoration, upscaling, or beauty filtering is applied.
 
+## Selfies
+
+Contacts can send selfies in chats. A selfie shows the contact somewhere, doing something, looking some way, as the conversation suggests, and keeps the face in their profile photo.
+
+### Asking for a selfie
+
+- **The camera button** in the messenger's ribbon, beside the spoken-replies button, asks the open chat for a selfie. Its tooltip says what it will do, or why it cannot: no selfie model is downloaded, nobody in the chat has a profile photo, a new chat has no messages yet, or a selfie is already being taken (one at a time, since images are drawn one at a time).
+- **While it is taken** (about 35 seconds on a fast desktop, longer on a laptop), a bubble beneath the messages shows who is taking it and how far along it is, with **Stop**. The chat goes on meanwhile: you can keep writing, switch chats, or leave the messenger. Replies wait for the image model to finish, since only one model is kept in memory at a time; the selfie waits for a reply already in progress. The selfie is saved when it is ready, after whatever was written in the meantime.
+- **It arrives** as the contact's message: the picture, with what they say with it, if anything. Right-click the picture to save it as a PNG. Its tooltip says what it shows. In the chat list it shows as "📷 Selfie" when it has no words.
+- **Contacts read it as words**: agents cannot see pictures, so each one is kept with a description ("Sent a selfie: laughing, waiting for the bus, at a bus stop, pouring rain"), which contacts are given in its place, so they can react to it. Nothing about a selfie is learned as a memory; memories come from your messages only.
+
+### Who is in it
+
+A selfie shows **one person**. Stable Diffusion 1.x mixes up the features of two people in one picture (a beard or hair color moves from one to the other), and face matching takes one face, so selfies are of one contact. Only contacts **with a profile photo** can be in a selfie.
+
+- **In a chat** with one contact, it is of them.
+- **In a group**, the group coordinator chooses, among those with a photo, whoever the conversation points to: the contact your latest message spoke to by name ("Elena, where are you?"), then one it named, then a contact who just offered a picture ("I'll send you a pic!"), then whoever wrote most recently. With nothing to go on, the contact who joined first. The choice is plain rules, like the rest of turn-taking, so the same conversation always gives the same person.
+- **Later models** may draw more people. The selfie capability takes its subjects in order of likelihood and says how many the active model can draw; only the Stable Diffusion integration limits it to one. A model that draws several people faithfully would receive more of them without changes elsewhere.
+
+### What it shows
+
+The contact in the selfie plans it with **their own model**, before it is drawn. Their model is given who they are (their appearance, personality and background), the time of day, and the latest messages, and is asked for a few labelled lines: expression, clothing, location, activity, one prop, weather, light, and a caption in their own voice, to decide where they are and why they are sending a selfie now. Where the conversation says nothing, it chooses something ordinary that fits them. Anything missing or unclear is left out. A contact with simulated replies, or whose model cannot answer, sends a smiling selfie without words. Planning never stops a selfie.
+
+**How the contact looks** comes from their profile photo, in two parts:
+
+- **The face** is carried from the photo itself by face matching (IP-Adapter Plus-Face), at strength 0.3. In the experiment, likeness held equally at 0.25 to 0.4 (beards, glasses, hair, age), and lower strengths let less of the photo's clothing through.
+- **The words**: when the photo was generated in the app, the description it was generated from is now saved with the contact (only the person, not its clothing or setting, is used); a photo chosen from a file is described by the contact's gender and age ("woman in her thirties"). Clothing comes from the plan, otherwise from that description.
+
+### How a plan becomes a prompt
+
+Again deterministic, following the local selfie experiment (three rounds, about 170 images):
+
+1. **The framing first**: "Close-up smartphone selfie from slightly above, face close to the camera." Put first, it made a selfie; later, the image read as a photo someone else took.
+2. **The expression and the person**, with emphasis weights, such as `(irritated:1.4), (annoyed scowl:1.4), (furrowed brow:1.3) man in his fifties`. The experiment's reliable expressions use the phrasing that worked: laughing, grinning or proud, irritated, sad, exhausted, sleepy, cold, smiling. Subtle ones mostly did not render as faces (embarrassed, nervous, shocked); embarrassment is drawn as a gesture (a hand over half the face, blushing), which worked about half the time.
+3. **States and things**: rain soaks the person (`(soaking wet:1.5)`, the experiment's most reliable state); clothing is weighted, which overrode the photo's; a prop is "held up beside the face" at weight 1.5, the only way a prop reliably appeared.
+4. **The scene**: location, weather and light, and what they are doing, dropped first if the prompt runs past one CLIP chunk.
+5. **A negative prompt** naming what the model drifts to instead (for irritated: happy, smiling, calm), plus "deformed, blurry". It takes effect because selfies use CFG 1.5.
+
+Words from the conversation are kept, without the brackets and colons the runtime reads as emphasis.
+
+### Settings
+
+DreamShaper 8 LCM for selfies: 512×640 (a 512×768 canvas drew duplicated faces), LCM, 4 steps, CFG 1.5 (CFG 2 followed prompts equally but oversaturated more, at the same cost), face matching at 0.3.
+
+| | DreamShaper 8 LCM selfie, 512×640 |
+|---|---|
+| Time per selfie | about 34 seconds on an i9-12900K (planning with the contact's model adds its own time) |
+| Memory while drawing | about 4.5 GB process peak (4.9 GB measured in the test process with LLamaSharp loaded) |
+| Disk, besides the model | 0.77 GB face matching |
+
+### Installing
+
+**Settings → Image Generation** has two parts:
+
+- **Profile photos**: the model contact photos are generated with, and its **Add from Hugging Face**, as before.
+- **Selfies**: the model selfies are taken with, its own **Add from Hugging Face**, and whether face matching is downloaded. DreamShaper 8 LCM is listed here too, and is used for selfies by default once downloaded for either. Its description says what choosing it for selfies adds: face matching, a 2.6 GB download (IP-Adapter Plus-Face, 98 MB, and the ViT-H/14 image encoder, 2.5 GB), made 0.8 GB once prepared. Downloading it for selfies downloads only what is missing.
+
+Face matching is downloaded from [h94/IP-Adapter](https://huggingface.co/h94/IP-Adapter) at a pinned revision and checked against its SHA-256 hashes. The image encoder is then converted to Q8_0 with the integrated runtime (`convert_with_components`, called as the runtime's command-line tool calls it), in about 3 seconds, and the downloaded 2.5 GB file removed. The conversion is byte-for-byte the experiment's (the `ImageModel` test compares its SHA-256); the Q8_0 encoder drew selfies indistinguishable from the full-precision one, at 4.5 GB peak instead of 6.2 GB. An interrupted preparation is finished without downloading again.
+
+Removing works per purpose: removing DreamShaper under **Selfies** removes face matching only (every selfie model needs it) and keeps the model for contact photos; removing it under **Profile photos** removes the model. A model added from Hugging Face for both is kept for the other when removed from one. A model added for selfies draws at 512×640 with the settings entered; its compatibility with face matching is not verified. Face matching is Apache 2.0; the license notice shown before downloading says so.
+
+### Not included
+
+- Selfies of more than one person (see above), and of the user.
+- Choosing who a group's selfie is of; the coordinator decides.
+- Viewing a selfie larger in the app; save it to view it full size.
+- Contacts sending selfies unasked.
+
 ## Adding image models from Hugging Face
 
 For experimenting, **Settings → Image Generation → Add from Hugging Face** adds other Stable Diffusion 1.x models:
@@ -126,6 +194,7 @@ Descriptions and generated photos never leave the computer. Network use is limit
 
 ## For developers
 
-- Business: `Modules/ImageGeneration` (`IImageGenerator`, `IImageModelLibrary`, `PortraitPromptComposer`, `PortraitService`). Integrations: `ImageGeneration/` (catalog, library, GGUF header inspector, native binding, generator). Presentation: the Image Generation section in Settings, `AddImageModelWindow`, and `GeneratePhotoWindow`.
+- Business: `Modules/ImageGeneration` (`IImageGenerator`, `ISelfieImageGenerator`, `IImageModelLibrary`, `PortraitPromptComposer`, `PortraitService`) and `Modules/Selfies` (`SelfieService`, `SelfieDirection` for planning and describing; subject choice is `GroupCoordinator.RankSelfieSubjects`). Integrations: `ImageGeneration/` (catalog with face matching, library, GGUF header inspector, native binding, one generator for photos and selfies, `SelfiePromptComposer`, `FaceReference`). Data: schema version 10 adds `ChatMessage.ImagePng`/`ImageDescription` and `Contact.Appearance`. Presentation: the Image Generation section in Settings, `AddImageModelWindow` (per purpose), `GeneratePhotoWindow`, and the selfie button and bubble in the messenger.
+- The selfie `ImageModel` tests (`RealSelfieModelTests`) need `HOMILIA_IMAGE_TEST_MODEL`, `HOMILIA_FACE_MATCHING_TEST_DIR` (a folder named `face-matching` with the adapter and the prepared encoder), `HOMILIA_SELFIE_TEST_PHOTO` (a portrait), and, for the conversion test, `HOMILIA_IMAGE_ENCODER_TEST_FILE` (the published encoder).
 - Image models are a category of their own: never contacts' agents, never embedding models.
 - Tests in the `ImageModel` category use the real DreamShaper checkpoint: set `HOMILIA_IMAGE_TEST_MODEL` to its path (or download it in Settings). They are inconclusive without it, and include a pixel-for-pixel comparison with the experiment's reference image and a cancellation test. All other image generation tests use a fake runtime and a fake Hugging Face.
