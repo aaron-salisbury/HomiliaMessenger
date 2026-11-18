@@ -24,6 +24,7 @@ public static class DependencyInjection
     private const string MODELS_DIRECTORY_NAME = "Models";
     private const string EMBEDDINGS_DIRECTORY_NAME = "Embeddings";
     private const string IMAGES_DIRECTORY_NAME = "Images";
+    private const string SPEECH_DIRECTORY_NAME = "Speech";
 
     /// <summary>
     /// Registers internal integrations-tier services. Local agent models need <see cref="IHttpClientFactory"/> and
@@ -109,7 +110,7 @@ public static class DependencyInjection
         services.AddSingleton<ISelfieImageGenerator>(provider => provider.GetRequiredService<StableDiffusionImageGenerator>());
 
         services.AddSingleton<ITextToSpeech>(provider => new KokoroSpeech(
-            Path.Combine(applicationDataDirectory, "Speech", "Kokoro"),
+            Path.Combine(modelsDirectory, SPEECH_DIRECTORY_NAME, "Kokoro"),
             provider.GetRequiredService<IHttpClientFactory>(),
             provider.GetRequiredService<ILogger<KokoroSpeech>>()));
 
