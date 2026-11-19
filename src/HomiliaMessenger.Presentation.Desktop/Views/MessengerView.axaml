@@ -302,7 +302,7 @@
                             <Flyout Placement="BottomEdgeAlignedRight">
                                 <StackPanel Width="280" Spacing="8">
                                     <TextBlock Text="Invite to a new group" FontWeight="SemiBold" FontSize="15" />
-                                    <TextBlock Text="{Binding ActiveContact.DisplayName, StringFormat='Starts a group with you, {0}, and who you choose. This chat stays as it is.'}"
+                                    <TextBlock Text="{Binding ActiveContact?.DisplayName, StringFormat='Starts a group with you, {0}, and who you choose. This chat stays as it is.'}"
                                                TextWrapping="Wrap" FontSize="12" Opacity="0.7" />
                                     <TextBlock Text="There is no one else to invite yet. Add another persona on the Contacts page." IsVisible="{Binding !InviteCandidates.Count}"
                                                TextWrapping="Wrap" Opacity="0.7" />
@@ -368,7 +368,7 @@
 
                     <Button Grid.Column="6" Classes="noBackground" Command="{Binding EditMemoryCommand}" IsVisible="{Binding HasConversation}"
                             VerticalAlignment="Center" Opacity="0.7"
-                            ToolTip.Tip="{Binding ActiveContact.DisplayName, StringFormat='What {0} remembers'}" AutomationProperties.Name="Memory">
+                            ToolTip.Tip="{Binding ActiveContact?.DisplayName, StringFormat='What {0} remembers'}" AutomationProperties.Name="Memory">
                         <i:MaterialIcon Kind="NoteTextOutline" Width="22" Height="22" />
                     </Button>
                 </Grid>
@@ -514,10 +514,10 @@
                     <Grid ColumnDefinitions="Auto,*" Margin="0,8,0,0" IsVisible="{Binding IsContactTyping}">
                         <Ellipse Grid.Column="0" Width="28" Height="28" Margin="0,0,8,0" VerticalAlignment="Bottom">
                             <Ellipse.Fill>
-                                <ImageBrush Source="{Binding TypingContact.Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
+                                <ImageBrush Source="{Binding TypingContact?.Photo, Converter={StaticResource BytesToBitmapConverter}, ConverterParameter=100, TargetNullValue={StaticResource ContactPlaceholder}}" Stretch="UniformToFill" />
                             </Ellipse.Fill>
                         </Ellipse>
-                        <Border Grid.Column="1" Classes="bubble first last" Padding="14,12" ToolTip.Tip="{Binding TypingContact.DisplayName, StringFormat='{}{0} is typing'}">
+                        <Border Grid.Column="1" Classes="bubble first last" Padding="14,12" ToolTip.Tip="{Binding TypingContact?.DisplayName, StringFormat='{}{0} is typing'}">
                             <StackPanel Orientation="Horizontal" Spacing="4">
                                 <Ellipse Classes="typingDot" />
                                 <Ellipse Classes="typingDot second" />
