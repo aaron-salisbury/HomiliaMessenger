@@ -104,6 +104,18 @@ internal sealed class StableDiffusionImageGenerator : IImageGenerator, ISelfieIm
         return DrawAsync(ImageModelPurpose.Portraits, new Drawing(request.Prompt, request.Seed), null, "photo", progress, cancellationToken);
     }
 
+    public SelfiePrompt ComposePrompt(SelfieImageRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (request.Prompt is { } prompt)
+        {
+            return prompt;
+        }
+
+        return request.Subjects.Count == 0 ? new SelfiePrompt(string.Empty, string.Empty) : SelfiePromptComposer.Compose(request.Subjects[0], request.Scene);
+    }
+
     public Task<ImageGenerationResult> GenerateAsync(SelfieImageRequest request, IProgress<ImageGenerationProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -131,7 +143,13 @@ internal sealed class StableDiffusionImageGenerator : IImageGenerator, ISelfieIm
             return Task.FromResult(ImageGenerationResult.Failed($"{subject.Name}'s profile photo could not be read for the selfie. Try another photo."));
         }
 
-        SelfiePrompt prompt = SelfiePromptComposer.Compose(subject, request.Scene);
+        SelfiePrompt prompt = ComposePrompt(request);
+
+        if (string.IsNullOrWhiteSpace(prompt.Prompt))
+        {
+            return Task.FromResult(ImageGenerationResult.Failed("There is nothing to draw: the prompt is empty."));
+        }
+
         _logger.LogDebug("Selfie prompt: {Prompt} Negative: {Negative}", prompt.Prompt, prompt.NegativePrompt);
         Drawing drawing = new(prompt.Prompt, request.Seed, prompt.NegativePrompt, face, FaceMatchingCatalog.STRENGTH);
 

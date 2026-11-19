@@ -68,6 +68,44 @@ public sealed record SelfieResult(SelfieStatus Status, ChatMessage? Message, str
 }
 
 /// <summary>
+/// A selfie planned but not yet drawn: who it is of, and the words it would be drawn with, for the user to check and
+/// change before it is taken (see <see cref="ISelfieService.TakeAsync(SelfieDraft, SelfiePrompt, IProgress{SelfieProgress}, CancellationToken)"/>).
+/// </summary>
+public sealed class SelfieDraft
+{
+    internal SelfieDraft(Conversation conversation, Contact lead, SelfiePlan plan, AgentAssignment? planner, SelfieImageRequest request, SelfiePrompt prompt)
+    {
+        Conversation = conversation;
+        Lead = lead;
+        Plan = plan;
+        Planner = planner;
+        Request = request;
+        Prompt = prompt;
+    }
+
+    public ContactId Subject => Lead.Id;
+
+    public string SubjectName => Lead.DisplayName;
+
+    /// <summary>
+    /// The words the selfie would be drawn with as planned.
+    /// </summary>
+    public SelfiePrompt Prompt { get; }
+
+    internal Conversation Conversation { get; }
+    internal Contact Lead { get; }
+    internal SelfiePlan Plan { get; }
+    internal AgentAssignment? Planner { get; }
+    internal SelfieImageRequest Request { get; }
+}
+
+/// <summary>
+/// The outcome of planning a selfie. <see cref="Draft"/> is the plan on success; <see cref="Problem"/> explains any other
+/// status.
+/// </summary>
+public sealed record SelfieDraftResult(SelfieStatus Status, SelfieDraft? Draft, string? Problem);
+
+/// <summary>
 /// Lets the user ask the contacts in a chat for a selfie, which arrives in the chat like a message.
 /// </summary>
 public interface ISelfieService
@@ -86,6 +124,18 @@ public interface ISelfieService
     /// ready, after whatever was written in the meantime.
     /// </summary>
     Task<SelfieResult> TakeAsync(ConversationId conversationId, IProgress<SelfieProgress>? progress = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Plans a selfie as <see cref="TakeAsync(ConversationId, IProgress{SelfieProgress}, CancellationToken)"/> does, but
+    /// stops before drawing it, so the words it would be drawn with can be checked and changed first.
+    /// </summary>
+    Task<SelfieDraftResult> PlanAsync(ConversationId conversationId, IProgress<SelfieProgress>? progress = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Draws a planned selfie with <paramref name="prompt"/>, such as its own prompt changed by the user, and saves it as
+    /// the contact's message, with what they planned to say with it.
+    /// </summary>
+    Task<SelfieResult> TakeAsync(SelfieDraft draft, SelfiePrompt prompt, IProgress<SelfieProgress>? progress = null, CancellationToken cancellationToken = default);
 }
 
 internal sealed class SelfieService : ISelfieService
@@ -141,9 +191,26 @@ internal sealed class SelfieService : ISelfieService
 
     public async Task<SelfieResult> TakeAsync(ConversationId conversationId, IProgress<SelfieProgress>? progress = null, CancellationToken cancellationToken = default)
     {
+        SelfieDraftResult planned = await PlanAsync(conversationId, progress, cancellationToken);
+
+        return planned.Draft is { } draft
+            ? await DrawAsync(draft, draft.Request, progress, cancellationToken)
+            : new SelfieResult(planned.Status, null, planned.Problem);
+    }
+
+    public Task<SelfieResult> TakeAsync(SelfieDraft draft, SelfiePrompt prompt, IProgress<SelfieProgress>? progress = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        ArgumentNullException.ThrowIfNull(prompt);
+
+        return DrawAsync(draft, draft.Request with { Prompt = prompt }, progress, cancellationToken);
+    }
+
+    public async Task<SelfieDraftResult> PlanAsync(ConversationId conversationId, IProgress<SelfieProgress>? progress = null, CancellationToken cancellationToken = default)
+    {
         if (await _store.GetAsync(conversationId, cancellationToken) is not { } conversation)
         {
-            return new SelfieResult(SelfieStatus.NotFound, null, "The conversation no longer exists.");
+            return new SelfieDraftResult(SelfieStatus.NotFound, null, "The conversation no longer exists.");
         }
 
         List<Contact> contacts = [];
@@ -158,7 +225,7 @@ internal sealed class SelfieService : ISelfieService
 
         if (GetAvailability(contacts) is { IsReady: false } availability)
         {
-            return SelfieResult.Unavailable(availability.Problem ?? "Selfies are not available.");
+            return new SelfieDraftResult(SelfieStatus.Unavailable, null, availability.Problem ?? "Selfies are not available.");
         }
 
         IReadOnlyList<ChatMessage> messages = await _store.ListMessagesAsync(conversationId, cancellationToken, withPictures: false);
@@ -172,7 +239,7 @@ internal sealed class SelfieService : ISelfieService
         IReadOnlyList<Contact> others = [.. contacts.Where(contact => contact.Id != lead.Id)];
 
         progress?.Report(new SelfieProgress(lead.Id, SelfieStage.Planning));
-        (SelfiePlan plan, AgentAssignment? planner) = await PlanAsync(lead, others, conversation, messages, cancellationToken);
+        (SelfiePlan plan, AgentAssignment? planner) = await PlanWithModelAsync(lead, others, conversation, messages, cancellationToken);
         DateOnly today = DateOnly.FromDateTime(_timeProvider.GetLocalNow().Date);
 
         // Only the lead's expression and clothing come from the plan; anyone beside them is described by their photo.
@@ -180,10 +247,20 @@ internal sealed class SelfieService : ISelfieService
             ? new SelfieSubject(contact.DisplayName, contact.Photo!, SelfieDirection.Appearance(contact, today), plan.Expression ?? SelfieDirection.DEFAULT_EXPRESSION, SelfieDirection.Clothing(contact, plan))
             : new SelfieSubject(contact.DisplayName, contact.Photo!, SelfieDirection.Appearance(contact, today), SelfieDirection.DEFAULT_EXPRESSION, SelfieDirection.Clothing(contact, SelfiePlan.Unknown)))];
 
+        SelfieImageRequest request = new(people, plan.Scene, _nextSeed());
+
+        return new SelfieDraftResult(SelfieStatus.Success, new SelfieDraft(conversation, lead, plan, planner, request, _generator.ComposePrompt(request)), null);
+    }
+
+    private async Task<SelfieResult> DrawAsync(SelfieDraft draft, SelfieImageRequest request, IProgress<SelfieProgress>? progress, CancellationToken cancellationToken)
+    {
+        Contact lead = draft.Lead;
+        SelfiePlan plan = draft.Plan;
+
         IProgress<ImageGenerationProgress>? drawing = progress is null
             ? null
             : new ForwardingProgress<ImageGenerationProgress>(update => progress.Report(new SelfieProgress(lead.Id, SelfieStage.Drawing, update)));
-        ImageGenerationResult image = await _generator.GenerateAsync(new SelfieImageRequest(people, plan.Scene, _nextSeed()), drawing, cancellationToken);
+        ImageGenerationResult image = await _generator.GenerateAsync(request, drawing, cancellationToken);
 
         if (!image.IsSuccessful)
         {
@@ -206,12 +283,12 @@ internal sealed class SelfieService : ISelfieService
         ChatMessage selfie = new()
         {
             Id = MessageId.New(),
-            ConversationId = conversation.Id,
+            ConversationId = draft.Conversation.Id,
             Sender = MessageSender.Contact,
             SenderContactId = lead.Id,
             Text = caption,
             SentAtUtc = _timeProvider.GetUtcNow(),
-            Agent = planner,
+            Agent = draft.Planner,
             Image = new MessageImage(image.Png!, SelfieDirection.Describe(plan))
         };
 
@@ -231,7 +308,7 @@ internal sealed class SelfieService : ISelfieService
     /// Asks the contact's own model what the selfie shows. Contacts with canned replies, or whose model cannot answer, send
     /// a selfie of themselves smiling, somewhere ordinary; planning never stops the selfie.
     /// </summary>
-    private async Task<(SelfiePlan Plan, AgentAssignment? Planner)> PlanAsync(Contact subject, IReadOnlyList<Contact> others, Conversation conversation, IReadOnlyList<ChatMessage> messages, CancellationToken cancellationToken)
+    private async Task<(SelfiePlan Plan, AgentAssignment? Planner)> PlanWithModelAsync(Contact subject, IReadOnlyList<Contact> others, Conversation conversation, IReadOnlyList<ChatMessage> messages, CancellationToken cancellationToken)
     {
         if (subject.Agent is not { } assignment || FindAgent(assignment) is not { } agent || agent is SimulatedAgent)
         {

@@ -42,7 +42,8 @@
 
             <!-- Disabled buttons show no tooltip, so the hint saying why is on a panel around it. -->
             <Panel IsVisible="{Binding IsSelfieButtonVisible}" Background="Transparent" ToolTip.Tip="{Binding SelfieHint}" ToolTip.ShowOnDisabled="True">
-                <Button Command="{Binding AskForSelfieCommand}" AutomationProperties.Name="Ask for a selfie">
+                <!-- Right-click, or the context-menu key, checks the prompt before the selfie is drawn. -->
+                <Button x:Name="SelfieButton" Command="{Binding AskForSelfieCommand}" ContextRequested="SelfieButton_ContextRequested" AutomationProperties.Name="Ask for a selfie">
                     <i:MaterialIcon Kind="CameraOutline" />
                 </Button>
             </Panel>

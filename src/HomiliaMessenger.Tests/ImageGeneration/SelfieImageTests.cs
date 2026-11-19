@@ -305,6 +305,32 @@ public sealed class SelfieImageTests
     }
 
     [TestMethod]
+    public async Task Generator_ComposesThePromptItWouldDraw_AndDrawsWithAGivenOneInstead()
+    {
+        using TestFolder folder = new();
+        FakeBackend backend = new() { ConvertedBytes = PREPARED_BYTES };
+        ImageGenerationGate gate = new();
+        ImageModelLibrary library = CreateLibrary(folder.Path, Hub(), backend, gate);
+        await library.DownloadAsync("both", ImageModelPurpose.Selfies, cancellationToken: TestContext.CancellationToken);
+        StableDiffusionImageGenerator generator = new(library, backend, gate, NullLogger<StableDiffusionImageGenerator>.Instance);
+        SelfieSubject walt = new("Walt", FakeImageGenerator.TinyPng(90), "older man with a white beard", "irritated");
+        SelfieImageRequest request = new([walt], new SelfieScene("a bus stop"), 5);
+
+        SelfiePrompt planned = generator.ComposePrompt(request);
+        SelfiePrompt edited = new("(laughing:1.3) older man at the beach", "rain");
+        ImageGenerationResult result = await generator.GenerateAsync(request with { Prompt = edited }, cancellationToken: TestContext.CancellationToken);
+        ImageGenerationResult empty = await generator.GenerateAsync(request with { Prompt = new SelfiePrompt("  ", "rain") }, cancellationToken: TestContext.CancellationToken);
+
+        Assert.AreEqual(SelfiePromptComposer.Compose(walt, request.Scene), planned);
+        Assert.AreEqual(ImageGenerationStatus.Success, result.Status, result.Problem);
+        (Drawing drawing, _) = backend.Drawings.Single();
+        Assert.AreEqual(edited.Prompt, drawing.Prompt);
+        Assert.AreEqual(edited.NegativePrompt, drawing.NegativePrompt);
+        Assert.AreEqual(90, drawing.Face!.Pixels[0], "The face still comes from the photo.");
+        Assert.AreEqual(ImageGenerationStatus.Failed, empty.Status, "An empty prompt has nothing to draw.");
+    }
+
+    [TestMethod]
     public async Task Generator_WithAPhotoItCannotRead_SaysWhoseRatherThanDrawing()
     {
         using TestFolder folder = new();

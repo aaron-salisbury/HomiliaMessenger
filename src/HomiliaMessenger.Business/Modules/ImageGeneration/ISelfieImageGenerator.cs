@@ -33,7 +33,18 @@ public sealed record SelfieScene(string? Location = null, string? Activity = nul
 /// <see cref="SelfieGeneratorAvailability.MaxSubjects"/>), from the first.
 /// </param>
 /// <param name="Seed">Chooses one of the many images the request could produce.</param>
-public sealed record SelfieImageRequest(IReadOnlyList<SelfieSubject> Subjects, SelfieScene Scene, long Seed);
+/// <param name="Prompt">
+/// The words to draw with, such as a prompt the user checked and changed; when <see langword="null"/>, they are composed
+/// from the subjects and scene (see <see cref="ISelfieImageGenerator.ComposePrompt"/>). The face still comes from the first
+/// subject's photo.
+/// </param>
+public sealed record SelfieImageRequest(IReadOnlyList<SelfieSubject> Subjects, SelfieScene Scene, long Seed, SelfiePrompt? Prompt = null);
+
+/// <summary>
+/// The words a selfie model draws with: what to draw, and what to steer away from. Either may use the model's own syntax,
+/// such as emphasis weights.
+/// </summary>
+public sealed record SelfiePrompt(string Prompt, string NegativePrompt);
 
 /// <summary>
 /// Whether selfies can be drawn now, and if not, why.
@@ -49,6 +60,12 @@ public sealed record SelfieGeneratorAvailability(bool IsReady, string? ModelName
 public interface ISelfieImageGenerator
 {
     SelfieGeneratorAvailability GetAvailability();
+
+    /// <summary>
+    /// The words <see cref="GenerateAsync"/> would draw <paramref name="request"/> with, so they can be checked, and
+    /// changed, first. A request that already carries a prompt keeps it.
+    /// </summary>
+    SelfiePrompt ComposePrompt(SelfieImageRequest request);
 
     /// <summary>
     /// Draws a selfie with the model chosen for selfies. Canceling stops at the next point the runtime checks, as for
@@ -67,6 +84,12 @@ internal sealed class UnavailableSelfieImageGenerator : ISelfieImageGenerator
     public SelfieGeneratorAvailability GetAvailability()
     {
         return new SelfieGeneratorAvailability(false, null, 0, false, PROBLEM);
+    }
+
+    public SelfiePrompt ComposePrompt(SelfieImageRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return request.Prompt ?? new SelfiePrompt(string.Empty, string.Empty);
     }
 
     public Task<ImageGenerationResult> GenerateAsync(SelfieImageRequest request, IProgress<ImageGenerationProgress>? progress = null, CancellationToken cancellationToken = default)

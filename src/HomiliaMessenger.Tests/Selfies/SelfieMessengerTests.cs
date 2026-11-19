@@ -43,7 +43,7 @@ public sealed class SelfieMessengerTests
         await messenger.SendCommand.ExecuteAsync(null);
         await WaitUntilAsync(() => !messenger.IsReplyPending);
         Assert.IsTrue(messenger.CanAskForSelfie);
-        Assert.AreEqual("Ask Walt for a selfie", messenger.SelfieHint);
+        Assert.AreEqual("Ask Walt for a selfie. Right-click to check the prompt first.", messenger.SelfieHint);
 
         messenger.AskForSelfieCommand.Execute(null);
         await WaitUntilAsync(() => generator.Requests.Count == 1);
@@ -91,6 +91,73 @@ public sealed class SelfieMessengerTests
         messenger.StopSelfieCommand.Execute(null);
         await WaitUntilAsync(() => !messenger.IsSelfieInThread);
 
+        Assert.HasCount(before, messenger.Messages);
+        Assert.IsFalse(messenger.HasReplyProblem);
+        Assert.IsTrue(messenger.CanAskForSelfie);
+    }
+
+    [TestMethod]
+    public async Task Reviewed_ShowsThePlannedPrompt_AndIsDrawnWithTheUsersWords()
+    {
+        FakeSelfieGenerator generator = new();
+        using TestDatabase database = await DatabaseAsync(generator);
+        Contact walt = await ContactAsync(database, "Walt", FakeImageGenerator.TinyPng(50));
+        MessengerViewModel messenger = CreateViewModel(database);
+        await messenger.InitializeAsync();
+        await messenger.StartChatCommand.ExecuteAsync(walt);
+        messenger.DraftText = "Hi";
+        await messenger.SendCommand.ExecuteAsync(null);
+        await WaitUntilAsync(() => !messenger.IsReplyPending);
+        int before = messenger.Messages.Count;
+        SelfiePromptEditorViewModel? shown = null;
+        string? statusWhileShown = null;
+        messenger.ShowSelfiePromptEditorAsync = editor =>
+        {
+            shown = editor;
+            statusWhileShown = messenger.SelfieStatus;
+            Assert.IsEmpty(generator.Requests, "Nothing is drawn while the prompt is being checked.");
+            Assert.IsFalse(editor.ResetCommand.CanExecute(null), "Nothing to put back yet.");
+            editor.Prompt = "(huge grin:1.3) man on a pier";
+            editor.NegativePrompt = "blurry";
+            Assert.IsTrue(editor.ResetCommand.CanExecute(null));
+            editor.TakeCommand.Execute(null);
+            return Task.CompletedTask;
+        };
+
+        messenger.ReviewSelfieCommand.Execute(null);
+        await WaitUntilAsync(() => !messenger.IsSelfieInThread);
+
+        Assert.IsNotNull(shown);
+        Assert.AreEqual("Walt", shown.ContactName);
+        Assert.Contains("check Walt's selfie", statusWhileShown!);
+        Assert.AreEqual(new SelfiePrompt("(huge grin:1.3) man on a pier", "blurry"), generator.Requests.Single().Prompt);
+        Assert.HasCount(before + 1, messenger.Messages);
+        Assert.IsTrue(messenger.Messages[^1].HasImage);
+    }
+
+    [TestMethod]
+    public async Task Reviewed_IsDropped_WhenTheEditorIsClosed()
+    {
+        FakeSelfieGenerator generator = new();
+        using TestDatabase database = await DatabaseAsync(generator);
+        Contact walt = await ContactAsync(database, "Walt", FakeImageGenerator.TinyPng(50));
+        MessengerViewModel messenger = CreateViewModel(database);
+        await messenger.InitializeAsync();
+        await messenger.StartChatCommand.ExecuteAsync(walt);
+        messenger.DraftText = "Hi";
+        await messenger.SendCommand.ExecuteAsync(null);
+        await WaitUntilAsync(() => !messenger.IsReplyPending);
+        int before = messenger.Messages.Count;
+        messenger.ShowSelfiePromptEditorAsync = editor =>
+        {
+            editor.CancelCommand.Execute(null);
+            return Task.CompletedTask;
+        };
+
+        messenger.ReviewSelfieCommand.Execute(null);
+        await WaitUntilAsync(() => !messenger.IsSelfieInThread);
+
+        Assert.IsEmpty(generator.Requests);
         Assert.HasCount(before, messenger.Messages);
         Assert.IsFalse(messenger.HasReplyProblem);
         Assert.IsTrue(messenger.CanAskForSelfie);

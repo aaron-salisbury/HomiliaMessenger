@@ -142,6 +142,36 @@ public sealed class SelfieTests
     }
 
     [TestMethod]
+    public async Task Planned_ShowsThePromptBeforeDrawing_AndIsDrawnWithTheWordsGiven()
+    {
+        ScriptedAgent agent = new();
+        agent.Answer = request => request.Instructions.StartsWith("You plan the selfie", StringComparison.Ordinal) ? AgentReply.Success("Expression: grinning\nLocation: the beach\nCaption: Wish you were here") : null;
+        FakeSelfieGenerator generator = new();
+        using TestDatabase database = await DatabaseAsync(generator, agent);
+        Contact walt = await ContactAsync(database, "Walt", photo: PHOTO);
+        Conversation chat = await SendAsync(database, walt, "Send me a selfie!");
+        ISelfieService selfies = Selfies(database);
+
+        SelfieDraftResult planned = await selfies.PlanAsync(chat.Id, cancellationToken: TestContext.CancellationToken);
+
+        Assert.AreEqual(SelfieStatus.Success, planned.Status, planned.Problem);
+        SelfieDraft draft = planned.Draft!;
+        Assert.AreEqual(walt.Id, draft.Subject);
+        Assert.AreEqual("Walt", draft.SubjectName);
+        Assert.Contains("grinning", draft.Prompt.Prompt);
+        Assert.IsEmpty(generator.Requests, "Nothing is drawn until the prompt is checked.");
+
+        SelfiePrompt edited = new("(huge grin:1.3) man on a pier at sunset", "blurry, crowds");
+        SelfieResult result = await selfies.TakeAsync(draft, edited, cancellationToken: TestContext.CancellationToken);
+
+        Assert.AreEqual(SelfieStatus.Success, result.Status, result.Problem);
+        Assert.AreEqual(edited, generator.Requests.Single().Prompt);
+        Assert.AreSequenceEqual(PHOTO, generator.Requests.Single().Subjects.Single().Photo, "The face still comes from the photo.");
+        Assert.AreEqual("Wish you were here", result.Message!.Text);
+        Assert.AreEqual("Sent a selfie: grinning, at the beach", result.Message.Image!.Description);
+    }
+
+    [TestMethod]
     public async Task Selfie_IsReadByAgentsAsWhatItShows()
     {
         ScriptedAgent agent = new();
@@ -403,6 +433,11 @@ internal sealed class FakeSelfieGenerator : ISelfieImageGenerator
     public SelfieGeneratorAvailability GetAvailability()
     {
         return Availability;
+    }
+
+    public SelfiePrompt ComposePrompt(SelfieImageRequest request)
+    {
+        return request.Prompt ?? new SelfiePrompt($"selfie of {request.Subjects[0].Appearance}, {request.Subjects[0].Expression}", "blurry");
     }
 
     public async Task<ImageGenerationResult> GenerateAsync(SelfieImageRequest request, IProgress<ImageGenerationProgress>? progress = null, CancellationToken cancellationToken = default)

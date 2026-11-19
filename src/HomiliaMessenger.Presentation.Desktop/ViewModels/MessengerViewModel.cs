@@ -42,7 +42,7 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     /// Whether the open chat's contacts can be asked for a selfie now.
     /// </summary>
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(AskForSelfieCommand))]
+    [NotifyCanExecuteChangedFor(nameof(AskForSelfieCommand), nameof(ReviewSelfieCommand))]
     private bool _canAskForSelfie;
 
     /// <summary>
@@ -214,6 +214,12 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     /// </summary>
     public Func<MemoryEditorViewModel, Task>? ShowMemoryEditorAsync { get; set; }
 
+    /// <summary>
+    /// Supplied by the view to let the user check and change a planned selfie's prompt, until they take it or close the
+    /// editor (see <see cref="SelfiePromptEditorViewModel.IsAccepted"/>).
+    /// </summary>
+    public Func<SelfiePromptEditorViewModel, Task>? ShowSelfiePromptEditorAsync { get; set; }
+
     public Type RibbonControlType => typeof(MessengerRibbonControl);
 
     public bool HasActiveThread => ActiveContact is not null || ActiveGroup is not null;
@@ -303,6 +309,21 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
     [RelayCommand(CanExecute = nameof(CanAskForSelfie))]
     private void AskForSelfie()
     {
+        StartSelfie(review: false);
+    }
+
+    /// <summary>
+    /// Asks for a selfie as <see cref="AskForSelfieCommand"/> does, but once it is planned, shows the words it will be
+    /// drawn with so the user can check and change them first. Closing the editor drops the selfie.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanAskForSelfie))]
+    private void ReviewSelfie()
+    {
+        StartSelfie(review: true);
+    }
+
+    private void StartSelfie(bool review)
+    {
         if (_selfies is null || ActiveConversationId is not { } conversationId || _selfie is not null || !CanAskForSelfie)
         {
             return;
@@ -311,13 +332,14 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         PendingSelfie pending = new(conversationId, new CancellationTokenSource())
         {
             Subject = ActiveContact?.Id,
-            Status = "Asking for a selfie…"
+            IsReviewed = review,
+            Status = review ? "Planning a selfie for you to check…" : "Asking for a selfie…"
         };
 
         _selfie = pending;
         ReplyProblem = null;
         UpdateSelfie();
-        _ = TakeSelfieAsync(pending);
+        _ = TakeSelfieAsync(pending, review);
     }
 
     /// <summary>
@@ -334,7 +356,7 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         }
     }
 
-    private async Task TakeSelfieAsync(PendingSelfie pending)
+    private async Task TakeSelfieAsync(PendingSelfie pending, bool review)
     {
         SelfieResult? result = null;
         string? problem = null;
@@ -343,7 +365,9 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         {
             // Reported on this (the UI) thread, since Progress captures it.
             Progress<SelfieProgress> progress = new(update => ShowSelfieProgress(pending, update));
-            result = await _selfies!.TakeAsync(pending.ConversationId, progress, pending.Cancel.Token);
+            result = review
+                ? await TakeReviewedSelfieAsync(pending, progress)
+                : await _selfies!.TakeAsync(pending.ConversationId, progress, pending.Cancel.Token);
 
             // A stopped selfie, or one for a chat deleted meanwhile, needs no explanation.
             if (result.Status is not (Business.Modules.Selfies.SelfieStatus.Success or Business.Modules.Selfies.SelfieStatus.Canceled or Business.Modules.Selfies.SelfieStatus.NotFound))
@@ -383,6 +407,41 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         UpdateSelfie();
     }
 
+    /// <summary>
+    /// Plans the selfie, lets the user check and change the words it will be drawn with, then draws it with theirs.
+    /// </summary>
+    private async Task<SelfieResult> TakeReviewedSelfieAsync(PendingSelfie pending, IProgress<SelfieProgress> progress)
+    {
+        SelfieDraftResult planned = await _selfies!.PlanAsync(pending.ConversationId, progress, pending.Cancel.Token);
+
+        if (planned.Draft is not { } draft)
+        {
+            return new SelfieResult(planned.Status, null, planned.Problem);
+        }
+
+        if (pending.Cancel.IsCancellationRequested)
+        {
+            return new SelfieResult(Business.Modules.Selfies.SelfieStatus.Canceled, null, null);
+        }
+
+        // Without the messenger on screen to check it in, the selfie is dropped rather than drawn unchecked.
+        if (ShowSelfiePromptEditorAsync is not { } show)
+        {
+            return new SelfieResult(Business.Modules.Selfies.SelfieStatus.Failed, null, $"{draft.SubjectName}'s selfie was planned, but its prompt could not be shown to check. Ask again.");
+        }
+
+        SelfiePromptEditorViewModel editor = new(draft.SubjectName, draft.Prompt);
+        pending.Subject = draft.Subject;
+        pending.Status = $"Waiting for you to check {draft.SubjectName}'s selfie…";
+        pending.Progress = null;
+        UpdateSelfie();
+        await show(editor);
+
+        return editor.IsAccepted && !pending.Cancel.IsCancellationRequested
+            ? await _selfies.TakeAsync(draft, editor.ToPrompt(), progress, pending.Cancel.Token)
+            : new SelfieResult(Business.Modules.Selfies.SelfieStatus.Canceled, null, null);
+    }
+
     private void ShowSelfieProgress(PendingSelfie pending, SelfieProgress update)
     {
         if (!ReferenceEquals(_selfie, pending) || pending.Cancel.IsCancellationRequested)
@@ -396,7 +455,7 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         switch (update.Stage)
         {
             case SelfieStage.Planning:
-                pending.Status = $"{name} is getting ready for a selfie…";
+                pending.Status = pending.IsReviewed ? $"{name} is planning a selfie for you to check…" : $"{name} is getting ready for a selfie…";
                 pending.Progress = null;
                 break;
             case SelfieStage.Drawing when update.Image is { Stage: ImageGenerationStage.Sampling, Total: > 0 } image:
@@ -466,7 +525,8 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         }
 
         CanAskForSelfie = true;
-        SelfieHint = IsGroupThread ? "Ask for a selfie: the group decides who sends it" : $"Ask {ActiveContact?.DisplayName} for a selfie";
+        SelfieHint = (IsGroupThread ? "Ask for a selfie: the group decides who sends it" : $"Ask {ActiveContact?.DisplayName} for a selfie")
+            + ". Right-click to check the prompt first.";
     }
 
     /// <summary>
@@ -496,6 +556,12 @@ public partial class MessengerViewModel : BaseViewModel, IRibbonProvider
         public ConversationId ConversationId { get; }
         public CancellationTokenSource Cancel { get; }
         public ContactId? Subject { get; set; }
+
+        /// <summary>
+        /// Whether the user checks the prompt before the selfie is drawn.
+        /// </summary>
+        public bool IsReviewed { get; init; }
+
         public string Status { get; set; } = string.Empty;
 
         /// <summary>

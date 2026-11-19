@@ -8,11 +8,6 @@ using System.Text.RegularExpressions;
 namespace HomiliaMessenger.Integrations.ImageGeneration;
 
 /// <summary>
-/// A selfie prompt for a Stable Diffusion 1.x model: what to draw, and what to steer away from.
-/// </summary>
-internal sealed record SelfiePrompt(string Prompt, string NegativePrompt);
-
-/// <summary>
 /// Turns a selfie's subject and scene into a prompt for a Stable Diffusion 1.x model with face matching, following the
 /// local selfie experiment, the same way every time.
 /// </summary>

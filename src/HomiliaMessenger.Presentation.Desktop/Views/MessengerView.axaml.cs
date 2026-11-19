@@ -69,6 +69,11 @@ public partial class MessengerView : UserControl
             {
                 _attachedModel.ShowMemoryEditorAsync = null;
             }
+
+            if (_attachedModel.ShowSelfiePromptEditorAsync == ShowSelfiePromptEditorAsync)
+            {
+                _attachedModel.ShowSelfiePromptEditorAsync = null;
+            }
         }
 
         _attachedModel = model;
@@ -77,6 +82,7 @@ public partial class MessengerView : UserControl
         {
             model.ConfirmAsync = ConfirmWithDialogAsync;
             model.ShowMemoryEditorAsync = ShowMemoryEditorAsync;
+            model.ShowSelfiePromptEditorAsync = ShowSelfiePromptEditorAsync;
             model.Messages.CollectionChanged += Messages_CollectionChanged;
             model.PropertyChanged += Model_PropertyChanged;
         }
@@ -85,6 +91,11 @@ public partial class MessengerView : UserControl
     private Task ShowMemoryEditorAsync(MemoryEditorViewModel editor)
     {
         return TopLevel.GetTopLevel(this) is Window owner ? MemoryWindow.ShowAsync(owner, editor) : Task.CompletedTask;
+    }
+
+    private Task ShowSelfiePromptEditorAsync(SelfiePromptEditorViewModel editor)
+    {
+        return TopLevel.GetTopLevel(this) is Window owner ? SelfiePromptWindow.ShowAsync(owner, editor) : Task.CompletedTask;
     }
 
     private Task<bool> ConfirmWithDialogAsync(string title, string message)
