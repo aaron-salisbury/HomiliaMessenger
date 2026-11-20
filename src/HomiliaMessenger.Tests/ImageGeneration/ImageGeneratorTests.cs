@@ -230,7 +230,8 @@ public sealed class ImageGeneratorTests
         NativeStableDiffusionBackend backend = new(folder.Path, NullLogger<NativeStableDiffusionBackend>.Instance);
 
         Assert.IsNotNull(backend.RuntimeProblem);
-        Assert.ThrowsExactly<InvalidOperationException>(() => backend.Open(Path.Combine(folder.Path, "model.gguf")));
+        Assert.ThrowsExactly<InvalidOperationException>(() => backend.Open(new ImageModelLoad(new ImageModelPaths(Path.Combine(folder.Path, "model.gguf")), ImageModelLoad.CPU)));
+        Assert.IsEmpty(backend.GpuDevices());
     }
 
     /// <summary>

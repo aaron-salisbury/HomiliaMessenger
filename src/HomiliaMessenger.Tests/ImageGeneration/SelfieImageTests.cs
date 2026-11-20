@@ -26,6 +26,7 @@ public sealed class SelfieImageTests
     private const string REVISION = "fedcba9876543210fedcba9876543210fedcba98";
     private static readonly byte[] CHECKPOINT = Encoding.UTF8.GetBytes("selfie-capable image model weights");
     private static readonly byte[] ADAPTER = Encoding.UTF8.GetBytes("ip-adapter plus-face weights");
+    private static readonly byte[] SDXL_ADAPTER = Encoding.UTF8.GetBytes("ip-adapter plus-face sdxl weights");
     private static readonly byte[] ENCODER = Encoding.UTF8.GetBytes("full precision image encoder weights, rather long");
     private const long PREPARED_BYTES = 17;
 
@@ -34,7 +35,7 @@ public sealed class SelfieImageTests
     [TestMethod]
     public void Catalog_OffersDreamShaperForSelfiesWithTheExperimentsSettingsAndPinnedFaceMatching()
     {
-        ImageModelDefinition model = ImageModelCatalog.Models.Single();
+        ImageModelDefinition model = ImageModelCatalog.Models.Single(model => model.Id == ImageModelCatalog.DREAMSHAPER_8_LCM);
 
         Assert.IsTrue(model.IsOffered(ImageModelPurpose.Portraits));
         Assert.IsTrue(model.IsOffered(ImageModelPurpose.Selfies));
@@ -174,6 +175,31 @@ public sealed class SelfieImageTests
     }
 
     [TestMethod]
+    public async Task FaceMatching_AddingSdxlBesideSd1_KeepsSd1Working_EvenWhenTheDownloadFails()
+    {
+        using TestFolder folder = new();
+        FakeHub hub = Hub();
+        FakeBackend backend = new() { ConvertedBytes = PREPARED_BYTES };
+        ImageModelLibrary library = CreateLibrary(folder.Path, hub, backend);
+        Assert.AreEqual(LocalModelDownloadStatus.Success, (await library.DownloadFaceMatchingAsync(null, TestContext.CancellationToken)).Status);
+
+        hub.Unreachable.Add($"{REPO}/resolve/{REVISION}/sdxl_models/ip-adapter-plus-face_sdxl_vit-h.safetensors");
+        LocalModelDownloadResult failed = await library.DownloadFaceMatchingAsync(ImageModelFamily.StableDiffusionXL, null, TestContext.CancellationToken);
+
+        Assert.AreNotEqual(LocalModelDownloadStatus.Success, failed.Status);
+        Assert.IsTrue(library.IsFaceMatchingReadyFor(ImageModelFamily.StableDiffusion1), "The face matching already in place still works.");
+        Assert.IsFalse(library.IsFaceMatchingReadyFor(ImageModelFamily.StableDiffusionXL));
+
+        hub.Unreachable.Clear();
+        LocalModelDownloadResult added = await library.DownloadFaceMatchingAsync(ImageModelFamily.StableDiffusionXL, null, TestContext.CancellationToken);
+
+        Assert.AreEqual(LocalModelDownloadStatus.Success, added.Status, added.Problem);
+        Assert.IsTrue(library.IsFaceMatchingReadyFor(ImageModelFamily.StableDiffusion1));
+        Assert.IsTrue(library.IsFaceMatchingReadyFor(ImageModelFamily.StableDiffusionXL));
+        Assert.HasCount(1, backend.Conversions, "The prepared encoder is shared, not prepared again.");
+    }
+
+    [TestMethod]
     public async Task FaceMatching_PreparedAtTheWrongSize_IsDiscardedAndReported()
     {
         using TestFolder folder = new();
@@ -239,18 +265,18 @@ public sealed class SelfieImageTests
         byte[] checkpoint = GgufTestFile.StableDiffusion1();
         hub.AddRepository("someone/sd15", REVISION, "openrail", "text-to-image", ("portrait.gguf", checkpoint));
         ImageModelLibrary library = new([], folder.Path, hub, new ImageGenerationGate(), NullLogger<ImageModelLibrary>.Instance, backend: new FakeBackend());
-        ImageModelLookup lookup = await library.LookUpAsync("someone/sd15", TestContext.CancellationToken);
+        ImageModelLookup lookup = await library.LookUpAsync("someone/sd15", cancellationToken: TestContext.CancellationToken);
         ImageGenerationSettings selfie = new(ImageGenerationSettings.SELFIE_WIDTH, ImageGenerationSettings.SELFIE_HEIGHT, "euler_a", null, 20, 7f);
         ImageGenerationSettings photo = new(512, 512, "euler_a", null, 25, 6f);
 
-        LocalModelAddResult added = await library.AddAsync(lookup, lookup.Files.Single(), selfie, ImageModelPurpose.Selfies, TestContext.CancellationToken);
+        LocalModelAddResult added = await library.AddAsync(lookup, lookup.Files.Single(), selfie, ImageModelPurpose.Selfies, cancellationToken: TestContext.CancellationToken);
 
         Assert.IsTrue(added.IsSuccessful, added.Problem);
         Assert.IsEmpty(library.List());
         Assert.AreEqual(selfie, library.List(ImageModelPurpose.Selfies).Single().Settings);
         Assert.Contains("face matching", library.List(ImageModelPurpose.Selfies).Single().Description);
 
-        LocalModelAddResult again = await library.AddAsync(lookup, lookup.Files.Single(), photo, ImageModelPurpose.Portraits, TestContext.CancellationToken);
+        LocalModelAddResult again = await library.AddAsync(lookup, lookup.Files.Single(), photo, ImageModelPurpose.Portraits, cancellationToken: TestContext.CancellationToken);
         ImageModelLibrary restarted = new([], folder.Path, hub, new ImageGenerationGate(), NullLogger<ImageModelLibrary>.Instance);
 
         Assert.AreEqual(added.ModelId, again.ModelId);
@@ -405,6 +431,7 @@ public sealed class SelfieImageTests
         hub.Files[$"{REPO}/resolve/{REVISION}/photos.gguf"] = CHECKPOINT;
         hub.Files[$"{REPO}/resolve/{REVISION}/models/ip-adapter-plus-face_sd15.safetensors"] = ADAPTER;
         hub.Files[$"{REPO}/resolve/{REVISION}/models/image_encoder/model.safetensors"] = ENCODER;
+        hub.Files[$"{REPO}/resolve/{REVISION}/sdxl_models/ip-adapter-plus-face_sdxl_vit-h.safetensors"] = SDXL_ADAPTER;
         return hub;
     }
 
@@ -422,7 +449,8 @@ public sealed class SelfieImageTests
         FaceMatchingDefinition faceMatching = new(baseUrl,
             new LocalModelFile("models/ip-adapter-plus-face_sd15.safetensors", ADAPTER.Length, FakeHub.Sha256(ADAPTER)),
             new LocalModelFile("models/image_encoder/model.safetensors", ENCODER.Length, FakeHub.Sha256(ENCODER)),
-            PREPARED_BYTES);
+            PREPARED_BYTES,
+            new LocalModelFile("sdxl_models/ip-adapter-plus-face_sdxl_vit-h.safetensors", SDXL_ADAPTER.Length, FakeHub.Sha256(SDXL_ADAPTER)));
 
         return new ImageModelLibrary([both, photos], folder, hub, gate ?? new ImageGenerationGate(), NullLogger<ImageModelLibrary>.Instance, backend: backend, faceMatching: faceMatching);
     }

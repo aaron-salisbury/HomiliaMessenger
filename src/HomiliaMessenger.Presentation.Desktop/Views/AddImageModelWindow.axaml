@@ -18,8 +18,7 @@
                 <i:MaterialIcon Kind="ImageAutoAdjust" Width="22" Height="22" Opacity="0.8" />
                 <TextBlock Text="{Binding Title}" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
             </StackPanel>
-            <TextBlock TextWrapping="Wrap" FontSize="12" Opacity="0.75"
-                       Text="For experimenting. Only Stable Diffusion 1.x models in GGUF format, with the text encoder and VAE in the same file, can run here. Each file's header is read to check what it holds; nothing else is downloaded until you add one." />
+            <TextBlock TextWrapping="Wrap" FontSize="12" Opacity="0.75" Text="{Binding Intro}" />
         </StackPanel>
 
         <Grid Grid.Row="1" ColumnDefinitions="*,8,Auto">
@@ -74,6 +73,16 @@
                     <NumericUpDown Grid.Column="7" Value="{Binding GuidanceScale}" Minimum="1" Maximum="30" Increment="0.5" FormatString="0.0" Width="110"
                                    AutomationProperties.Name="Guidance scale" />
                 </Grid>
+                <Grid ColumnDefinitions="Auto,Auto,12,*" HorizontalAlignment="Stretch">
+                    <TextBlock Grid.Column="0" Text="Prompt style" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <ComboBox Grid.Column="1" ItemsSource="{Binding PromptStyles}" SelectedItem="{Binding PromptStyle}" MinWidth="130"
+                              AutomationProperties.Name="Prompt style" />
+                    <TextBlock Grid.Column="3" Text="{Binding PromptStyleHint}" TextWrapping="Wrap" FontSize="12" Opacity="0.75" VerticalAlignment="Center" />
+                </Grid>
+                <TextBlock TextWrapping="Wrap" FontSize="12" Opacity="0.75">
+                    <Run Text="{Binding SizeText}" />
+                    <Run Text="{Binding NegativePromptHint}" />
+                </TextBlock>
                 <CheckBox IsChecked="{Binding AcceptsUnverified}"
                           Content="I understand this model may not work, and that its license (shown above) applies to its use." />
             </StackPanel>

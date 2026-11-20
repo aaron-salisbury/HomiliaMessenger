@@ -15,6 +15,19 @@
     <ProjectReference Include="..\HomiliaMessenger.Business\HomiliaMessenger.Business.csproj" />
   </ItemGroup>
 
+  <!--
+    Renames the private ggml in the CUDA image generation runtime when it is downloaded in Settings, as the build does for
+    the runtime included with the app (see build/native/StableDiffusionRuntime.targets). The MSBuild task in the same file
+    is left out.
+  -->
+  <PropertyGroup>
+    <DefineConstants>$(DefineConstants);NATIVE_RENAMER_ONLY</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\build\native\NativeLibraryRenamer.cs" Link="ImageGeneration\NativeLibraryRenamer.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="LLamaSharp" Version="0.30.0" />
     <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.30.0" />

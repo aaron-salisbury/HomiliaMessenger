@@ -39,7 +39,7 @@ public sealed class GgufImageInspectorTests
     }
 
     [TestMethod]
-    public void Inspect_OtherStableDiffusionFamilies_AreRefusedByName()
+    public void Inspect_OtherStableDiffusionFamilies_AreNamed_AndOnlyTheUnsupportedRefused()
     {
         GgufInspection sd2 = GgufImageInspector.Inspect(GgufTestFile.Write([], GgufTestFile.StableDiffusion(contextWidth: 1024)));
         GgufInspection sdxl = GgufImageInspector.Inspect(GgufTestFile.Write([], GgufTestFile.StableDiffusion(contextWidth: 2048, classEmbedding: true)));
@@ -48,7 +48,7 @@ public sealed class GgufImageInspectorTests
         Assert.AreEqual(ImageModelFamily.StableDiffusion2, sd2.Family);
         Assert.Contains("Stable Diffusion 2", sd2.Problem!);
         Assert.AreEqual(ImageModelFamily.StableDiffusionXL, sdxl.Family);
-        Assert.Contains("SDXL", sdxl.Problem!);
+        Assert.IsNull(sdxl.Problem, "SDXL runs on a graphics card; the library refuses it for the processor.");
         Assert.AreEqual(ImageModelFamily.StableDiffusion1, inpainting.Family);
         Assert.Contains("inpainting", inpainting.Problem!);
     }

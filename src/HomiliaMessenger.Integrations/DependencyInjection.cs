@@ -25,6 +25,7 @@ public static class DependencyInjection
     private const string EMBEDDINGS_DIRECTORY_NAME = "Embeddings";
     private const string IMAGES_DIRECTORY_NAME = "Images";
     private const string SPEECH_DIRECTORY_NAME = "Speech";
+    private const string RUNTIMES_DIRECTORY_NAME = "runtimes";
 
     /// <summary>
     /// Registers internal integrations-tier services. Local agent models need <see cref="IHttpClientFactory"/> and
@@ -82,10 +83,25 @@ public static class DependencyInjection
         // Image models are a third category, with their own folder and runtime (stable-diffusion.cpp, built with the app).
         // Only one image is generated at a time, and conversation models are released (waiting for any reply in progress)
         // and kept from reloading until it is drawn, to make room for it.
+        // The runtime is the one included with the app (CPU and Vulkan), or the CUDA build once downloaded in Settings.
+        string imagesDirectory = Path.Combine(modelsDirectory, IMAGES_DIRECTORY_NAME);
+        string cudaDirectory = Path.Combine(imagesDirectory, RUNTIMES_DIRECTORY_NAME, CudaRuntime.DIRECTORY_NAME);
         services.AddSingleton<ImageGenerationGate>();
-        services.AddSingleton<IStableDiffusionBackend, NativeStableDiffusionBackend>();
+        services.AddSingleton<IStableDiffusionBackend>(provider => new NativeStableDiffusionBackend(
+            AppContext.BaseDirectory,
+            provider.GetRequiredService<ILogger<NativeStableDiffusionBackend>>(),
+            cudaDirectory));
+        services.AddSingleton<IImageGpuRuntime>(provider => new CudaRuntime(
+            Path.Combine(imagesDirectory, RUNTIMES_DIRECTORY_NAME),
+            provider.GetRequiredService<IStableDiffusionBackend>(),
+            provider.GetRequiredService<IHttpClientFactory>(),
+            provider.GetRequiredService<ILogger<CudaRuntime>>()));
+
+        // LoRAs stay in the folder the user keeps them in; only how each is used is saved beside the image models.
+        services.AddSingleton(provider => new ImageLoraLibrary(imagesDirectory, provider.GetRequiredService<ILogger<ImageLoraLibrary>>()));
+        services.AddSingleton<IImageLoraLibrary>(provider => provider.GetRequiredService<ImageLoraLibrary>());
         services.AddSingleton(provider => new ImageModelLibrary(
-            Path.Combine(modelsDirectory, IMAGES_DIRECTORY_NAME),
+            imagesDirectory,
             provider.GetRequiredService<IHttpClientFactory>(),
             provider.GetRequiredService<ICredentialStore>(),
             provider.GetRequiredService<ImageGenerationGate>(),
@@ -104,7 +120,8 @@ public static class DependencyInjection
                 provider.GetRequiredService<IStableDiffusionBackend>(),
                 provider.GetRequiredService<ImageGenerationGate>(),
                 provider.GetRequiredService<ILogger<StableDiffusionImageGenerator>>(),
-                draw => onnx.HoldUnloadedAsync(() => llama.HoldUnloadedAsync(draw)));
+                draw => onnx.HoldUnloadedAsync(() => llama.HoldUnloadedAsync(draw)),
+                provider.GetRequiredService<IImageLoraLibrary>());
         });
         services.AddSingleton<IImageGenerator>(provider => provider.GetRequiredService<StableDiffusionImageGenerator>());
         services.AddSingleton<ISelfieImageGenerator>(provider => provider.GetRequiredService<StableDiffusionImageGenerator>());

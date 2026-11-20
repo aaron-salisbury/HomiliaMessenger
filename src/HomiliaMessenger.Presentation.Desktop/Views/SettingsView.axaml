@@ -19,6 +19,12 @@
 			<Setter Property="FontWeight" Value="SemiBold"/>
 			<Setter Property="Margin" Value="0,8,0,0"/>
 		</Style>
+		<Style Selector="TextBlock.minor-header">
+			<Setter Property="FontSize" Value="14"/>
+			<Setter Property="FontWeight" Value="SemiBold"/>
+			<Setter Property="Margin" Value="0,6,0,0"/>
+			<Setter Property="Opacity" Value="0.9"/>
+		</Style>
 	</UserControl.Styles>
 
 	<UserControl.DataTemplates>
@@ -53,6 +59,44 @@
 						<TextBlock Text="{Binding Status}" FontSize="12" TextWrapping="Wrap" />
 					</StackPanel>
 				</Grid>
+			</Border>
+		</DataTemplate>
+
+		<!-- A LoRA in the chosen folder. -->
+		<DataTemplate DataType="m:ImageLoraItem">
+			<Border Margin="0,6,0,0" Padding="12" CornerRadius="8" Background="{DynamicResource SystemControlBackgroundBaseLowBrush}">
+				<StackPanel Spacing="4">
+					<Grid ColumnDefinitions="*,Auto">
+						<StackPanel Grid.Column="0">
+							<TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Name}" />
+							<TextBlock Text="{Binding Details}" FontSize="12" Opacity="0.7" TextWrapping="Wrap" />
+						</StackPanel>
+						<ToggleSwitch Grid.Column="1" IsChecked="{Binding IsEnabled}" IsEnabled="{Binding IsUsable}" OnContent="On" OffContent="Off"
+									  VerticalAlignment="Top" Margin="12,0,0,0" AutomationProperties.Name="Use this LoRA" />
+					</Grid>
+					<TextBlock Text="{Binding Note}" IsVisible="{Binding HasNote}" FontSize="12" TextWrapping="Wrap" FontStyle="Italic" />
+
+					<StackPanel Spacing="6" IsVisible="{Binding IsUsable}" Margin="0,4,0,0">
+						<Grid ColumnDefinitions="Auto,*,Auto">
+							<TextBlock Grid.Column="0" Text="Strength" VerticalAlignment="Center" Margin="0,0,8,0" />
+							<Slider Grid.Column="1" Value="{Binding Strength}" Minimum="{Binding MinStrength}" Maximum="{Binding MaxStrength}"
+									SmallChange="0.05" LargeChange="0.25" TickFrequency="0.05" IsSnapToTickEnabled="True" AutomationProperties.Name="Strength" />
+							<TextBlock Grid.Column="2" Text="{Binding StrengthText}" VerticalAlignment="Center" Margin="8,0,0,0" MinWidth="36" />
+						</Grid>
+						<Grid ColumnDefinitions="Auto,*,Auto">
+							<TextBlock Grid.Column="0" Text="Trigger words" VerticalAlignment="Center" Margin="0,0,8,0" />
+							<TextBox Grid.Column="1" Text="{Binding TriggerWords}" PlaceholderText="None" AutomationProperties.Name="Trigger words" />
+							<Button Grid.Column="2" Content="Use found" Command="{Binding UseSuggestedTriggerWordsCommand}" IsVisible="{Binding CanUseSuggestedTriggerWords}" Margin="8,0,0,0" />
+						</Grid>
+						<TextBlock Text="{Binding TriggerWordsHint}" FontSize="12" Opacity="0.7" TextWrapping="Wrap" />
+						<StackPanel Orientation="Horizontal" Spacing="16">
+							<CheckBox Content="Contact photos" IsChecked="{Binding ForPhotos}" />
+							<CheckBox Content="Selfies" IsChecked="{Binding ForSelfies}" />
+						</StackPanel>
+					</StackPanel>
+					<TextBlock Text="{Binding Status}" FontSize="12" TextWrapping="Wrap" IsVisible="{Binding Status, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+							   Foreground="{DynamicResource SystemControlErrorTextForegroundBrush}" />
+				</StackPanel>
 			</Border>
 		</DataTemplate>
 	</UserControl.DataTemplates>
@@ -158,10 +202,18 @@
 
 					<StackPanel Spacing="8" IsVisible="{Binding IsImageGenerationAvailable}">
 						<TextBlock Text="Image Generation" Classes="section-header" />
+						<TextBlock Text="{Binding ImageGenerationHint}" TextWrapping="Wrap" Opacity="0.75" />
 						<TextBlock Text="{Binding ImageRuntimeProblem}" IsVisible="{Binding ImageRuntimeProblem, Converter={x:Static ObjectConverters.IsNotNull}}"
 								   TextWrapping="Wrap" Foreground="{DynamicResource SystemControlErrorTextForegroundBrush}" />
 
-						<TextBlock Text="Profile photos" Classes="subsection-header" />
+						<!-- Processor (CPU) models -->
+						<StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+							<i:MaterialIcon Kind="Chip" Width="20" Height="20" VerticalAlignment="Center" />
+							<TextBlock Text="On the processor (CPU only)" Classes="subsection-header" Margin="0" VerticalAlignment="Center" />
+						</StackPanel>
+						<TextBlock Text="{Binding CpuImageHint}" TextWrapping="Wrap" Opacity="0.75" />
+
+						<TextBlock Text="Profile photos" Classes="minor-header" />
 						<TextBlock Text="{Binding ImageModelsHint}" TextWrapping="Wrap" Opacity="0.75" />
 						<Button Command="{Binding AddImageModelCommand}" HorizontalAlignment="Left">
 							<StackPanel Orientation="Horizontal" Spacing="6">
@@ -171,7 +223,7 @@
 						</Button>
 						<ItemsControl ItemsSource="{Binding ImageModels}" />
 
-						<TextBlock Text="Selfies" Classes="subsection-header" />
+						<TextBlock Text="Selfies" Classes="minor-header" />
 						<TextBlock Text="{Binding SelfieModelsHint}" TextWrapping="Wrap" Opacity="0.75" />
 						<TextBlock Text="{Binding FaceMatchingStatus}" TextWrapping="Wrap" FontSize="12" />
 						<Button Command="{Binding AddSelfieModelCommand}" HorizontalAlignment="Left">
@@ -181,6 +233,86 @@
 							</StackPanel>
 						</Button>
 						<ItemsControl ItemsSource="{Binding SelfieModels}" />
+
+						<!-- Graphics card (GPU) models -->
+						<StackPanel Orientation="Horizontal" Spacing="8" Margin="0,16,0,0">
+							<i:MaterialIcon Kind="ExpansionCard" Width="20" Height="20" VerticalAlignment="Center" />
+							<TextBlock Text="On a graphics card (GPU)" Classes="subsection-header" Margin="0" VerticalAlignment="Center" />
+						</StackPanel>
+						<TextBlock Text="{Binding GpuImageHint}" TextWrapping="Wrap" Opacity="0.75" />
+						<TextBlock Text="{Binding GpuStatus}" TextWrapping="Wrap" FontSize="12" />
+
+						<Border Padding="12" CornerRadius="8" Background="{DynamicResource SystemControlBackgroundBaseLowBrush}" IsVisible="{Binding IsCudaOffered}">
+							<StackPanel Spacing="6">
+								<Grid ColumnDefinitions="*,Auto">
+									<StackPanel Grid.Column="0">
+										<TextBlock Text="CUDA runtime for NVIDIA cards" FontWeight="SemiBold" />
+										<TextBlock Text="{Binding CudaHint}" TextWrapping="Wrap" FontSize="12" Margin="0,4,0,0" />
+									</StackPanel>
+									<StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0" VerticalAlignment="Top">
+										<Button Command="{Binding DownloadCudaCommand}" IsVisible="{Binding CanDownloadCuda}" Classes="accent">
+											<StackPanel Orientation="Horizontal" Spacing="6">
+												<i:MaterialIcon Kind="Download" />
+												<TextBlock Text="Download" />
+											</StackPanel>
+										</Button>
+										<Button Command="{Binding CancelCudaDownloadCommand}" IsVisible="{Binding IsCudaDownloading}" Content="Pause" />
+										<Button Command="{Binding RemoveCudaCommand}" IsVisible="{Binding CanRemoveCuda}" ToolTip.Tip="Remove the CUDA runtime">
+											<i:MaterialIcon Kind="TrashCanOutline" />
+										</Button>
+									</StackPanel>
+								</Grid>
+								<HyperlinkButton Content="NVIDIA CUDA license" NavigateUri="https://docs.nvidia.com/cuda/eula/index.html" FontSize="12" Padding="0" />
+								<ProgressBar Value="{Binding CudaProgress}" Maximum="100" IsVisible="{Binding IsCudaDownloading}" />
+								<TextBlock Text="{Binding CudaStatus}" FontSize="12" TextWrapping="Wrap" />
+							</StackPanel>
+						</Border>
+
+						<TextBlock Text="Profile photos" Classes="minor-header" />
+						<TextBlock Text="{Binding GpuImageModelsHint}" TextWrapping="Wrap" Opacity="0.75" />
+						<Button Command="{Binding AddGpuImageModelCommand}" HorizontalAlignment="Left">
+							<StackPanel Orientation="Horizontal" Spacing="6">
+								<i:MaterialIcon Kind="Plus" />
+								<TextBlock Text="Add from Hugging Face" />
+							</StackPanel>
+						</Button>
+						<ItemsControl ItemsSource="{Binding GpuImageModels}" />
+
+						<TextBlock Text="Selfies" Classes="minor-header" />
+						<TextBlock Text="{Binding GpuSelfieModelsHint}" TextWrapping="Wrap" Opacity="0.75" />
+						<Button Command="{Binding AddGpuSelfieModelCommand}" HorizontalAlignment="Left">
+							<StackPanel Orientation="Horizontal" Spacing="6">
+								<i:MaterialIcon Kind="Plus" />
+								<TextBlock Text="Add from Hugging Face" />
+							</StackPanel>
+						</Button>
+						<ItemsControl ItemsSource="{Binding GpuSelfieModels}" />
+
+						<!-- LoRAs, for any model whose base they fit -->
+						<StackPanel Spacing="8" IsVisible="{Binding IsLoraAvailable}">
+							<StackPanel Orientation="Horizontal" Spacing="8" Margin="0,16,0,0">
+								<i:MaterialIcon Kind="LayersTripleOutline" Width="20" Height="20" VerticalAlignment="Center" />
+								<TextBlock Text="LoRAs" Classes="subsection-header" Margin="0" VerticalAlignment="Center" />
+							</StackPanel>
+							<TextBlock Text="{Binding LoraHint}" TextWrapping="Wrap" Opacity="0.75" />
+							<StackPanel Orientation="Horizontal" Spacing="8">
+								<Button Command="{Binding ChooseLoraFolderCommand}">
+									<StackPanel Orientation="Horizontal" Spacing="6">
+										<i:MaterialIcon Kind="FolderOpenOutline" />
+										<TextBlock Text="Choose folder" />
+									</StackPanel>
+								</Button>
+								<Button Command="{Binding ScanLorasCommand}" IsVisible="{Binding HasLoraFolder}" ToolTip.Tip="Read the folder again">
+									<i:MaterialIcon Kind="Refresh" />
+								</Button>
+								<Button Command="{Binding ClearLoraFolderCommand}" IsVisible="{Binding HasLoraFolder}" ToolTip.Tip="Stop using this folder (its files are kept)">
+									<i:MaterialIcon Kind="Close" />
+								</Button>
+							</StackPanel>
+							<SelectableTextBlock Text="{Binding LoraFolder}" IsVisible="{Binding HasLoraFolder}" FontSize="12" TextWrapping="Wrap" />
+							<TextBlock Text="{Binding LoraStatus}" FontSize="12" TextWrapping="Wrap" />
+							<ItemsControl ItemsSource="{Binding Loras}" />
+						</StackPanel>
 					</StackPanel>
 
 

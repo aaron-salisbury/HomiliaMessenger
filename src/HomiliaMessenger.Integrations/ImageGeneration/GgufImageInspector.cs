@@ -30,30 +30,40 @@ internal sealed record GgufInspection(ImageModelFamily Family, bool HasTextEncod
 
 /// <summary>
 /// Reads the header of a GGUF file (its metadata and the names, shapes, and types of its tensors, not the weights) to
-/// tell whether it holds a Stable Diffusion 1.x model this app can run on its own: the UNet, the CLIP text encoder, and
-/// the VAE. A file's name and repository say nothing reliable about this; its tensors do.
+/// tell what image model it holds: a self-contained Stable Diffusion 1.x or SDXL checkpoint (the UNet, the CLIP text
+/// encoder, and the VAE), or a FLUX.2 [klein] 4B diffusion model, which is read with a separate text encoder and VAE. A
+/// file's name and repository say nothing reliable about this; its tensors do. Whether the app can run it on the processor
+/// or only on a graphics card is decided by the caller.
 /// </summary>
 /// <remarks>
 /// Tensor names follow the original Stable Diffusion checkpoint layout that stable-diffusion.cpp writes and reads
 /// (<c>model.diffusion_model.*</c>, <c>cond_stage_model.*</c>, <c>first_stage_model.*</c>). Stable Diffusion 1.x
 /// conditions its UNet on 768-dimensional CLIP ViT-L/14 features, 2.x on 1024-dimensional OpenCLIP features, and SDXL
-/// adds a class embedding; the cross-attention key projection's input width tells them apart. Files that declare an
-/// architecture in their metadata, as language models and some UNet-only image conversions do, are classified by it.
-/// The GGUF layout is from the <a href="https://github.com/ggml-org/ggml/blob/master/docs/gguf.md">GGUF specification</a>.
+/// adds a class embedding; the cross-attention key projection's input width tells them apart. FLUX.2 has modulation shared
+/// by its double-stream blocks (<c>double_stream_modulation_img</c>), unlike FLUX.1, and the width of its text input
+/// (<c>txt_in</c>) is three of its text encoder's layers: 7680 for [klein] 4B's Qwen3-4B (3 × 2560), larger for the
+/// models read with Qwen3-8B or Mistral. Files that declare a language model's architecture in their metadata are
+/// classified by it. The GGUF layout is from the
+/// <a href="https://github.com/ggml-org/ggml/blob/master/docs/gguf.md">GGUF specification</a>.
 /// </remarks>
 internal static class GgufImageInspector
 {
-    internal const string ONLY_SD1 = "Only Stable Diffusion 1.x models, such as DreamShaper 8, are supported.";
+    internal const string SUPPORTED = "This app runs Stable Diffusion 1.x models such as DreamShaper 8, and on a graphics card also SDXL models and FLUX.2 [klein] 4B.";
+
+    /// <summary>
+    /// The width of FLUX.2 [klein] 4B's text input: three layers of Qwen3-4B's 2560-wide hidden states.
+    /// </summary>
+    internal const long KLEIN_4B_TEXT_WIDTH = 7680;
 
     private const uint GGUF_MAGIC = 0x46554747;
     private const int MAX_NAME_BYTES = 64 * 1024;
 
     /// <summary>
-    /// Architectures that image-model converters declare, which are not Stable Diffusion 1.x.
+    /// Architectures that image-model converters declare; their tensors tell which this app can run.
     /// </summary>
-    private static readonly HashSet<string> OTHER_IMAGE_ARCHITECTURES = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> IMAGE_ARCHITECTURES = new(StringComparer.OrdinalIgnoreCase)
     {
-        "sd3", "flux", "aura", "ltxv", "hyvid", "wan", "hidream", "cosmos", "lumina2", "qwen_image", "chroma", "sana", "pixart"
+        "sd1", "sdxl", "sd3", "flux", "flux2", "aura", "ltxv", "hyvid", "wan", "hidream", "cosmos", "lumina2", "qwen_image", "chroma", "sana", "pixart"
     };
 
     private static readonly Dictionary<uint, string> TYPE_NAMES = new()
@@ -121,10 +131,10 @@ internal static class GgufImageInspector
                 {
                     architecture = reader.String();
 
-                    if (!architecture.Equals("sd1", StringComparison.OrdinalIgnoreCase) && !architecture.Equals("sdxl", StringComparison.OrdinalIgnoreCase))
+                    if (!IMAGE_ARCHITECTURES.Contains(architecture))
                     {
-                        // Classified by its declared architecture; the rest of a language model's header can be megabytes
-                        // of vocabulary.
+                        // A language model, classified by its declared architecture; the rest of its header can be
+                        // megabytes of vocabulary.
                         return ByArchitecture(architecture);
                     }
                 }
@@ -148,11 +158,6 @@ internal static class GgufImageInspector
 
     private static GgufInspection ByArchitecture(string architecture)
     {
-        if (OTHER_IMAGE_ARCHITECTURES.Contains(architecture))
-        {
-            return new(ImageModelFamily.OtherImageModel, false, false, null, architecture, $"This is a {architecture} image model. " + ONLY_SD1);
-        }
-
         return new(ImageModelFamily.LanguageModel, false, false, null, architecture,
             $"This is a language model ({architecture}), not an image model. Conversation models are added under Local Models.");
     }
@@ -165,6 +170,8 @@ internal static class GgufImageInspector
         bool hasVae = false;
         bool hasOtherImageBlocks = false;
         bool hasLanguageModelTensors = false;
+        bool hasFlux2Modulation = false;
+        long textInputWidth = 0;
         long contextWidth = 0;
         long inputChannels = 0;
         Dictionary<uint, long> types = [];
@@ -213,6 +220,13 @@ internal static class GgufImageInspector
             hasOtherImageBlocks |= name.Contains("double_blocks.", StringComparison.Ordinal) || name.Contains("joint_blocks.", StringComparison.Ordinal)
                 || name.Contains("single_transformer_blocks.", StringComparison.Ordinal);
             hasLanguageModelTensors |= name.StartsWith("blk.", StringComparison.Ordinal) || name == "token_embd.weight";
+            hasFlux2Modulation |= name.Contains("double_stream_modulation_img.", StringComparison.Ordinal);
+
+            // GGUF lists a matrix's input width first.
+            if (name.EndsWith("txt_in.weight", StringComparison.Ordinal) && shape.Length == 2)
+            {
+                textInputWidth = shape[0];
+            }
         }
 
         string? quantization = Quantization(types);
@@ -221,23 +235,31 @@ internal static class GgufImageInspector
         {
             if (hasClassEmbedding || contextWidth == 2048)
             {
-                return new(ImageModelFamily.StableDiffusionXL, hasTextEncoder, hasVae, quantization, architecture, "This is an SDXL model. " + ONLY_SD1);
+                return new(ImageModelFamily.StableDiffusionXL, hasTextEncoder, hasVae, quantization, architecture, CheckpointProblem(hasTextEncoder, hasVae, inputChannels));
             }
 
             if (contextWidth == 1024)
             {
-                return new(ImageModelFamily.StableDiffusion2, hasTextEncoder, hasVae, quantization, architecture, "This is a Stable Diffusion 2.x model. " + ONLY_SD1);
+                return new(ImageModelFamily.StableDiffusion2, hasTextEncoder, hasVae, quantization, architecture, "This is a Stable Diffusion 2.x model. " + SUPPORTED);
             }
 
             if (contextWidth == 768)
             {
-                return new(ImageModelFamily.StableDiffusion1, hasTextEncoder, hasVae, quantization, architecture, Sd1Problem(hasTextEncoder, hasVae, inputChannels));
+                return new(ImageModelFamily.StableDiffusion1, hasTextEncoder, hasVae, quantization, architecture, CheckpointProblem(hasTextEncoder, hasVae, inputChannels));
             }
+        }
+
+        if (hasFlux2Modulation)
+        {
+            return textInputWidth == KLEIN_4B_TEXT_WIDTH
+                ? new(ImageModelFamily.Flux2Klein4B, false, false, quantization, architecture, null)
+                : new(ImageModelFamily.OtherImageModel, false, false, quantization, architecture,
+                    "This is a larger FLUX.2 model, read with a text encoder other than Qwen3-4B. Of FLUX.2, only [klein] 4B models are supported.");
         }
 
         if (hasOtherImageBlocks)
         {
-            return new(ImageModelFamily.OtherImageModel, hasTextEncoder, hasVae, quantization, architecture, "This image model family is not supported. " + ONLY_SD1);
+            return new(ImageModelFamily.OtherImageModel, hasTextEncoder, hasVae, quantization, architecture, "This image model family is not supported. " + SUPPORTED);
         }
 
         if (hasLanguageModelTensors)
@@ -246,13 +268,21 @@ internal static class GgufImageInspector
                 "This is a language model, not an image model. Conversation models are added under Local Models.");
         }
 
+        if (architecture is not null && !architecture.StartsWith("sd", StringComparison.OrdinalIgnoreCase))
+        {
+            return new(ImageModelFamily.OtherImageModel, hasTextEncoder, hasVae, quantization, architecture, $"This is a {architecture} image model. " + SUPPORTED);
+        }
+
         return new(ImageModelFamily.Unknown, hasTextEncoder, hasVae, quantization, architecture,
             hasVae && !hasUnet
                 ? "This file holds only a VAE, not a complete image model."
-                : "The file's tensors were not recognized as a Stable Diffusion 1.x model.");
+                : "The file's tensors were not recognized as an image model this app runs. " + SUPPORTED);
     }
 
-    private static string? Sd1Problem(bool hasTextEncoder, bool hasVae, long inputChannels)
+    /// <summary>
+    /// Why a Stable Diffusion checkpoint cannot be used on its own, or <see langword="null"/>.
+    /// </summary>
+    private static string? CheckpointProblem(bool hasTextEncoder, bool hasVae, long inputChannels)
     {
         if (inputChannels is not (0 or 4))
         {

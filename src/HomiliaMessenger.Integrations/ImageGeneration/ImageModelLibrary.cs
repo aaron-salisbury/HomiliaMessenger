@@ -19,20 +19,24 @@ namespace HomiliaMessenger.Integrations.ImageGeneration;
 
 /// <summary>
 /// Downloads image models into their own folder, apart from conversational and embedding models, and remembers which one
-/// photos are generated with: the built-in catalog, and Stable Diffusion 1.x GGUF files the user adds from Hugging Face.
+/// photos are generated with: the built-in catalog, and GGUF files the user adds from Hugging Face (Stable Diffusion 1.x
+/// for the processor; also SDXL and FLUX.2 [klein] 4B for a graphics card).
 /// </summary>
 /// <remarks>
 /// Downloads work as they do for conversational models (see <see cref="LocalModelLibrary"/>): resumable, checked against
 /// their published SHA-256 hashes, and moved into place only once complete. The model chosen for contact photos is kept
 /// in <c>selected-model.txt</c>, the one for selfies in <c>selected-selfie-model.txt</c>, and added models in
-/// <c>user-models.json</c>, beside the model folders. Face matching, which every selfie model needs, has a folder of its
-/// own; its image encoder is converted to Q8_0 after downloading and the downloaded file removed.
+/// <c>user-models.json</c>, beside the model folders. Files several models share, such as FLUX.2 [klein]'s text encoder
+/// and VAE, are kept once each under <c>components</c>, and removed with the last downloaded model that uses them. Face
+/// matching, which Stable Diffusion selfie models need, has a folder of its own, with an adapter for each family and one
+/// image encoder, converted to Q8_0 after downloading and the downloaded file removed.
 /// </remarks>
 internal sealed class ImageModelLibrary : IImageModelLibrary
 {
     private const string SELECTED_FILE = "selected-model.txt";
     private const string SELECTED_SELFIE_FILE = "selected-selfie-model.txt";
     private const string USER_MODELS_FILE = "user-models.json";
+    internal const string COMPONENTS_DIRECTORY = "components";
 
     /// <summary>
     /// The ID under which face matching downloads, so it cannot download twice at once or alongside its removal.
@@ -66,6 +70,7 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
     private readonly IStableDiffusionBackend? _backend;
     private readonly FaceMatchingDefinition _faceMatching;
     private readonly ConcurrentDictionary<string, bool> _downloading = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, bool> _modelsDownloading = new(StringComparer.OrdinalIgnoreCase);
     private readonly Lock _lock = new();
     private string? _selectedId;
     private string? _selectedSelfieId;
@@ -130,21 +135,29 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
     {
         string? active = ActiveFor(purpose)?.Id;
         bool selfies = purpose == ImageModelPurpose.Selfies;
-        bool faceMatching = IsFaceMatchingReady;
 
-        return [.. Catalog.Where(model => model.IsOffered(purpose)).Select(model => new ImageModel(
-            model.Id,
-            model.DisplayName,
-            selfies ? model.SelfieDescription ?? model.Description : model.Description,
-            selfies ? $"{model.License} · {FaceMatchingCatalog.LICENSE}" : model.License,
-            model.LicenseUrl,
-            model.DownloadBytes + (selfies ? _faceMatching.DownloadBytes : 0),
-            IsDownloaded(model) && (!selfies || faceMatching),
-            string.Equals(model.Id, active, StringComparison.OrdinalIgnoreCase),
-            model.IsUserAdded,
-            model.IsVerified,
-            model.SettingsFor(purpose),
-            model.Purposes))];
+        return [.. Catalog.Where(model => model.IsOffered(purpose)).Select(model =>
+        {
+            bool faceMatching = selfies && model.FaceSource == SelfieFaceSource.FaceMatching;
+
+            return new ImageModel(
+                model.Id,
+                model.DisplayName,
+                selfies ? model.SelfieDescription ?? model.Description : model.Description,
+                faceMatching ? $"{model.License} · {FaceMatchingCatalog.LICENSE}" : model.License,
+                model.LicenseUrl,
+                model.DownloadBytes + (faceMatching ? FaceMatchingDownloadBytes(model.Family) : 0),
+                selfies ? IsSelfieReady(model) : IsDownloaded(model),
+                string.Equals(model.Id, active, StringComparison.OrdinalIgnoreCase),
+                model.IsUserAdded,
+                model.IsVerified,
+                model.SettingsFor(purpose),
+                model.Purposes,
+                model.Processor,
+                model.Family,
+                model.Style,
+                model.FaceSource);
+        })];
     }
 
     public FaceMatching GetFaceMatching()
@@ -154,26 +167,94 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
 
     internal string FaceMatchingDirectory => Path.Combine(_directory, FaceMatchingCatalog.DIRECTORY_NAME);
 
-    /// <summary>
-    /// Face matching's files as the runtime opens them, whether or not they are there.
-    /// </summary>
-    internal FaceMatchingFiles FaceMatchingPaths => new(
-        Path.Combine(FaceMatchingDirectory, FaceMatchingCatalog.PREPARED_ENCODER),
-        Path.Combine(FaceMatchingDirectory, _faceMatching.Adapter.LocalName));
+    private string PreparedEncoderPath => Path.Combine(FaceMatchingDirectory, FaceMatchingCatalog.PREPARED_ENCODER);
 
     /// <summary>
-    /// Whether face matching is downloaded and its encoder prepared, at their expected sizes.
+    /// Stable Diffusion 1.x face matching's files as the runtime opens them, whether or not they are there.
     /// </summary>
-    internal bool IsFaceMatchingReady
+    internal FaceMatchingFiles FaceMatchingPaths => FaceMatchingPathsFor(ImageModelFamily.StableDiffusion1)!;
+
+    /// <summary>
+    /// Face matching's files for selfies of a model of <paramref name="family"/>, whether or not they are there, or
+    /// <see langword="null"/> when there is no face matching for it.
+    /// </summary>
+    internal FaceMatchingFiles? FaceMatchingPathsFor(ImageModelFamily family)
     {
-        get
-        {
-            FaceMatchingFiles paths = FaceMatchingPaths;
-            FileInfo encoder = new(paths.ImageEncoderPath);
-            FileInfo adapter = new(paths.AdapterPath);
+        return _faceMatching.AdapterFor(family) is { } adapter ? new(PreparedEncoderPath, Path.Combine(FaceMatchingDirectory, adapter.LocalName)) : null;
+    }
 
-            return encoder.Exists && encoder.Length == _faceMatching.PreparedEncoderBytes && adapter.Exists && adapter.Length == _faceMatching.Adapter.Size;
+    /// <summary>
+    /// Whether Stable Diffusion 1.x face matching is downloaded and its encoder prepared, at their expected sizes.
+    /// </summary>
+    internal bool IsFaceMatchingReady => IsFaceMatchingReadyFor(ImageModelFamily.StableDiffusion1);
+
+    /// <summary>
+    /// Whether face matching for <paramref name="family"/> is downloaded and its encoder prepared, at their expected sizes.
+    /// </summary>
+    internal bool IsFaceMatchingReadyFor(ImageModelFamily family)
+    {
+        return _faceMatching.AdapterFor(family) is { } adapter && IsEncoderPrepared && HasFaceMatchingFile(adapter);
+    }
+
+    private bool IsEncoderPrepared => new FileInfo(PreparedEncoderPath) is { Exists: true } encoder && encoder.Length == _faceMatching.PreparedEncoderBytes;
+
+    private bool HasFaceMatchingFile(LocalModelFile file)
+    {
+        return new FileInfo(Path.Combine(FaceMatchingDirectory, file.LocalName)) is { Exists: true } info && info.Length == file.Size;
+    }
+
+    /// <summary>
+    /// What downloading face matching for <paramref name="family"/> takes in all: its adapter and the image encoder.
+    /// </summary>
+    private long FaceMatchingDownloadBytes(ImageModelFamily family)
+    {
+        return (_faceMatching.AdapterFor(family)?.Size ?? 0) + _faceMatching.ImageEncoder.Size;
+    }
+
+    /// <summary>
+    /// Whether everything a selfie with <paramref name="model"/> needs is downloaded: the model, and face matching for it
+    /// unless it keeps a face from a reference image.
+    /// </summary>
+    internal bool IsSelfieReady(ImageModelDefinition model)
+    {
+        return IsDownloaded(model) && (model.FaceSource == SelfieFaceSource.ReferenceImage || IsFaceMatchingReadyFor(model.Family));
+    }
+
+    /// <summary>
+    /// Where a shared file is kept, whether or not it is there.
+    /// </summary>
+    internal string ComponentPath(ImageModelComponent component)
+    {
+        return Path.Combine(ComponentDirectory(component), component.File.LocalName);
+    }
+
+    private string ComponentDirectory(ImageModelComponent component)
+    {
+        return Path.Combine(_directory, COMPONENTS_DIRECTORY, component.Id);
+    }
+
+    internal bool IsComponentDownloaded(ImageModelComponent component)
+    {
+        return new FileInfo(ComponentPath(component)) is { Exists: true } info && info.Length == component.File.Size;
+    }
+
+    /// <summary>
+    /// The files the runtime opens <paramref name="model"/> from: its checkpoint, or its diffusion model with the shared
+    /// text encoder and VAE.
+    /// </summary>
+    internal ImageModelPaths PathsFor(ImageModelDefinition model)
+    {
+        if (!model.IsDiffusionModelOnly)
+        {
+            return new ImageModelPaths(CheckpointPath(model));
         }
+
+        string? Shared(ImageComponentRole role)
+        {
+            return model.SharedFiles.FirstOrDefault(component => component.Role == role) is { } component ? ComponentPath(component) : null;
+        }
+
+        return new ImageModelPaths(null, CheckpointPath(model), Shared(ImageComponentRole.TextEncoder), Shared(ImageComponentRole.Vae));
     }
 
     private string? SelectedId(ImageModelPurpose purpose)
@@ -200,9 +281,15 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
     }
 
     /// <summary>
-    /// Whether every file is present at its expected size. Hashes are checked once, when the download completes.
+    /// Whether every file, with the shared files the model needs, is present at its expected size. Hashes are checked once,
+    /// when the download completes.
     /// </summary>
     internal bool IsDownloaded(ImageModelDefinition model)
+    {
+        return HasOwnFiles(model) && model.SharedFiles.All(IsComponentDownloaded);
+    }
+
+    private bool HasOwnFiles(ImageModelDefinition model)
     {
         string directory = ModelDirectory(model);
 
@@ -243,6 +330,25 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
 
     public async Task<LocalModelDownloadResult> DownloadAsync(string modelId, ImageModelPurpose purpose = ImageModelPurpose.Portraits, IProgress<LocalModelDownloadProgress>? progress = null, CancellationToken cancellationToken = default)
     {
+        // Counted as using its shared files from the start, before it looks for them, so removing another model that
+        // shares them keeps them.
+        bool registered = _modelsDownloading.TryAdd(modelId, true);
+
+        try
+        {
+            return await DownloadModelAndPartsAsync(modelId, purpose, progress, cancellationToken);
+        }
+        finally
+        {
+            if (registered)
+            {
+                _modelsDownloading.TryRemove(modelId, out _);
+            }
+        }
+    }
+
+    private async Task<LocalModelDownloadResult> DownloadModelAndPartsAsync(string modelId, ImageModelPurpose purpose, IProgress<LocalModelDownloadProgress>? progress, CancellationToken cancellationToken)
+    {
         ImageModelDefinition? model = Find(modelId);
 
         if (model is null || !model.IsOffered(purpose))
@@ -250,32 +356,64 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
             return LocalModelDownloadResult.Failed($"There is no image model named \"{modelId}\" for {(purpose == ImageModelPurpose.Selfies ? "selfies" : "contact photos")}.");
         }
 
-        // For selfies the model and face matching download one after the other, reported as one download.
-        bool needsModel = !IsDownloaded(model);
-        bool needsFaceMatching = purpose == ImageModelPurpose.Selfies && !IsFaceMatchingReady;
-        long modelBytes = needsModel ? model.DownloadBytes : 0;
-        long total = modelBytes + (needsFaceMatching ? _faceMatching.DownloadBytes : 0);
+        bool needsFaceMatching = purpose == ImageModelPurpose.Selfies && model.FaceSource == SelfieFaceSource.FaceMatching && !IsFaceMatchingReadyFor(model.Family);
+
+        if (needsFaceMatching && _faceMatching.AdapterFor(model.Family) is null)
+        {
+            return LocalModelDownloadResult.Failed($"There is no face matching for {model.DisplayName}'s kind of model, so it cannot take selfies.");
+        }
+
+        // The shared files, the model, and face matching download one after the other, reported as one download.
+        // A shared file being downloaded or removed for another model is not taken as present: it goes through
+        // DownloadComponentAsync, which waits for neither and reports it busy.
+        IReadOnlyList<ImageModelComponent> components = [.. model.SharedFiles.Where(component => _downloading.ContainsKey(ComponentKey(component)) || !IsComponentDownloaded(component))];
+        bool needsModel = !HasOwnFiles(model);
+        long componentBytes = components.Sum(component => component.File.Size);
+        long modelBytes = needsModel ? model.Files.Sum(file => file.Size) : 0;
+        long total = componentBytes + modelBytes + (needsFaceMatching ? FaceMatchingDownloadBytes(model.Family) : 0);
+        long offset = 0;
+
+        foreach (ImageModelComponent component in components)
+        {
+            IProgress<LocalModelDownloadProgress>? componentProgress = progress is null ? null : new OffsetProgress(progress, offset, total);
+            LocalModelDownloadResult componentResult = await DownloadComponentAsync(component, componentProgress, cancellationToken);
+
+            if (componentResult.Status != LocalModelDownloadStatus.Success)
+            {
+                return componentResult;
+            }
+
+            offset += component.File.Size;
+        }
 
         if (needsModel)
         {
-            IProgress<LocalModelDownloadProgress>? modelProgress = progress is null ? null : new OffsetProgress(progress, 0, total);
+            IProgress<LocalModelDownloadProgress>? modelProgress = progress is null ? null : new OffsetProgress(progress, offset, total);
             LocalModelDownloadResult modelResult = await DownloadModelAsync(model, modelProgress, cancellationToken);
 
             if (modelResult.Status != LocalModelDownloadStatus.Success)
             {
                 return modelResult;
             }
+
+            offset += modelBytes;
         }
 
         if (needsFaceMatching)
         {
-            IProgress<LocalModelDownloadProgress>? faceProgress = progress is null ? null : new OffsetProgress(progress, modelBytes, total);
-            LocalModelDownloadResult faceResult = await DownloadFaceMatchingAsync(faceProgress, cancellationToken);
+            IProgress<LocalModelDownloadProgress>? faceProgress = progress is null ? null : new OffsetProgress(progress, offset, total);
+            LocalModelDownloadResult faceResult = await DownloadFaceMatchingAsync(model.Family, faceProgress, cancellationToken);
 
             if (faceResult.Status != LocalModelDownloadStatus.Success)
             {
                 return faceResult;
             }
+        }
+
+        // A shared file removed with another model while this one downloaded its own files is fetched again next time.
+        if (!IsDownloaded(model))
+        {
+            return LocalModelDownloadResult.Failed($"{model.DisplayName}'s shared files were removed while it downloaded. Try again.");
         }
 
         // Ready to use at once: chosen unless another downloaded model already is.
@@ -288,11 +426,60 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
     }
 
     /// <summary>
+    /// Downloads a file several models share, once.
+    /// </summary>
+    private async Task<LocalModelDownloadResult> DownloadComponentAsync(ImageModelComponent component, IProgress<LocalModelDownloadProgress>? progress, CancellationToken cancellationToken)
+    {
+        string key = ComponentKey(component);
+
+        // Not taken as present while it is being downloaded or removed for another model.
+        if (!_downloading.ContainsKey(key) && IsComponentDownloaded(component))
+        {
+            return LocalModelDownloadResult.Success;
+        }
+
+        if (!_downloading.TryAdd(key, true))
+        {
+            return LocalModelDownloadResult.Failed($"{component.DisplayName} is already downloading for another model. Try again when it is done.");
+        }
+
+        try
+        {
+            LocalModelDownloadResult result = await LocalModelLibrary.DownloadFilesAsync(ComponentDirectory(component), component.BaseUrl, [component.File], component.DisplayName, _httpClientFactory.CreateClient(), null, progress, cancellationToken);
+
+            if (result.Status == LocalModelDownloadStatus.Success)
+            {
+                _logger.LogInformation("Downloaded shared image model file {ComponentId}.", component.Id);
+            }
+
+            return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return LocalModelDownloadResult.Canceled;
+        }
+        catch (Exception error) when (error is HttpRequestException or IOException or InvalidDataException or UnauthorizedAccessException or TimeoutException)
+        {
+            _logger.LogWarning(error, "Downloading shared image model file {ComponentId} failed.", component.Id);
+            return LocalModelDownloadResult.Failed($"Could not download {component.DisplayName}: {error.Message} Try again to resume.");
+        }
+        finally
+        {
+            _downloading.TryRemove(key, out _);
+        }
+    }
+
+    private static string ComponentKey(ImageModelComponent component)
+    {
+        return "\u0000component:" + component.Id;
+    }
+
+    /// <summary>
     /// Downloads the model's own files.
     /// </summary>
     private async Task<LocalModelDownloadResult> DownloadModelAsync(ImageModelDefinition model, IProgress<LocalModelDownloadProgress>? progress, CancellationToken cancellationToken)
     {
-        if (!IsDownloaded(model))
+        if (!HasOwnFiles(model))
         {
             if (!_downloading.TryAdd(model.Id, true))
             {
@@ -331,14 +518,28 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
     }
 
     /// <summary>
-    /// Downloads face matching, or finishes preparing it after an interruption, then converts its image encoder to Q8_0
-    /// with the integrated runtime and removes the downloaded encoder.
+    /// Downloads Stable Diffusion 1.x face matching (see <see cref="DownloadFaceMatchingAsync(ImageModelFamily, IProgress{LocalModelDownloadProgress}?, CancellationToken)"/>).
     /// </summary>
-    internal async Task<LocalModelDownloadResult> DownloadFaceMatchingAsync(IProgress<LocalModelDownloadProgress>? progress, CancellationToken cancellationToken)
+    internal Task<LocalModelDownloadResult> DownloadFaceMatchingAsync(IProgress<LocalModelDownloadProgress>? progress, CancellationToken cancellationToken)
     {
-        if (IsFaceMatchingReady)
+        return DownloadFaceMatchingAsync(ImageModelFamily.StableDiffusion1, progress, cancellationToken);
+    }
+
+    /// <summary>
+    /// Downloads face matching for <paramref name="family"/>, or finishes preparing it after an interruption: its adapter,
+    /// and the image encoder every adapter shares, which is converted to Q8_0 with the integrated runtime and the
+    /// downloaded encoder removed. Adapters already downloaded for other families are kept.
+    /// </summary>
+    internal async Task<LocalModelDownloadResult> DownloadFaceMatchingAsync(ImageModelFamily family, IProgress<LocalModelDownloadProgress>? progress, CancellationToken cancellationToken)
+    {
+        if (IsFaceMatchingReadyFor(family))
         {
             return LocalModelDownloadResult.Success;
+        }
+
+        if (_faceMatching.AdapterFor(family) is not { } adapterFile)
+        {
+            return LocalModelDownloadResult.Failed("There is no face matching for this kind of model.");
         }
 
         if (_backend is null || _backend.RuntimeProblem is not null)
@@ -353,17 +554,28 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
 
         string directory = FaceMatchingDirectory;
         string source = Path.Combine(directory, _faceMatching.ImageEncoder.LocalName);
-        FaceMatchingFiles paths = FaceMatchingPaths;
+        FaceMatchingFiles paths = FaceMatchingPathsFor(family)!;
+        LocalModelFile preparedEncoder = new(FaceMatchingCatalog.PREPARED_ENCODER, _faceMatching.PreparedEncoderBytes, string.Empty);
+
+        // Every face matching file already in place is kept while others download into the same folder.
+        IReadOnlyList<LocalModelFile> kept = [.. _faceMatching.Adapters, preparedEncoder, _faceMatching.ImageEncoder];
 
         try
         {
-            // With the encoder already prepared, only the adapter is missing: it alone is downloaded, and the prepared
-            // encoder is kept rather than downloaded and converted again.
-            if (new FileInfo(paths.ImageEncoderPath) is { Exists: true } prepared && prepared.Length == _faceMatching.PreparedEncoderBytes)
+            // With the encoder already prepared, only the adapter is missing: it alone is downloaded, into a folder of its
+            // own, and moved in beside the installed files once complete, so an interrupted download leaves the face
+            // matching already in place working.
+            if (IsEncoderPrepared)
             {
-                LocalModelFile preparedEncoder = new(FaceMatchingCatalog.PREPARED_ENCODER, _faceMatching.PreparedEncoderBytes, string.Empty);
-                KeepCompleteFiles(directory, [_faceMatching.Adapter, preparedEncoder]);
-                LocalModelDownloadResult adapterResult = await LocalModelLibrary.DownloadFilesAsync(directory, _faceMatching.BaseUrl, [_faceMatching.Adapter], FaceMatchingCatalog.NAME, _httpClientFactory.CreateClient(), null, progress, cancellationToken);
+                string staging = directory + "-" + Path.GetFileNameWithoutExtension(adapterFile.LocalName);
+                LocalModelDownloadResult adapterResult = await LocalModelLibrary.DownloadFilesAsync(staging, _faceMatching.BaseUrl, [adapterFile], FaceMatchingCatalog.NAME, _httpClientFactory.CreateClient(), null, progress, cancellationToken);
+
+                if (adapterResult.Status == LocalModelDownloadStatus.Success)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(paths.AdapterPath)!);
+                    File.Move(Path.Combine(staging, adapterFile.LocalName), paths.AdapterPath, overwrite: true);
+                    Directory.Delete(staging, recursive: true);
+                }
 
                 return adapterResult;
             }
@@ -371,12 +583,12 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
             // A download that finished before its encoder was prepared (the app closed meanwhile) is prepared without
             // downloading again.
             bool downloaded = new FileInfo(source) is { Exists: true } encoder && encoder.Length == _faceMatching.ImageEncoder.Size
-                && new FileInfo(paths.AdapterPath) is { Exists: true } adapter && adapter.Length == _faceMatching.Adapter.Size;
+                && new FileInfo(paths.AdapterPath) is { Exists: true } adapter && adapter.Length == adapterFile.Size;
 
             if (!downloaded)
             {
-                KeepCompleteFiles(directory, _faceMatching.Downloads);
-                LocalModelDownloadResult result = await LocalModelLibrary.DownloadFilesAsync(directory, _faceMatching.BaseUrl, _faceMatching.Downloads, FaceMatchingCatalog.NAME, _httpClientFactory.CreateClient(), null, progress, cancellationToken);
+                KeepCompleteFiles(directory, kept);
+                LocalModelDownloadResult result = await LocalModelLibrary.DownloadFilesAsync(directory, _faceMatching.BaseUrl, [adapterFile, _faceMatching.ImageEncoder], FaceMatchingCatalog.NAME, _httpClientFactory.CreateClient(), null, progress, cancellationToken);
 
                 if (result.Status != LocalModelDownloadStatus.Success)
                 {
@@ -436,10 +648,15 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
             return false;
         }
 
-        // A model that also makes contact photos stays; what selfies alone need of it is face matching.
+        // A model that also makes contact photos stays; what selfies alone need of it is face matching, and nothing when it
+        // keeps a face from a reference image.
         if (purpose == ImageModelPurpose.Selfies && model.IsOffered(ImageModelPurpose.Portraits))
         {
-            return await DeleteFaceMatchingAsync(cancellationToken);
+            // Kept while another downloaded selfie model of the same family still matches faces with it.
+            bool neededElsewhere = Catalog.Any(other => other.Id != model.Id && other.Family == model.Family && other.FaceSource == SelfieFaceSource.FaceMatching
+                && other.IsOffered(ImageModelPurpose.Selfies) && IsDownloaded(other));
+
+            return model.FaceSource == SelfieFaceSource.FaceMatching && !neededElsewhere && await DeleteFaceMatchingAsync(model.Family, cancellationToken);
         }
 
         // A model the user added for both is taken off this purpose's list and stays downloaded for the other, which
@@ -456,11 +673,103 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
             return false;
         }
 
-        return existed | (model.IsUserAdded && Forget(model, null));
+        bool forgotten = model.IsUserAdded && Forget(model, null);
+        await DeleteUnusedComponentsAsync(model, cancellationToken);
+
+        return existed | forgotten;
     }
 
     /// <summary>
-    /// Removes face matching, which every selfie model needs.
+    /// Removes the shared files of a removed model that no other downloaded model uses.
+    /// </summary>
+    private async Task DeleteUnusedComponentsAsync(ImageModelDefinition removed, CancellationToken cancellationToken)
+    {
+        foreach (ImageModelComponent component in removed.SharedFiles)
+        {
+            // Reserved before its users are counted, so a download that starts meanwhile either is counted or waits for
+            // the removal and downloads it again.
+            string key = ComponentKey(component);
+
+            if (!_downloading.TryAdd(key, true))
+            {
+                continue;
+            }
+
+            try
+            {
+                // Kept for a model that has its own files or is downloading.
+                // A download of the removed model itself, started again since, counts too.
+                bool used = Catalog.Any(model => ((model.Id != removed.Id && HasOwnFiles(model)) || _modelsDownloading.ContainsKey(model.Id))
+                    && model.SharedFiles.Any(shared => shared.Id == component.Id));
+
+                if (used)
+                {
+                    continue;
+                }
+
+                string directory = ComponentDirectory(component);
+                string partial = directory + LocalModelLibrary.PARTIAL_SUFFIX;
+
+                await _gate.RunExclusiveAsync(() =>
+                {
+                    if (Directory.Exists(directory))
+                    {
+                        Directory.Delete(directory, recursive: true);
+                    }
+
+                    if (Directory.Exists(partial))
+                    {
+                        Directory.Delete(partial, recursive: true);
+                    }
+                }, cancellationToken);
+
+                _logger.LogInformation("Removed shared image model file {ComponentId}, which no downloaded model uses.", component.Id);
+            }
+            finally
+            {
+                _downloading.TryRemove(key, out _);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes face matching for <paramref name="family"/>: its adapter, and the whole folder with the shared image encoder
+    /// when no other family's adapter is downloaded.
+    /// </summary>
+    private async Task<bool> DeleteFaceMatchingAsync(ImageModelFamily family, CancellationToken cancellationToken)
+    {
+        if (_faceMatching.AdapterFor(family) is not { } adapter)
+        {
+            return false;
+        }
+
+        if (_faceMatching.Adapters.Any(other => other != adapter && HasFaceMatchingFile(other)))
+        {
+            if (!_downloading.TryAdd(FACE_MATCHING_KEY, true))
+            {
+                return false;
+            }
+
+            try
+            {
+                string path = Path.Combine(FaceMatchingDirectory, adapter.LocalName);
+                bool existed = File.Exists(path);
+                await _gate.RunExclusiveAsync(() => File.Delete(path), cancellationToken);
+                _logger.LogInformation("Removed face matching for {Family}.", family);
+
+                return existed;
+            }
+            finally
+            {
+                _downloading.TryRemove(FACE_MATCHING_KEY, out _);
+            }
+        }
+
+        return await DeleteFaceMatchingAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Removes face matching, with every adapter and the image encoder.
     /// </summary>
     private async Task<bool> DeleteFaceMatchingAsync(CancellationToken cancellationToken)
     {
@@ -565,13 +874,13 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
         }
     }
 
-    public async Task<ImageModelLookup> LookUpAsync(string repository, CancellationToken cancellationToken = default)
+    public async Task<ImageModelLookup> LookUpAsync(string repository, ImageProcessor processor = ImageProcessor.Cpu, CancellationToken cancellationToken = default)
     {
         (HuggingFaceRepository? found, HuggingFaceLookup? problem) = await _huggingFace.GetRepositoryAsync(repository, cancellationToken);
 
         if (found is null)
         {
-            return ImageModelLookup.Unsuccessful(problem!.Status, problem.RepoId, problem.Problem ?? "Could not read the repository.");
+            return ImageModelLookup.Unsuccessful(problem!.Status, problem.RepoId, problem.Problem ?? "Could not read the repository.", processor);
         }
 
         List<HuggingFaceFile> ggufs = [.. found.Files
@@ -581,19 +890,35 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
         if (ggufs.Count == 0)
         {
             return new ImageModelLookup(HuggingFaceLookupStatus.NoModels, found.RepoId, found.Revision, found.License, found.PipelineTag, [],
-                $"{found.RepoId} has no GGUF files. This app runs image models converted to GGUF for stable-diffusion.cpp; search Hugging Face for the model's name with \"GGUF\".");
+                $"{found.RepoId} has no GGUF files. This app runs image models converted to GGUF for stable-diffusion.cpp; search Hugging Face for the model's name with \"GGUF\".", processor);
         }
 
         List<ImageModelFile> files = [];
 
         foreach (HuggingFaceFile file in ggufs.Take(MAX_FILES_INSPECTED))
         {
-            files.Add(await InspectAsync(found, file, cancellationToken));
+            ImageModelFile inspected = await InspectAsync(found, file, cancellationToken);
+            files.Add(inspected with { Problem = inspected.Problem ?? ProcessorProblem(inspected.Family, processor) });
         }
 
         string? note = ggufs.Count > MAX_FILES_INSPECTED ? $"Only the {MAX_FILES_INSPECTED} smallest of its {ggufs.Count} GGUF files were checked." : null;
 
-        return new ImageModelLookup(HuggingFaceLookupStatus.Found, found.RepoId, found.Revision, found.License, found.PipelineTag, files, note);
+        return new ImageModelLookup(HuggingFaceLookupStatus.Found, found.RepoId, found.Revision, found.License, found.PipelineTag, files, note, processor);
+    }
+
+    /// <summary>
+    /// Why a model of <paramref name="family"/> cannot run on <paramref name="processor"/>, or <see langword="null"/>.
+    /// </summary>
+    internal static string? ProcessorProblem(ImageModelFamily family, ImageProcessor processor)
+    {
+        return family switch
+        {
+            ImageModelFamily.StableDiffusion1 => null,
+            ImageModelFamily.StableDiffusionXL or ImageModelFamily.Flux2Klein4B when processor == ImageProcessor.Gpu => null,
+            ImageModelFamily.StableDiffusionXL => "This is an SDXL model, which this app runs on a graphics card only. Add it under Graphics card.",
+            ImageModelFamily.Flux2Klein4B => "This is a FLUX.2 [klein] 4B model, which this app runs on a graphics card only. Add it under Graphics card.",
+            _ => GgufImageInspector.SUPPORTED
+        };
     }
 
     /// <summary>
@@ -620,7 +945,7 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
 
                 if (inspection.NeedsBytes > 0)
                 {
-                    inspection = GgufInspection.Unrecognized("The file's header is longer than any Stable Diffusion checkpoint's, or the file is cut short.");
+                    inspection = GgufInspection.Unrecognized("The file's header is longer than any image model's this app runs, or the file is cut short.");
                 }
 
                 return new ImageModelFile(file, inspection.Family, inspection.HasTextEncoder, inspection.HasVae, inspection.Quantization, inspection.Problem, known);
@@ -633,7 +958,7 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
         }
     }
 
-    public Task<LocalModelAddResult> AddAsync(ImageModelLookup lookup, ImageModelFile file, ImageGenerationSettings settings, ImageModelPurpose purpose = ImageModelPurpose.Portraits, CancellationToken cancellationToken = default)
+    public Task<LocalModelAddResult> AddAsync(ImageModelLookup lookup, ImageModelFile file, ImageGenerationSettings settings, ImageModelPurpose purpose = ImageModelPurpose.Portraits, ImagePromptStyle? promptStyle = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(lookup);
         ArgumentNullException.ThrowIfNull(file);
@@ -655,7 +980,7 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
             return Task.FromResult(new LocalModelAddResult(null, "Look up the repository again, then choose a file to add."));
         }
 
-        if (file.Problem is { } problem)
+        if ((file.Problem ?? ProcessorProblem(file.Family, lookup.Processor)) is { } problem)
         {
             return Task.FromResult(new LocalModelAddResult(null, problem));
         }
@@ -674,6 +999,12 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
 
             bool selfies = purpose == ImageModelPurpose.Selfies;
 
+            if (existing is not null && existing.Processor != lookup.Processor)
+            {
+                string where = existing.Processor == ImageProcessor.Gpu ? "graphics card" : "processor";
+                return Task.FromResult(new LocalModelAddResult(null, $"This model was already added to run on the {where}. Remove it there first to add it here."));
+            }
+
             if (existing is not null)
             {
                 // Already added for the other purpose: offered for this one too, with the settings given for it.
@@ -691,10 +1022,23 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
                 return Task.FromResult(new LocalModelAddResult(existing.Id, null));
             }
 
+            string family = file.Family switch
+            {
+                ImageModelFamily.StableDiffusionXL => "An SDXL model",
+                ImageModelFamily.Flux2Klein4B => "A FLUX.2 [klein] 4B model",
+                _ => "A Stable Diffusion 1.x model"
+            };
+            string shared = file.Family == ImageModelFamily.Flux2Klein4B
+                ? " It is drawn with the Qwen3-4B text encoder and FLUX.2 VAE (2.8 GB), downloaded with it unless another FLUX.2 [klein] 4B model already did."
+                : string.Empty;
+            string selfieNote = file.Family == ImageModelFamily.Flux2Klein4B
+                ? " Selfies keep the face by drawing from the contact's photo itself."
+                : " Downloading it also downloads face matching for it if needed.";
+
             ImageModelDefinition model = new(
                 LocalModelLibrary.ModelId(lookup.RepoId, checkpoint.Name),
                 Path.GetFileNameWithoutExtension(checkpoint.LocalName) + (file.Quantization is { } quantization ? $" · {quantization}" : string.Empty),
-                $"From {lookup.RepoId} on Hugging Face. A Stable Diffusion 1.x model whose compatibility with this app has not been verified.",
+                $"From {lookup.RepoId} on Hugging Face. {family} whose compatibility with this app has not been verified.{shared}",
                 lookup.License ?? "See the repository",
                 lookup.Url,
                 $"{HuggingFaceClient.SITE}{lookup.RepoId}/resolve/{lookup.Revision}/",
@@ -704,7 +1048,11 @@ internal sealed class ImageModelLibrary : IImageModelLibrary
                 lookup.RepoId,
                 purpose,
                 selfies ? settings : null,
-                selfies ? $"From {lookup.RepoId} on Hugging Face, for selfies. A Stable Diffusion 1.x model whose compatibility with this app and with face matching has not been verified. Downloading it also downloads face matching if needed (2.6 GB, made 0.8 GB once prepared)." : null);
+                selfies ? $"From {lookup.RepoId} on Hugging Face, for selfies. {family} whose compatibility with this app has not been verified.{shared}{selfieNote}" : null,
+                lookup.Processor,
+                file.Family,
+                promptStyle,
+                file.Family == ImageModelFamily.Flux2Klein4B ? ImageModelCatalog.KleinComponents : null);
 
             // Save first, so a failed save leaves nothing behind that a retry would take as added.
             SaveUserModels([.. _userModels, model]);

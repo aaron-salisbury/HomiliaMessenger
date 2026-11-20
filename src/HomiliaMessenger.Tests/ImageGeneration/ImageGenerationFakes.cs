@@ -115,6 +115,25 @@ internal sealed class FakeBackend : IStableDiffusionBackend
     public string? RuntimeProblem { get; set; }
 
     /// <summary>
+    /// The graphics cards the runtime reports; none unless set.
+    /// </summary>
+    public List<ImageGpuDevice> Gpus { get; } = [];
+
+    public bool IsCudaActive { get; set; }
+
+    public bool IsLoaded => _opened > 0;
+
+    public IReadOnlyList<ImageGpuDevice> GpuDevices()
+    {
+        return Gpus;
+    }
+
+    /// <summary>
+    /// Every model opened, with the device it was opened on.
+    /// </summary>
+    public List<ImageModelLoad> Loads { get; } = [];
+
+    /// <summary>
     /// Thrown when a model is opened, as when its file cannot be loaded.
     /// </summary>
     public Exception? OpenFailure { get; set; }
@@ -149,15 +168,20 @@ internal sealed class FakeBackend : IStableDiffusionBackend
 
     public long ConvertedBytes { get; set; } = FaceMatchingCatalog.PREPARED_ENCODER_BYTES;
 
-    public IStableDiffusionContext Open(string modelPath, FaceMatchingFiles? faceMatching = null)
+    public IStableDiffusionContext Open(ImageModelLoad load)
     {
         if (OpenFailure is not null)
         {
             throw OpenFailure;
         }
 
+        lock (Loads)
+        {
+            Loads.Add(load);
+        }
+
         Interlocked.Increment(ref _opened);
-        return new Context(this, faceMatching);
+        return new Context(this, load.FaceMatching);
     }
 
     /// <summary>
