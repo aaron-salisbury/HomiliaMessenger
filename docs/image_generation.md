@@ -1,19 +1,19 @@
 # Image Generation: Contact Photos and Selfies
 
-Contacts' photos can be generated on this computer from a description of the person, as an alternative to choosing a photo file. The feature is optional: it needs a 1.8 GB image model, downloaded only when you ask for it in Settings. It runs on the CPU without a GPU, account, or online service. The same models can also take selfies contacts send in chats (see [Selfies](#selfies)).
+Contacts' photos can be generated on this computer from a description of the person, as an alternative to choosing a photo file. The feature is optional: it needs an image model, downloaded only when you ask for it in Settings. The default, DreamShaper 8 LCM (1.8 GB), runs on the CPU without a GPU, account, or online service; with a graphics card, FLUX.2 [klein] 4B and DreamShaper XL Lightning are faster, more realistic, and follow descriptions far more closely (see [Graphics card models](#graphics-card-models)). The same models can also take selfies contacts send in chats (see [Selfies](#selfies)), with LoRAs from a folder you choose (see [LoRAs](#loras)).
 
 The aim is a polished, slightly idealized photographic portrait, a believable profile picture rather than documentary realism, that keeps the attributes you asked for.
 
 ## Installing the model
 
-1. Open **Settings → Image Generation**.
-2. Choose **Download** beside **DreamShaper 8 LCM** (1.8 GB, CreativeML Open RAIL-M).
+1. Open **Settings → Image Generation**. Its models are in two parts: **On the processor (CPU only)**, for any computer, and **On a graphics card (GPU)**. Each has **Profile photos** and **Selfies**. One model is in use for photos and one for selfies, chosen from either part.
+2. Choose **Download** beside **DreamShaper 8 LCM** (1.8 GB, CreativeML Open RAIL-M), under the processor.
 3. Read and accept the license notice (see [Licensing](#licensing)).
 4. Watch the progress bar. **Pause** stops the download, and downloading again resumes it. When the files have been checked against their published SHA-256 hashes, the model is marked **In use** and is ready at once. Nothing else has to be configured.
 
 Image models are never downloaded at installation or start-up. If you have more than one image model downloaded, choose **Use** beside the one that should make new photos; with only one, it is used automatically. Removing a model deletes its files; photos already saved to contacts are kept.
 
-Models are stored in the application data directory under `Models/Images/<model>/`, apart from chat models (`Models/`) and embedding models (`Models/Embeddings/`). The publisher's `LICENSE.txt` is downloaded and kept beside the DreamShaper checkpoint.
+Models are stored in the application data directory under `Models/Images/<model>/`, apart from chat models (`Models/`) and embedding models (`Models/Embeddings/`). The publisher's `LICENSE.txt` is downloaded and kept beside the DreamShaper checkpoint. Files several models share, such as FLUX.2 [klein]'s text encoder and VAE, are kept once under `Models/Images/components/<file>/`, and removed with the last downloaded model that uses them; the CUDA runtime under `Models/Images/runtimes/`.
 
 ## Generating a photo
 
@@ -65,6 +65,39 @@ Generation runs on a background thread, so the app stays responsive.
 
 **Quality.** Faces are usually coherent and the style polished, but this is a small, fast model: eyes, mouths, and especially hands are sometimes malformed, and a requested attribute is occasionally missed. Generating another is the remedy. No face restoration, upscaling, or beauty filtering is applied.
 
+## Graphics card models
+
+**Settings → Image Generation → On a graphics card (GPU)** offers two models, chosen in the GPU image experiment (`GpuImageGenerationExperiment`, five phases on an RTX 4070 Ti) for speed first, then prompt adherence, then realism:
+
+| | FLUX.2 [klein] 4B (recommended) | DreamShaper XL Lightning |
+|---|---|---|
+| What | Black Forest Labs' distilled 4B model, Q4_0, read by the Qwen3-4B language model (Q4_K_M), decoded by the FLUX.2 VAE | An SDXL 1.0 fine-tune |
+| Contact photo, 1024×1024 | 4.1–4.3 s with the CUDA runtime (in-app, model load included); 24 s first run on Vulkan | about 6 s (experiment) |
+| Selfie, 896×1152 | 7 s with the CUDA runtime; 13 s on Vulkan (in-app) | about 8 s (experiment), with face matching for SDXL |
+| Hard scenes passed (of 15, both seeds) | 14: champagne soaking the subject, a dog licking a cheek, a "MISS YOU" sign, two people | 5 |
+| Prompts | Plain sentences, CFG 1, no negative prompt | Weighted phrases, CFG 2, negative prompt |
+| LoRAs | FLUX.2 [klein] 4B LoRAs (few so far) | The many SDXL 1.0 LoRAs, its reason to be offered |
+| Download | 5.3 GB (2.5 model + 2.5 text encoder + 0.3 VAE; the last two shared) | 6.9 GB (+ 0.8 GB SDXL face matching for selfies) |
+| License | Apache 2.0 | CreativeML Open RAIL++-M |
+
+Both need about 8 GB of graphics memory; on a smaller card the runtime's auto-fit keeps part of the model in the computer's memory, more slowly (the experiment measured FLUX.2 [klein] selfies at about 10 s with a 6 GiB budget).
+
+**Which card, which backend.** The runtime included with the app is the release's Vulkan build: it draws on the processor exactly as the CPU build did (DreamShaper 8 pixel for pixel) and on any graphics card with a Vulkan driver, NVIDIA, AMD or Intel. For NVIDIA cards, Settings offers the **CUDA runtime**: the release's CUDA build, about 1 GB to download (1.3 GB unpacked, mostly NVIDIA's CUDA libraries, under NVIDIA's license), verified against its SHA-256 hashes and renamed like the included runtime. It is several times faster than Vulkan, above all for selfies from a reference image. Only one runtime loads per process, so a CUDA runtime downloaded after the first image is used from the next start; it replaces the included one whole (the included library with the CUDA backend added sampled four times slower in the experiment). Settings shows the card graphics card models run on and its memory. Without one, graphics card models can be downloaded but not used, and photos and selfies say so.
+
+**Selfies with FLUX.2 [klein]** keep the face by drawing from the contact's whole profile photo as a reference image (scaled to at most 1024 pixels), with no face matching download. The prompt is plain sentences, following the experiment: *"Close-up smartphone selfie from slightly above of the exact same person as in the reference image, with the same face, hair and age: middle-aged man with short gray hair and a gray goatee. Laughing, looking into the camera. A champagne bottle pops open and sprays champagne all over him. A New Year's Eve party, confetti and string lights."* Expressions are written as they are, since the language model reads subtle ones; a wet scene adds "Soaking wet, hair plastered down, water streaming down the face and clothes". The selfie editor then shows character counts instead of CLIP tokens, explains that plain sentences are read, and hides the negative prompt, which has no effect at CFG 1. DreamShaper XL Lightning selfies are written like DreamShaper 8's, with weights and a negative prompt, and keep the face with IP-Adapter Plus-Face for SDXL at strength 0.5, sharing face matching's image encoder; in the experiment it tended to copy the photo's pose.
+
+**How a model's prompts are written** is its *prompt style*: **Weighted** for CLIP-read models (Stable Diffusion 1.x, SDXL) and **Plain** for language-model-read ones (FLUX.2). It follows from the model's family and can be changed when adding a model. Whether a model uses a **negative prompt** is not a setting: the runtime uses one only at CFG above 1, so it follows from the CFG.
+
+## LoRAs
+
+**Settings → Image Generation → LoRAs** uses LoRAs from a folder you choose, such as the one you keep for other image tools; the files stay there.
+
+- **Base model.** Each `.safetensors` file's header (not its weights) is read to tell what it was trained for: a Stable Diffusion LoRA's cross-attention keys read 768-wide features for 1.x, 1024 for 2.x, 2048 for SDXL; FLUX LoRAs train double- and single-stream blocks, 19 and 38 with per-block modulation for FLUX.1, 5 and 20 for FLUX.2 [klein] 4B. Training metadata (`ss_base_model_version`, `modelspec.architecture`) and Civitai's `baseModel` tell apart what tensors cannot. A LoRA is used only with models of its family: SD 1.5 LoRAs with DreamShaper 8 LCM (on the processor too), SDXL 1.0 LoRAs with DreamShaper XL Lightning, FLUX.2 [klein] 4B LoRAs with FLUX.2 [klein]. Each LoRA says which models here it fits. LoRAs trained on Pony, Illustrious or NoobAI are SDXL and load, but are noted as likely to suit DreamShaper XL poorly.
+- **Trigger words**, which many LoRAs need, are filled in when found, from Civitai's `trainedWords` (the `.civitai.info` file Stability Matrix and the Civitai Helper extension save beside a LoRA), the Stable Diffusion web UI's `activation text` (its `.json` file, whose `preferred weight` also sets the strength), the model spec's `modelspec.trigger_phrase`, or last the training captions' tags present in nearly every caption (kohya's `ss_tag_frequency`, leaving out generic tags such as "solo"). They can be edited, and are added to the start of every prompt the LoRA is used with, where the selfie editor shows them.
+- **Strength** is a slider from 0 to 2, starting at the suggested weight or 0.8. **Contact photos** and **Selfies** choose what it is used for. Every LoRA is off until turned on.
+
+Settings are kept in `Models/Images/loras.json`. The runtime applies LoRAs while drawing (`sd_lora_t` in the image parameters, at its automatic apply mode), which for quantized models costs some speed. Few-step models (LCM, Lightning, distilled FLUX.2 [klein]) were tuned for their step counts; heavy LoRAs trained for normal sampling may need a lower strength. LoRA loading with these models has not been tested with real LoRA files.
+
 ## Selfies
 
 Contacts can send selfies in chats. A selfie shows the contact somewhere, doing something, looking some way, as the conversation suggests, and keeps the face in their profile photo.
@@ -107,6 +140,8 @@ Words from the conversation are kept, without the brackets and colons the runtim
 
 ### Settings
 
+The table below is for DreamShaper 8 LCM; graphics card models are in [Graphics card models](#graphics-card-models).
+
 DreamShaper 8 LCM for selfies: 512×640 (a 512×768 canvas drew duplicated faces), LCM, 4 steps, CFG 1.5 (CFG 2 followed prompts equally but oversaturated more, at the same cost), face matching at 0.3.
 
 | | DreamShaper 8 LCM selfie, 512×640 |
@@ -135,14 +170,15 @@ Removing works per purpose: removing DreamShaper under **Selfies** removes face 
 
 ## Adding image models from Hugging Face
 
-For experimenting, **Settings → Image Generation → Add from Hugging Face** adds other Stable Diffusion 1.x models:
+For experimenting, **Add from Hugging Face** adds other models: under the processor, Stable Diffusion 1.x; under the graphics card, also SDXL checkpoints and FLUX.2 [klein] 4B diffusion models (recognized by FLUX.2's shared double-stream modulation and a 7680-wide text input, three layers of Qwen3-4B), which are drawn with the shared Qwen3-4B text encoder and FLUX.2 VAE, downloaded with them unless already there. Settings, prompt style and canvas start from the file's family (SDXL: Euler ancestral, 25 steps, CFG 7; FLUX.2 [klein]: Euler, 4 steps, CFG 1, plain prompts; 1024×1024 photos and 896×1152 selfies for both), and the dialog says whether a negative prompt will be used. The steps for a Stable Diffusion 1.x model:
 
 1. Enter a repository (`owner/name` or its address) and choose **Look up**. The app lists the repository's GGUF files and reads each one's header (the first 512 KB or so, by range request) to tell what it holds. Nothing else is downloaded. A file's name and repository are not trusted; its tensors are.
 2. Each file shows its size, its model family, its weight format, and whether the text encoder and VAE are included, or why it cannot be used:
    - **Stable Diffusion 1.x, self-contained**: can be added.
    - **Stable Diffusion 1.x missing its text encoder or VAE** (such as UNet-only conversions): refused; separate component files are not supported yet.
    - **Inpainting or image-editing variants**: refused; they need a source image.
-   - **SD 2.x, SDXL, SD3, FLUX, and other families**: refused; only SD 1.x has been verified with this app's runtime and memory budget.
+   - **SDXL and FLUX.2 [klein] 4B**: refused under the processor, with a pointer to the graphics card part; accepted there.
+   - **SD 2.x, SD3, FLUX.1, larger FLUX.2 models, and other families**: refused.
    - **Language models**: refused, with a pointer to Local Models.
    - **The built-in DreamShaper file**: recognized by its hash and pointed to the built-in entry.
 3. Choose a supported file and enter the settings its model card recommends: sampler, steps, and CFG. The defaults (Euler ancestral, 20 steps, CFG 7) suit an ordinary checkpoint and are the runtime's documented SD 1.5 example. When the file name mentions LCM, Turbo, Lightning, or Hyper, the dialog points out that such models need different settings, but it changes nothing itself.
@@ -150,14 +186,14 @@ For experimenting, **Settings → Image Generation → Add from Hugging Face** a
 
 Added models are pinned to the repository revision they were looked up at, verified against Hugging Face's SHA-256 hashes, marked **Unverified** in Settings, and show the settings they were given. Gated repositories use the Hugging Face access token saved under **Local Models → Add from Hugging Face**. Photos are 512×512 for every model.
 
-What is not supported yet: `.safetensors` and `.ckpt` checkpoints (only GGUF), separate VAE, text encoder, or LoRA files, other resolutions, choosing a scheduler explicitly (the runtime's default for the sampler is used), and editing an added model's settings (remove and add it again). The header check identifies the architecture reliably but cannot prove a file was converted correctly; an unverified model may fail to load, or draw poorly with the wrong settings.
+What is not supported yet: adding `.safetensors` and `.ckpt` checkpoints (only GGUF; the built-in DreamShaper XL Lightning is a `.safetensors` file the runtime opens as it is), choosing another text encoder or VAE, other resolutions, choosing a scheduler explicitly (the runtime's default for the sampler is used), and editing an added model's settings (remove and add it again). The header check identifies the architecture reliably but cannot prove a file was converted correctly; an unverified model may fail to load, or draw poorly with the wrong settings.
 
 ## Platforms
 
 | | Status |
 |---|---|
-| Windows x64 | **Verified**: build, publish, and real generation, pixel-identical to the experiment's in-process and CLI runs, with LLamaSharp's runtime loaded in the same process. |
-| Linux x64 | **Not verified.** Build and publish include the pinned upstream Linux CPU runtime, renamed and checked structurally, but no generation has been run on Linux. The upstream build targets Ubuntu 26.04 and needs a recent `libstdc++` (`GLIBCXX_3.4.32`, GCC 13 or later) and `libgomp`; older distributions may not load it. |
+| Windows x64 | **Verified**: build and real generation on the processor, pixel-identical to the experiment's in-process and CLI runs, with LLamaSharp's runtime loaded in the same process; FLUX.2 [klein] photos and selfies on an RTX 4070 Ti with the included Vulkan runtime and with the CUDA runtime unpacked by the app. AMD and Intel cards are not verified. |
+| Linux x64 | **Not verified.** Build and publish include the pinned upstream Linux Vulkan runtime, renamed and checked structurally, but no generation has been run on Linux. The upstream build targets Ubuntu 26.04 and needs a recent `libstdc++` (`GLIBCXX_3.4.32`, GCC 13 or later), `libgomp`, and `libvulkan.so.1` for graphics cards; older distributions may not load it. There is no CUDA runtime for Linux in the release. |
 | macOS, ARM | Not included. The Image Generation section explains that image generation is unavailable on this system. |
 
 The CPU backend comes in variants for different instruction sets (SSE4.2 to AVX-512); ggml loads the best one the CPU supports. CPUs without SSE4.2 are not supported.
@@ -166,10 +202,11 @@ The CPU backend comes in variants for different instruction sets (SSE4.2 to AVX-
 
 Images are generated in-process by [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp), pinned to commit `5dcfa79` (release `master-1104-5dcfa79`), through a small P/Invoke binding (`Integrations/ImageGeneration/StableDiffusionNative.cs`). No Python, Docker, local server, external executable, or online service is involved.
 
-- **Packaging.** The build downloads the pinned release archive for the system being built for, checks its SHA-256 hash, and copies only the libraries the app loads (the runtime, ggml, and its CPU backend variants), plus their MIT notices, to `StableDiffusion/<rid>/` beside the app: 46 MB on Windows, 65 MB on Linux. Users never install anything. The archive is cached under the project's `obj/` folder; a build without network access warns and leaves image generation out, while a publish fails instead. The native libraries are never committed to the repository. See `build/native/StableDiffusionRuntime.targets`.
+- **Packaging.** The build downloads the pinned release's Vulkan archive for the system being built for, checks its SHA-256 hash, and copies only the libraries the app loads (the runtime, ggml, its CPU backend variants, and its Vulkan backend), plus their MIT notices, to `StableDiffusion/<rid>/` beside the app: 87 MB on Windows. Without a Vulkan driver, the Vulkan backend is skipped and the processor is used as before. Users never install anything. The archive is cached under the project's `obj/` folder; a build without network access warns and leaves image generation out, while a publish fails instead. The native libraries are never committed to the repository. See `build/native/StableDiffusionRuntime.targets`.
 - **Renamed ggml.** stable-diffusion.cpp ships its own ggml, which conflicts with the ggml LLamaSharp loads for chat and embedding models. The Windows and Linux loaders bind a dependency to an already loaded library of the same name, so whichever runtime loaded second failed ("The specified procedure could not be found"), in either order. The build therefore renames the runtime's private ggml to `sdml` (`sdml.dll`, `sdml-base.dll`; `libsdml.so.1`, `libsdml-base.so.1`). Only file names, and the dependency names inside the libraries (PE import and export names, ELF `DT_NEEDED` and `DT_SONAME`), are rewritten, in place and at the same length; no code changes. The build fails if a library does not name the expected dependency, as it would after an unreviewed runtime upgrade. The renamed runtime produced the experiment's image pixel for pixel with LLamaSharp loaded first.
 - **Safety checks.** At load, the binding refuses a runtime built from any commit but `5dcfa79`. Before writing parameters, it checks that each field it writes holds the library's documented default, which would not hold if the struct layout differed from the pinned header. Native contexts are owned by a `SafeHandle` and released after every photo, and every native result buffer is freed.
-- **GPU.** Not used. The backend is explicitly `cpu`; a GPU backend would need its own runtime build, tests, and memory policy.
+- **Devices.** Processor models are opened on `CPU`, exactly as before. Graphics card models are opened on the first graphics card the runtime lists (`ggml_backend_dev_*`), a CUDA one first, with flash attention where the runtime's probe finds it faster, as its command-line tool defaults to; the runtime's auto-fit decides what lives in graphics memory. A FLUX.2 [klein] model is opened from three files (`diffusion_model_path`, `llm_path`, `vae_path`), reference images go in `ref_images`, and LoRAs in `loras`; the default checks cover each of these fields.
+- **The CUDA runtime** (`CudaRuntime.cs`) is downloaded from the same release (two archives, checked against their SHA-256 hashes), unpacked, and renamed with the same `NativeLibraryRenamer` the build uses; it is loaded instead of the included runtime when complete and an NVIDIA driver (`nvcuda.dll`) is present, its CUDA libraries first so the system finds them in its folder.
 
 **Upgrading the runtime:** update the release URL, commit, and archive hashes in `StableDiffusionRuntime.targets` and `StableDiffusionNative.PINNED_COMMIT`; diff the new `include/stable-diffusion.h` against the prefix structs and default checks in `StableDiffusionNative.cs`; then run the `ImageModel` tests with the real model, which compare a generated image's pixels with a reference.
 
@@ -179,7 +216,10 @@ The model and the runtime have different licenses.
 
 - **DreamShaper 8 LCM** ([Lykon/dreamshaper-8-lcm](https://huggingface.co/Lykon/dreamshaper-8-lcm), a Stable Diffusion 1.5 fine-tune), converted to GGUF by [NishQ1/vora-create-sd15](https://huggingface.co/NishQ1/vora-create-sd15), is under **CreativeML Open RAIL-M**. That license allows use and redistribution, but with use-based restrictions (its Attachment A). Paragraph 5 requires anyone who lets others use the model to require them to comply. So before downloading, the app shows a notice summarizing the restrictions and asks the user to agree; the full license is linked from Settings and downloaded with the model. The app does not host or redistribute the weights: they are downloaded directly from the publisher's Hugging Face repository at a pinned revision.
 - **stable-diffusion.cpp** and **ggml** are MIT. Their license notices are included beside the libraries in every build and publish (`StableDiffusion/<rid>/LICENSE.*.txt`) and credited in `Attributions.md`.
-- Models added from Hugging Face come with their own licenses, shown in the add dialog and in Settings; the user is responsible for them.
+- **FLUX.2 [klein] 4B**, its FLUX.2 VAE, and the **Qwen3-4B** text encoder are Apache 2.0, downloaded from [leejet/FLUX.2-klein-4B-GGUF](https://huggingface.co/leejet/FLUX.2-klein-4B-GGUF), [Comfy-Org/Flux-2-Klein-4B](https://huggingface.co/Comfy-Org/Flux-2-Klein-4B), and [unsloth/Qwen3-4B-GGUF](https://huggingface.co/unsloth/Qwen3-4B-GGUF) at pinned revisions.
+- **DreamShaper XL Lightning** ([Lykon/dreamshaper-xl-lightning](https://huggingface.co/Lykon/dreamshaper-xl-lightning)) is under **CreativeML Open RAIL++-M**, with the same use restrictions as Open RAIL-M; the same notice is shown before downloading.
+- **The CUDA runtime** contains NVIDIA's CUDA runtime and cuBLAS libraries as redistributed in the stable-diffusion.cpp release, under NVIDIA's [CUDA license](https://docs.nvidia.com/cuda/eula/index.html), linked from Settings.
+- **Models added from Hugging Face** and **LoRAs** come with their own licenses; the user is responsible for them.
 
 Open questions, not legal advice:
 
@@ -194,7 +234,8 @@ Descriptions and generated photos never leave the computer. Network use is limit
 
 ## For developers
 
-- Business: `Modules/ImageGeneration` (`IImageGenerator`, `ISelfieImageGenerator`, `IImageModelLibrary`, `PortraitPromptComposer`, `PortraitService`) and `Modules/Selfies` (`SelfieService`, `SelfieDirection` for planning and describing; subject choice is `GroupCoordinator.RankSelfieSubjects`). Integrations: `ImageGeneration/` (catalog with face matching, library, GGUF header inspector, native binding, one generator for photos and selfies, `SelfiePromptComposer`, `FaceReference`). Data: schema version 10 adds `ChatMessage.ImagePng`/`ImageDescription` and `Contact.Appearance`. Presentation: the Image Generation section in Settings, `AddImageModelWindow` (per purpose), `GeneratePhotoWindow`, and the selfie button and bubble in the messenger.
+- Business: `Modules/ImageGeneration` (`IImageGenerator`, `ISelfieImageGenerator`, `IImageModelLibrary` with `ImageProcessor`, `ImagePromptStyle` and `SelfieFaceSource`, `IImageGpuRuntime`, `IImageLoraLibrary`, `PortraitPromptComposer`, `PortraitService`) and `Modules/Selfies` (`SelfieService`, `SelfieDirection` for planning and describing; subject choice is `GroupCoordinator.RankSelfieSubjects`). Integrations: `ImageGeneration/` (catalog with shared components and face matching, library, GGUF header inspector, native binding, one generator for photos and selfies, `SelfiePromptComposer` and `PlainSelfiePromptComposer`, `FaceReference`, `CudaRuntime`, `ImageLoraLibrary` and `LoraInspector`). Data: schema version 10 adds `ChatMessage.ImagePng`/`ImageDescription` and `Contact.Appearance`. Presentation: the Image Generation section in Settings, `AddImageModelWindow` (per purpose), `GeneratePhotoWindow`, and the selfie button and bubble in the messenger.
 - The selfie `ImageModel` tests (`RealSelfieModelTests`) need `HOMILIA_IMAGE_TEST_MODEL`, `HOMILIA_FACE_MATCHING_TEST_DIR` (a folder named `face-matching` with the adapter and the prepared encoder), `HOMILIA_SELFIE_TEST_PHOTO` (a portrait), and, for the conversion test, `HOMILIA_IMAGE_ENCODER_TEST_FILE` (the published encoder).
 - Image models are a category of their own: never contacts' agents, never embedding models.
 - Tests in the `ImageModel` category use the real DreamShaper checkpoint: set `HOMILIA_IMAGE_TEST_MODEL` to its path (or download it in Settings). They are inconclusive without it, and include a pixel-for-pixel comparison with the experiment's reference image and a cancellation test. All other image generation tests use a fake runtime and a fake Hugging Face.
+- Tests in the `GpuImageModel` category (`RealGpuImageModelTests`) draw with FLUX.2 [klein] 4B on a real graphics card: set `HOMILIA_GPU_TEST_MODELS` to a folder holding `flux-2-klein-4b-Q4_0.gguf`, `Qwen3-4B-Q4_K_M.gguf`, and `flux2-vae.safetensors`, and `HOMILIA_SELFIE_TEST_PHOTO` for the selfie. One checks a LoRA turned on in the LoRA library changes what DreamShaper XL Lightning draws from the same seed, and turning it off draws the original again: set `HOMILIA_GPU_TEST_SDXL_DIR` to a folder holding `DreamShaperXL_Lightning.safetensors` and `HOMILIA_GPU_TEST_LORA` to an SDXL LoRA (one without trigger words shows the change comes from its weights). They use the included Vulkan runtime, or the CUDA runtime in `HOMILIA_GPU_TEST_CUDA_DIR`; `HOMILIA_CUDA_TEST_ARCHIVES` (a folder with the two pinned archives) tests unpacking it, into that folder when it does not exist yet. Run them apart from `ImageModel`: only one runtime loads per process.

@@ -294,13 +294,12 @@ public sealed class ContactPhotoWorkflowTests
             return true;
         }
 
-        public Task<ImageModelLookup> LookUpAsync(string repository, CancellationToken cancellationToken = default)
+        public Task<ImageModelLookup> LookUpAsync(string repository, ImageProcessor processor = ImageProcessor.Cpu, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
         }
 
-        public Task<Business.Modules.Agents.LocalModelAddResult> AddAsync(ImageModelLookup lookup, ImageModelFile file, ImageGenerationSettings settings, ImageModelPurpose purpose = ImageModelPurpose.Portraits, CancellationToken cancellationToken = default)
-
+        public Task<Business.Modules.Agents.LocalModelAddResult> AddAsync(ImageModelLookup lookup, ImageModelFile file, ImageGenerationSettings settings, ImageModelPurpose purpose = ImageModelPurpose.Portraits, ImagePromptStyle? promptStyle = null, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
         }

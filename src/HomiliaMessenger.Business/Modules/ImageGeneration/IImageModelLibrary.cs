@@ -26,6 +26,58 @@ public enum ImageModelPurpose
 }
 
 /// <summary>
+/// What an image model runs on. Settings lists the two apart: processor models work on any computer, graphics card models
+/// need a supported GPU and are much faster on one.
+/// </summary>
+public enum ImageProcessor
+{
+    /// <summary>
+    /// The computer's processor, as DreamShaper 8 LCM runs: no graphics card needed.
+    /// </summary>
+    Cpu,
+
+    /// <summary>
+    /// A graphics card, through the runtime's CUDA (NVIDIA) or Vulkan backend.
+    /// </summary>
+    Gpu
+}
+
+/// <summary>
+/// How a model reads its prompt, which decides how prompts are written for it.
+/// </summary>
+public enum ImagePromptStyle
+{
+    /// <summary>
+    /// Read by a CLIP text encoder (Stable Diffusion 1.x and SDXL): short phrases, with emphasis weights such as
+    /// <c>(soaking wet:1.5)</c> that the runtime applies, and a negative prompt when guidance is above 1.
+    /// </summary>
+    Weighted,
+
+    /// <summary>
+    /// Read by a language model (FLUX.2 [klein]'s Qwen3): plain descriptive sentences. Weights are not understood and are
+    /// read as text, so none are written.
+    /// </summary>
+    Plain
+}
+
+/// <summary>
+/// How a selfie keeps the contact's face.
+/// </summary>
+public enum SelfieFaceSource
+{
+    /// <summary>
+    /// IP-Adapter Plus-Face and its image encoder (see <see cref="FaceMatching"/>), downloaded besides the model, as for
+    /// Stable Diffusion 1.x and SDXL.
+    /// </summary>
+    FaceMatching,
+
+    /// <summary>
+    /// The model takes the contact's photo itself as a reference image, as FLUX.2 [klein] does; nothing else is needed.
+    /// </summary>
+    ReferenceImage
+}
+
+/// <summary>
 /// An image model that can run on this computer, kept apart from conversational and embedding models, as listed for one
 /// purpose.
 /// </summary>
@@ -39,6 +91,10 @@ public enum ImageModelPurpose
 /// Face is not.
 /// </param>
 /// <param name="Purposes">Everything the model is offered for, which may be more than the purpose it is listed for.</param>
+/// <param name="Processor">What the model runs on.</param>
+/// <param name="Family">The model's architecture, which decides the LoRAs that fit it.</param>
+/// <param name="PromptStyle">How prompts are written for it.</param>
+/// <param name="FaceSource">How its selfies keep a face.</param>
 public sealed record ImageModel(
     string Id,
     string DisplayName,
@@ -51,7 +107,11 @@ public sealed record ImageModel(
     bool IsUserAdded,
     bool IsVerified,
     ImageGenerationSettings Settings,
-    ImageModelPurpose Purposes = ImageModelPurpose.Portraits);
+    ImageModelPurpose Purposes = ImageModelPurpose.Portraits,
+    ImageProcessor Processor = ImageProcessor.Cpu,
+    ImageModelFamily Family = ImageModelFamily.StableDiffusion1,
+    ImagePromptStyle PromptStyle = ImagePromptStyle.Weighted,
+    SelfieFaceSource FaceSource = SelfieFaceSource.FaceMatching);
 
 /// <summary>
 /// What selfies need besides an image model: IP-Adapter Plus-Face, which carries a contact's face from their photo into
@@ -72,14 +132,24 @@ public enum ImageModelFamily
     Unknown,
 
     /// <summary>
-    /// Stable Diffusion 1.x and its fine-tunes, such as DreamShaper 8: the only family this app runs.
+    /// Stable Diffusion 1.x and its fine-tunes, such as DreamShaper 8, on the processor or a graphics card.
     /// </summary>
     StableDiffusion1,
     StableDiffusion2,
+
+    /// <summary>
+    /// SDXL and its fine-tunes, such as DreamShaper XL Lightning, on a graphics card.
+    /// </summary>
     StableDiffusionXL,
 
     /// <summary>
-    /// Another image model, such as SD3 or FLUX.
+    /// FLUX.2 [klein] 4B and its fine-tunes: a diffusion model alone, read with the Qwen3-4B text encoder and decoded with
+    /// the FLUX.2 VAE, which are separate files shared by every such model. On a graphics card.
+    /// </summary>
+    Flux2Klein4B,
+
+    /// <summary>
+    /// Another image model, such as SD3, FLUX.1, or a larger FLUX.2.
     /// </summary>
     OtherImageModel,
 
@@ -115,13 +185,14 @@ public sealed record ImageModelFile(
 /// </summary>
 /// <param name="Revision">The commit the files belong to; downloads are pinned to it so the hashes stay valid.</param>
 /// <param name="PipelineTag">What the repository says its model does, such as <c>text-to-image</c>, when it says.</param>
-public sealed record ImageModelLookup(HuggingFaceLookupStatus Status, string RepoId, string? Revision, string? License, string? PipelineTag, IReadOnlyList<ImageModelFile> Files, string? Problem)
+/// <param name="Processor">What the files were checked for: a model that runs on a graphics card may be refused for the processor.</param>
+public sealed record ImageModelLookup(HuggingFaceLookupStatus Status, string RepoId, string? Revision, string? License, string? PipelineTag, IReadOnlyList<ImageModelFile> Files, string? Problem, ImageProcessor Processor = ImageProcessor.Cpu)
 {
     public string Url => "https://huggingface.co/" + RepoId;
 
-    public static ImageModelLookup Unsuccessful(HuggingFaceLookupStatus status, string repoId, string problem)
+    public static ImageModelLookup Unsuccessful(HuggingFaceLookupStatus status, string repoId, string problem, ImageProcessor processor = ImageProcessor.Cpu)
     {
-        return new(status, repoId, null, null, null, [], problem);
+        return new(status, repoId, null, null, null, [], problem, processor);
     }
 }
 
@@ -162,14 +233,25 @@ public interface IImageModelLibrary
 
     /// <summary>
     /// Lists the GGUF files in a Hugging Face repository, given as <c>owner/name</c> or its address, and reads each one's
-    /// header to tell whether this app can use it. Nothing is downloaded beyond the headers.
+    /// header to tell whether this app can run it on <paramref name="processor"/>: Stable Diffusion 1.x on either, and
+    /// SDXL and FLUX.2 [klein] 4B on a graphics card only. Nothing is downloaded beyond the headers.
     /// </summary>
-    Task<ImageModelLookup> LookUpAsync(string repository, CancellationToken cancellationToken = default);
+    Task<ImageModelLookup> LookUpAsync(string repository, ImageProcessor processor = ImageProcessor.Cpu, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Adds a supported file from a lookup to the models offered for <paramref name="purpose"/>, with the settings the
-    /// user gave for it, ready to download. Its compatibility is not verified. A file already added for the other purpose
-    /// is offered for this one too.
+    /// Adds a supported file from a lookup to the models offered for <paramref name="purpose"/>, on the processor it was
+    /// looked up for, with the settings the user gave for it, ready to download. Its compatibility is not verified. A file
+    /// already added for the other purpose is offered for this one too.
     /// </summary>
-    Task<LocalModelAddResult> AddAsync(ImageModelLookup lookup, ImageModelFile file, ImageGenerationSettings settings, ImageModelPurpose purpose = ImageModelPurpose.Portraits, CancellationToken cancellationToken = default);
+    /// <param name="promptStyle">How its prompts are written; when <see langword="null"/>, as its family is read (see <see cref="PromptStyleOf"/>).</param>
+    Task<LocalModelAddResult> AddAsync(ImageModelLookup lookup, ImageModelFile file, ImageGenerationSettings settings, ImageModelPurpose purpose = ImageModelPurpose.Portraits, ImagePromptStyle? promptStyle = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// How a model of <paramref name="family"/> reads prompts, from its text encoder: CLIP for Stable Diffusion, a language
+    /// model for FLUX.2.
+    /// </summary>
+    static ImagePromptStyle PromptStyleOf(ImageModelFamily family)
+    {
+        return family == ImageModelFamily.Flux2Klein4B ? ImagePromptStyle.Plain : ImagePromptStyle.Weighted;
+    }
 }

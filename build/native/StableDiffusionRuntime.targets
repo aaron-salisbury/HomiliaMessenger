@@ -1,6 +1,10 @@
 <Project>
   <!--
-    Includes the stable-diffusion.cpp CPU runtime used for local image generation, so users never install it themselves.
+    Includes the stable-diffusion.cpp runtime used for local image generation, so users never install it themselves: the
+    release's Vulkan build, which draws on the processor exactly as its CPU build does (DreamShaper 8 LCM pixel for pixel,
+    as the GPU image experiment checked) and on any graphics card with a Vulkan driver, for 41 MB more. Without a Vulkan
+    driver, its Vulkan backend is skipped and the processor is used. NVIDIA users can download the much faster CUDA build
+    in Settings (see CudaRuntime.cs); it is too large to include.
 
     The pinned upstream release is downloaded once into obj/, checked against its SHA-256 hash, and the libraries the app
     loads are copied to StableDiffusion/<rid>/ in the build and publish output, with their MIT notices. Image models are
@@ -23,14 +27,15 @@
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(_StableDiffusionRid)' == 'win-x64'">
-    <_StableDiffusionAsset>sd-master-5dcfa79-bin-win-cpu-x64.zip</_StableDiffusionAsset>
-    <_StableDiffusionSha256>B5297BEA319D6247E95E9A6834C190047AB0A493A29539B41F217E9CC440025A</_StableDiffusionSha256>
+    <_StableDiffusionAsset>sd-master-5dcfa79-bin-win-vulkan-x64.zip</_StableDiffusionAsset>
+    <_StableDiffusionSha256>7CEC077A90A97CCB4B8988B6E590A470BFE84D839F4C6ECCF4D8D08FD2A10771</_StableDiffusionSha256>
   </PropertyGroup>
 
-  <!-- Built on Ubuntu 26.04: needs a recent libstdc++ (GLIBCXX_3.4.32) and libgomp. Not yet verified on Linux. -->
+  <!-- Built on Ubuntu 26.04: needs a recent libstdc++ (GLIBCXX_3.4.32) and libgomp, and libvulkan.so.1 for graphics cards
+       (without it the Vulkan backend is skipped). Not yet verified on Linux. -->
   <PropertyGroup Condition="'$(_StableDiffusionRid)' == 'linux-x64'">
-    <_StableDiffusionAsset>sd-master-5dcfa79-bin-Linux-Ubuntu-26.04-x86_64.zip</_StableDiffusionAsset>
-    <_StableDiffusionSha256>4233A04E347238D2579771197C348659887DAD06FDD1A586E330C28D5A4527CE</_StableDiffusionSha256>
+    <_StableDiffusionAsset>sd-master-5dcfa79-bin-Linux-Ubuntu-26.04-x86_64-vulkan.zip</_StableDiffusionAsset>
+    <_StableDiffusionSha256>B92A0759EAF524BA3B256DF80D72249CE5BEF68E74EDF92E17FBDDD541EF82D1</_StableDiffusionSha256>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(_StableDiffusionAsset)' != ''">
@@ -38,7 +43,8 @@
     <_StableDiffusionArchive>$(_StableDiffusionCache)$(_StableDiffusionAsset)</_StableDiffusionArchive>
     <_StableDiffusionExtracted>$(_StableDiffusionCache)$(_StableDiffusionRid)-release\</_StableDiffusionExtracted>
     <_StableDiffusionOutput>$(_StableDiffusionCache)$(_StableDiffusionRid)\</_StableDiffusionOutput>
-    <_StableDiffusionStamp>$(_StableDiffusionOutput)runtime.stamp</_StableDiffusionStamp>
+    <!-- Named for the archive, so changing the pinned archive prepares the runtime again. -->
+    <_StableDiffusionStamp>$(_StableDiffusionOutput)$(_StableDiffusionAsset).stamp</_StableDiffusionStamp>
   </PropertyGroup>
 
   <UsingTask TaskName="RenameNativeLibraries" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
@@ -83,6 +89,7 @@
       <_StableDiffusionLibrary Include="$(_StableDiffusionExtracted)ggml.dll" TargetName="sdml.dll" />
       <_StableDiffusionLibrary Include="$(_StableDiffusionExtracted)ggml-base.dll" TargetName="sdml-base.dll" />
       <_StableDiffusionLibrary Include="$(_StableDiffusionExtracted)ggml-cpu-*.dll" />
+      <_StableDiffusionLibrary Include="$(_StableDiffusionExtracted)ggml-vulkan.dll" />
       <_StableDiffusionRename Include="ggml.dll" NewName="sdml.dll" />
       <_StableDiffusionRename Include="ggml-base.dll" NewName="sdml-base.dll" />
     </ItemGroup>
@@ -92,6 +99,7 @@
       <_StableDiffusionLibrary Include="$(_StableDiffusionExtracted)libggml.so.1" TargetName="libsdml.so.1" />
       <_StableDiffusionLibrary Include="$(_StableDiffusionExtracted)libggml-base.so.1" TargetName="libsdml-base.so.1" />
       <_StableDiffusionLibrary Include="$(_StableDiffusionExtracted)libggml-cpu-*.so" />
+      <_StableDiffusionLibrary Include="$(_StableDiffusionExtracted)libggml-vulkan.so" />
       <_StableDiffusionRename Include="libggml.so.1" NewName="libsdml.so.1" />
       <_StableDiffusionRename Include="libggml-base.so.1" NewName="libsdml-base.so.1" />
     </ItemGroup>
@@ -116,7 +124,7 @@
           DependsOnTargets="PrepareStableDiffusionRuntime"
           Condition="'$(_StableDiffusionAsset)' != ''">
     <ItemGroup Condition="Exists('$(_StableDiffusionStamp)')">
-      <_StableDiffusionRuntimeFile Include="$(_StableDiffusionOutput)*" Exclude="$(_StableDiffusionStamp)" />
+      <_StableDiffusionRuntimeFile Include="$(_StableDiffusionOutput)*" Exclude="$(_StableDiffusionOutput)*.stamp" />
       <Content Include="@(_StableDiffusionRuntimeFile)"
                Link="StableDiffusion\$(_StableDiffusionRid)\%(Filename)%(Extension)"
                CopyToOutputDirectory="PreserveNewest"

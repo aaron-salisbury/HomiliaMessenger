@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Platform.Storage;
 using HomiliaMessenger.Presentation.Desktop.Base.Extensions;
 using HomiliaMessenger.Presentation.Desktop.ViewModels;
 using System.Threading.Tasks;
@@ -22,6 +23,7 @@ public partial class SettingsView : UserControl
                 model.ConfirmAsync = ConfirmWithDialogAsync;
                 model.ShowAddModelAsync = ShowAddModelAsync;
                 model.ShowAddImageModelAsync = ShowAddImageModelAsync;
+                model.PickFolderAsync = PickFolderAsync;
             }
         };
 
@@ -42,6 +44,11 @@ public partial class SettingsView : UserControl
                 _attachedModel.ShowAddImageModelAsync = null;
             }
 
+            if (_attachedModel is not null && _attachedModel.PickFolderAsync == PickFolderAsync)
+            {
+                _attachedModel.PickFolderAsync = null;
+            }
+
             _attachedModel = null;
         };
     }
@@ -54,6 +61,12 @@ public partial class SettingsView : UserControl
     private Task<string?> ShowAddImageModelAsync(AddImageModelViewModel model)
     {
         return TopLevel.GetTopLevel(this) is Window owner ? AddImageModelWindow.ShowAsync(owner, model) : Task.FromResult<string?>(null);
+    }
+
+    private async Task<string?> PickFolderAsync(string title)
+    {
+        IStorageFolder? folder = await this.GetUserSelectedFolderAsync();
+        return folder?.TryGetLocalPath();
     }
 
     private Task<bool> ConfirmWithDialogAsync(string title, string message)

@@ -40,6 +40,7 @@ internal sealed class StableDiffusionNative
     internal const int SAMPLE_METHOD_COUNT = 21;
     internal const int SCHEDULER_COUNT = 17;
     internal const int SD_CANCEL_ALL = 0;
+    internal const int LORA_APPLY_AUTO = 0;
 
     /// <summary>
     /// <c>SD_TYPE_Q8_0</c>, the weight format face matching's image encoder is converted to.
@@ -97,10 +98,32 @@ internal sealed class StableDiffusionNative
     internal delegate void CancelFunction(IntPtr context, int mode);
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate nuint CountFunction();
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate IntPtr DeviceFunction(nuint index);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate IntPtr DeviceTextFunction(IntPtr device);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate int DeviceTypeFunction(IntPtr device);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate void DeviceMemoryFunction(IntPtr device, out nuint free, out nuint total);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     [return: MarshalAs(UnmanagedType.I1)]
     internal delegate bool ConvertFunction(IntPtr modelPath, IntPtr clipLPath, IntPtr clipGPath, IntPtr t5xxlPath, IntPtr diffusionModelPath, IntPtr vaePath, IntPtr outputPath, int outputType, IntPtr tensorTypeRules, [MarshalAs(UnmanagedType.I1)] bool convertName, int threads, IntPtr loras, int loraCount);
 
-    private StableDiffusionNative(IntPtr library, IntPtr ggml)
+    /// <summary>
+    /// <c>GGML_BACKEND_DEVICE_TYPE_GPU</c> and <c>GGML_BACKEND_DEVICE_TYPE_IGPU</c>: a graphics card with its own memory,
+    /// and one sharing the computer's.
+    /// </summary>
+    internal const int DEVICE_TYPE_GPU = 1;
+    internal const int DEVICE_TYPE_IGPU = 2;
+
+    private StableDiffusionNative(IntPtr library, IntPtr ggml, IntPtr ggmlBase)
     {
         T Export<T>(IntPtr handle, string name) where T : Delegate
         {
@@ -125,6 +148,12 @@ internal sealed class StableDiffusionNative
         Cancel = Export<CancelFunction>(library, "sd_cancel_generation");
         Convert = Export<ConvertFunction>(library, "convert_with_components");
         _loadBackends = Export<LoadBackendsFunction>(ggml, "ggml_backend_load_all_from_path");
+        DeviceCount = Export<CountFunction>(ggml, "ggml_backend_dev_count");
+        DeviceAt = Export<DeviceFunction>(ggml, "ggml_backend_dev_get");
+        DeviceName = Export<DeviceTextFunction>(ggmlBase, "ggml_backend_dev_name");
+        DeviceDescription = Export<DeviceTextFunction>(ggmlBase, "ggml_backend_dev_description");
+        DeviceType = Export<DeviceTypeFunction>(ggmlBase, "ggml_backend_dev_type");
+        DeviceMemory = Export<DeviceMemoryFunction>(ggmlBase, "ggml_backend_dev_memory");
     }
 
     private readonly LoadBackendsFunction _loadBackends;
@@ -146,6 +175,17 @@ internal sealed class StableDiffusionNative
     internal FreeFunction FreeImageResult { get; }
     internal CancelFunction Cancel { get; }
     internal ConvertFunction Convert { get; }
+    internal CountFunction DeviceCount { get; }
+    internal DeviceFunction DeviceAt { get; }
+    internal DeviceTextFunction DeviceName { get; }
+    internal DeviceTextFunction DeviceDescription { get; }
+    internal DeviceTypeFunction DeviceType { get; }
+    internal DeviceMemoryFunction DeviceMemory { get; }
+
+    /// <summary>
+    /// Whether this is the CUDA runtime downloaded in Settings, rather than the one included with the app.
+    /// </summary>
+    internal bool IsCuda { get; private init; }
 
     /// <summary>
     /// The folder holding the runtime for this system, under the app's folder, whether or not it is there.
@@ -170,25 +210,42 @@ internal sealed class StableDiffusionNative
     }
 
     /// <summary>
+    /// The CUDA libraries the CUDA runtime's own libraries depend on, loaded first from its folder so the system finds
+    /// them there by name.
+    /// </summary>
+    internal static readonly string[] CUDA_DEPENDENCY_FILES = ["cudart64_12.dll", "cublasLt64_12.dll", "cublas64_12.dll"];
+
+    /// <summary>
     /// Loads the runtime from <paramref name="directory"/>, registers its CPU backends, and checks that it is the pinned
     /// build. The libraries stay loaded for the rest of the process; only models and contexts are released.
     /// </summary>
     /// <exception cref="DllNotFoundException">A library is missing or cannot be loaded on this system.</exception>
     /// <exception cref="InvalidOperationException">The runtime is not the pinned build, or its structs are not as declared.</exception>
-    internal static StableDiffusionNative Load(string directory)
+    /// <param name="isCuda">Whether <paramref name="directory"/> holds the CUDA runtime, whose CUDA libraries load first.</param>
+    internal static StableDiffusionNative Load(string directory, bool isCuda = false)
     {
         string[] files = LibraryFiles();
         IntPtr ggml = IntPtr.Zero;
+        IntPtr ggmlBase = IntPtr.Zero;
         IntPtr library = IntPtr.Zero;
+
+        if (isCuda)
+        {
+            foreach (string file in CUDA_DEPENDENCY_FILES)
+            {
+                NativeLibrary.Load(Path.Combine(directory, file));
+            }
+        }
 
         foreach (string file in files)
         {
             IntPtr handle = NativeLibrary.Load(Path.Combine(directory, file));
             ggml = file.Contains("sdml.", StringComparison.Ordinal) ? handle : ggml;
+            ggmlBase = file.Contains("sdml-base", StringComparison.Ordinal) ? handle : ggmlBase;
             library = handle;
         }
 
-        StableDiffusionNative native = new(library, ggml);
+        StableDiffusionNative native = new(library, ggml, ggmlBase) { IsCuda = isCuda };
         string? commit = Marshal.PtrToStringUTF8(native.Commit());
 
         if (!string.Equals(commit, PINNED_COMMIT, StringComparison.OrdinalIgnoreCase))
@@ -198,7 +255,8 @@ internal sealed class StableDiffusionNative
 
         native.CheckDefaults();
 
-        // The CPU backend comes in variants for different instruction sets; ggml picks the best one this CPU supports.
+        // The CPU backend comes in variants for different instruction sets; ggml picks the best one this CPU supports. The
+        // GPU backends (Vulkan, and CUDA in the CUDA runtime) load from the same folder, and are skipped without a driver.
         IntPtr path = Marshal.StringToCoTaskMemUTF8(directory);
 
         try
@@ -230,13 +288,26 @@ internal sealed class StableDiffusionNative
             ImageParamsInit(image);
 
             bool contextMatches = Marshal.ReadIntPtr(context, ContextOffsets.MODEL_PATH) == IntPtr.Zero
+                && Marshal.ReadIntPtr(context, ContextOffsets.LLM) == IntPtr.Zero
+                && Marshal.ReadIntPtr(context, ContextOffsets.DIFFUSION_MODEL) == IntPtr.Zero
+                && Marshal.ReadIntPtr(context, ContextOffsets.VAE) == IntPtr.Zero
                 && Marshal.ReadIntPtr(context, ContextOffsets.CLIP_VISION) == IntPtr.Zero
                 && Marshal.ReadIntPtr(context, ContextOffsets.IP_ADAPTER) == IntPtr.Zero
                 && Marshal.ReadIntPtr(context, ContextOffsets.BACKEND) == IntPtr.Zero
                 && Marshal.ReadInt32(context, ContextOffsets.THREADS) == PhysicalCores()
                 && Marshal.ReadInt32(context, ContextOffsets.WEIGHT_TYPE) == SD_TYPE_COUNT
-                && Marshal.ReadInt32(context, ContextOffsets.RNG_TYPE) == CUDA_RNG;
-            bool imageMatches = Marshal.ReadIntPtr(image, ImageOffsets.PROMPT) == IntPtr.Zero
+                && Marshal.ReadInt32(context, ContextOffsets.RNG_TYPE) == CUDA_RNG
+                && Marshal.ReadInt32(context, ContextOffsets.LORA_APPLY_MODE) == LORA_APPLY_AUTO
+                && Marshal.ReadByte(context, ContextOffsets.AUTO_FIT) == 1
+                && Marshal.ReadByte(context, ContextOffsets.BATCHED_CFG) == 1
+                && Marshal.ReadInt32(context, ContextOffsets.CONDITIONING_CACHE_SIZE) == 4
+                && Marshal.ReadIntPtr(context, ContextOffsets.FLASH_ATTN_MODE) == IntPtr.Zero
+                && Marshal.ReadIntPtr(context, ContextOffsets.CONV_DIRECT_MODE) == IntPtr.Zero;
+            bool imageMatches = Marshal.ReadIntPtr(image, ImageOffsets.LORAS) == IntPtr.Zero
+                && Marshal.ReadInt32(image, ImageOffsets.LORA_COUNT) == 0
+                && Marshal.ReadIntPtr(image, ImageOffsets.REF_IMAGES) == IntPtr.Zero
+                && Marshal.ReadInt32(image, ImageOffsets.REF_IMAGES_COUNT) == 0
+                && Marshal.ReadIntPtr(image, ImageOffsets.PROMPT) == IntPtr.Zero
                 && Marshal.ReadIntPtr(image, ImageOffsets.NEGATIVE_PROMPT) == IntPtr.Zero
                 && Marshal.ReadInt32(image, ImageOffsets.CLIP_SKIP) == -1
                 && Marshal.ReadInt32(image, ImageOffsets.WIDTH) == 512
@@ -283,7 +354,7 @@ internal sealed class StableDiffusionNative
     }
 
     /// <summary>
-    /// The leading fields of <c>sd_ctx_params_t</c>, through <c>backend</c>.
+    /// The fields of <c>sd_ctx_params_t</c>, through <c>conv_direct_mode</c>, its last at the pinned commit.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     private struct ContextParamsPrefix
@@ -297,7 +368,15 @@ internal sealed class StableDiffusionNative
         public int VaeFormat;
         public IntPtr MaxVram;
         public byte DisablePrefetch, EagerLoad;
-        public IntPtr Backend;
+        public IntPtr Backend, ParamsBackend, SplitMode;
+        public byte AutoFit;
+        public IntPtr RpcServers, ModelArgs;
+        public byte DisableSegmentedCompute, BatchedCfg;
+        public float LinearScale, AttnScale;
+        public IntPtr Tokenizer;
+        public byte SageAttn;
+        public int ConditioningCacheSize;
+        public IntPtr FlashAttnMode, ConvDirectMode;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -305,6 +384,37 @@ internal sealed class StableDiffusionNative
     {
         public uint Width, Height, Channel;
         public IntPtr Data;
+    }
+
+    /// <summary>
+    /// <c>sd_lora_t</c>: a LoRA file and how strongly it applies.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Lora
+    {
+        public byte IsHighNoise;
+        public float Multiplier;
+        public IntPtr Path;
+    }
+
+    /// <summary>
+    /// <c>sd_image_t</c>, for arrays of images such as reference images.
+    /// </summary>
+    internal static class ImageLayout
+    {
+        internal static readonly int SIZE = Marshal.SizeOf<Image>();
+        internal static readonly int WIDTH = (int)Marshal.OffsetOf<Image>(nameof(Image.Width));
+        internal static readonly int HEIGHT = (int)Marshal.OffsetOf<Image>(nameof(Image.Height));
+        internal static readonly int CHANNELS = (int)Marshal.OffsetOf<Image>(nameof(Image.Channel));
+        internal static readonly int DATA = (int)Marshal.OffsetOf<Image>(nameof(Image.Data));
+    }
+
+    internal static class LoraLayout
+    {
+        internal static readonly int SIZE = Marshal.SizeOf<Lora>();
+        internal static readonly int IS_HIGH_NOISE = (int)Marshal.OffsetOf<Lora>(nameof(Lora.IsHighNoise));
+        internal static readonly int MULTIPLIER = (int)Marshal.OffsetOf<Lora>(nameof(Lora.Multiplier));
+        internal static readonly int PATH = (int)Marshal.OffsetOf<Lora>(nameof(Lora.Path));
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -391,6 +501,15 @@ internal sealed class StableDiffusionNative
     internal static class ContextOffsets
     {
         internal static readonly int MODEL_PATH = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.ModelPath));
+        internal static readonly int LLM = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.Llm));
+        internal static readonly int DIFFUSION_MODEL = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.Diffusion));
+        internal static readonly int VAE = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.Vae));
+        internal static readonly int LORA_APPLY_MODE = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.LoraApplyMode));
+        internal static readonly int AUTO_FIT = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.AutoFit));
+        internal static readonly int BATCHED_CFG = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.BatchedCfg));
+        internal static readonly int CONDITIONING_CACHE_SIZE = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.ConditioningCacheSize));
+        internal static readonly int FLASH_ATTN_MODE = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.FlashAttnMode));
+        internal static readonly int CONV_DIRECT_MODE = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.ConvDirectMode));
         internal static readonly int CLIP_VISION = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.ClipVision));
         internal static readonly int IP_ADAPTER = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.IpAdapter));
         internal static readonly int THREADS = (int)Marshal.OffsetOf<ContextParamsPrefix>(nameof(ContextParamsPrefix.Threads));
@@ -403,6 +522,10 @@ internal sealed class StableDiffusionNative
     {
         private static readonly int SAMPLE = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.SampleParams));
 
+        internal static readonly int LORAS = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.Loras));
+        internal static readonly int LORA_COUNT = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.LoraCount));
+        internal static readonly int REF_IMAGES = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.RefImages));
+        internal static readonly int REF_IMAGES_COUNT = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.RefImageCount));
         internal static readonly int PROMPT = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.Prompt));
         internal static readonly int NEGATIVE_PROMPT = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.NegativePrompt));
         internal static readonly int CLIP_SKIP = (int)Marshal.OffsetOf<ImageParamsPrefix>(nameof(ImageParamsPrefix.ClipSkip));

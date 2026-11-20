@@ -36,8 +36,20 @@ public partial class SelfiePromptEditorViewModel : ObservableObject
     public string Heading => $"{ContactName}'s selfie";
 
     public string Explanation => $"{ContactName} planned this selfie from your chat. These are the words it will be drawn with; "
-        + "change anything before it is taken. The face comes from their profile photo. Weights such as (laughing:1.3) make a "
-        + "word count for more.";
+        + "change anything before it is taken. The face comes from their profile photo. "
+        + (IsPlain
+            ? "The selfie model reads plain sentences: describe what should happen, and its consequences, as you would to a person."
+            : "Weights such as (laughing:1.3) make a word count for more.");
+
+    /// <summary>
+    /// Whether the selfie model reads plain sentences, rather than weighted phrases read in chunks of tokens.
+    /// </summary>
+    public bool IsPlain => _planned.Style == ImagePromptStyle.Plain;
+
+    /// <summary>
+    /// Whether the selfie model uses a negative prompt; at CFG 1 it does not, and the box is hidden.
+    /// </summary>
+    public bool SupportsNegativePrompt => _planned.SupportsNegativePrompt;
 
     /// <summary>
     /// Whether the user said to take the selfie, rather than closing the dialog.
@@ -64,7 +76,7 @@ public partial class SelfiePromptEditorViewModel : ObservableObject
     /// </summary>
     public SelfiePrompt ToPrompt()
     {
-        return new SelfiePrompt(Prompt.Trim(), NegativePrompt.Trim());
+        return _planned with { Prompt = Prompt.Trim(), NegativePrompt = SupportsNegativePrompt ? NegativePrompt.Trim() : string.Empty };
     }
 
     [RelayCommand(CanExecute = nameof(CanTake))]
@@ -96,8 +108,13 @@ public partial class SelfiePromptEditorViewModel : ObservableObject
         NegativePrompt = _planned.NegativePrompt;
     }
 
-    private static string Length(string text)
+    private string Length(string text)
     {
+        if (IsPlain)
+        {
+            return $"{(text ?? string.Empty).Length} characters";
+        }
+
         int tokens = PortraitPromptComposer.EstimateTokens(text ?? string.Empty);
         return tokens > PortraitPromptComposer.CLIP_CHUNK_TOKENS
             ? $"About {tokens} tokens, past the {PortraitPromptComposer.CLIP_CHUNK_TOKENS} the model reads best at once"

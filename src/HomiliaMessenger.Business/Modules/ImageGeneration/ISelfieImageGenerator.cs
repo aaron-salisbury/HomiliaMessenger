@@ -44,7 +44,9 @@ public sealed record SelfieImageRequest(IReadOnlyList<SelfieSubject> Subjects, S
 /// The words a selfie model draws with: what to draw, and what to steer away from. Either may use the model's own syntax,
 /// such as emphasis weights.
 /// </summary>
-public sealed record SelfiePrompt(string Prompt, string NegativePrompt);
+/// <param name="Style">How the model reads the words, so they can be checked and changed the right way.</param>
+/// <param name="SupportsNegativePrompt">Whether the model uses the negative prompt; it ignores it at CFG 1.</param>
+public sealed record SelfiePrompt(string Prompt, string NegativePrompt, ImagePromptStyle Style = ImagePromptStyle.Weighted, bool SupportsNegativePrompt = true);
 
 /// <summary>
 /// Whether selfies can be drawn now, and if not, why.

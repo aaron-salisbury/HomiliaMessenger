@@ -35,7 +35,7 @@ public sealed class ImageModelLibraryTests
     [TestMethod]
     public void Catalog_OffersDreamShaperPinnedAndVerified()
     {
-        ImageModelDefinition model = ImageModelCatalog.Models.Single();
+        ImageModelDefinition model = ImageModelCatalog.Models.Single(model => model.Processor == ImageProcessor.Cpu);
 
         Assert.AreEqual(ImageModelCatalog.DREAMSHAPER_8_LCM, model.Id);
         Assert.AreEqual("DreamShaper 8 LCM", model.DisplayName);
@@ -76,8 +76,10 @@ public sealed class ImageModelLibraryTests
 
         Assert.IsInstanceOfType<StableDiffusionImageGenerator>(generator);
         Assert.IsFalse(generator.GetAvailability().IsReady);
-        Assert.AreEqual(ImageModelCatalog.DREAMSHAPER_8_LCM, images.Single().Id);
-        Assert.IsFalse(images.Single().IsDownloaded);
+        Assert.AreSequenceEqual(new[] { ImageModelCatalog.DREAMSHAPER_8_LCM, ImageModelCatalog.FLUX2_KLEIN_4B, ImageModelCatalog.DREAMSHAPER_XL_LIGHTNING }, images.Select(image => image.Id).ToArray());
+        Assert.DoesNotContain(image => image.IsDownloaded, images);
+        Assert.AreEqual(ImageProcessor.Cpu, images[0].Processor);
+        Assert.IsTrue(images.Skip(1).All(image => image.Processor == ImageProcessor.Gpu));
         Assert.DoesNotContain(model => images.Any(image => image.Id == model.Id), conversational);
         Assert.DoesNotContain(agent => agent is IImageGenerator, agents);
         Assert.IsFalse(Directory.Exists(Path.Combine(folder.Path, "Models", "Images")), "Nothing is downloaded or created until asked.");

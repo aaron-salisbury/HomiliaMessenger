@@ -12,6 +12,7 @@ using HomiliaMessenger.Presentation.Desktop.Models;
 using HomiliaMessenger.Presentation.Desktop.Settings;
 using RunnethOverStudio.AppToolkit.Modules.ComponentModel;
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
@@ -94,23 +95,99 @@ public partial class SettingsViewModel : BaseViewModel
 
     private readonly IImageModelLibrary? _imageModels;
     private readonly IImageGenerator? _imageGenerator;
+    private readonly IImageGpuRuntime? _gpuRuntime;
+    private readonly IImageLoraLibrary? _loras;
+    private CancellationTokenSource? _cudaDownload;
+    private bool _refreshingGpu;
 
     public bool IsImageGenerationAvailable => _imageModels is not null;
 
+    public string ImageGenerationHint { get; } = "Generate contact photos and let contacts send selfies, on this computer. One model is in use for photos and one for selfies at a time, chosen from either list below. Optional.";
+
+    public string CpuImageHint { get; } = "These models run on the computer's processor, so they work on any computer, without a graphics card. They are slower, and follow simpler descriptions.";
+
     /// <summary>
-    /// Models that draw contact photos, kept apart from the models contacts converse with. Kept for the view model's
-    /// lifetime so a download continues while the user is on another page.
+    /// Processor models that draw contact photos, kept apart from the models contacts converse with. Kept for the view
+    /// model's lifetime so a download continues while the user is on another page.
     /// </summary>
     public ObservableCollection<ImageModelItem> ImageModels { get; } = [];
 
-    public string ImageModelsHint { get; } = "Generate contact photos from a description, on this computer. Download an image model, then choose Generate photo beside a contact's photo on the Contacts page. Optional; works without a GPU, using about 4 GB of memory while a photo is made.";
+    public string ImageModelsHint { get; } = "Generate contact photos from a description. Download an image model, then choose Generate photo beside a contact's photo on the Contacts page. Uses about 4 GB of memory while a photo is made.";
 
     /// <summary>
-    /// Models contacts take selfies with, which also need face matching. A model may be listed under both.
+    /// Processor models contacts take selfies with, which also need face matching. A model may be listed under both.
     /// </summary>
     public ObservableCollection<ImageModelItem> SelfieModels { get; } = [];
 
-    public string SelfieModelsHint { get; } = "Let contacts send selfies in chats: the camera button in a chat asks for one, and the contact decides what it shows from the conversation. A selfie keeps the face in the contact's profile photo, so it needs a contact with a photo, and face matching besides the model. Only one person is in each selfie; in a group, the most likely contact is chosen. Optional; works without a GPU, using about 4.5 GB of memory while a selfie is made.";
+    public string SelfieModelsHint { get; } = "Let contacts send selfies in chats: the camera button in a chat asks for one, and the contact decides what it shows from the conversation. A selfie keeps the face in the contact's profile photo, so it needs a contact with a photo, and face matching besides the model. Only one person is in each selfie; in a group, the most likely contact is chosen. Uses about 4.5 GB of memory while a selfie is made.";
+
+    public string GpuImageHint { get; } = "These models run on a graphics card: several times faster than the processor, more realistic, and they follow long, specific descriptions (being splashed, a dog licking a cheek, a sign with words on it). They need about 8 GB of graphics memory, or run more slowly on smaller cards by keeping part of the model in the computer's memory.";
+
+    /// <summary>
+    /// Graphics card models that draw contact photos.
+    /// </summary>
+    public ObservableCollection<ImageModelItem> GpuImageModels { get; } = [];
+
+    public string GpuImageModelsHint { get; } = "FLUX.2 [klein] 4B is recommended: about 5 seconds a photo on a recent NVIDIA card with the CUDA runtime. DreamShaper XL Lightning, an SDXL model, is offered for the many SDXL LoRAs that fit it.";
+
+    /// <summary>
+    /// Graphics card models contacts take selfies with.
+    /// </summary>
+    public ObservableCollection<ImageModelItem> GpuSelfieModels { get; } = [];
+
+    public string GpuSelfieModelsHint { get; } = "FLUX.2 [klein] keeps the contact's face by drawing from their profile photo itself, needing nothing else: about 8 seconds a selfie with the CUDA runtime. DreamShaper XL Lightning keeps it with face matching for SDXL.";
+
+    /// <summary>
+    /// The graphics cards found, and which one graphics card models run on.
+    /// </summary>
+    [ObservableProperty] private string _gpuStatus = "Looking for graphics cards…";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanDownloadCuda), nameof(CanRemoveCuda))]
+    [NotifyCanExecuteChangedFor(nameof(DownloadCudaCommand), nameof(RemoveCudaCommand))]
+    private bool _isCudaOffered;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanDownloadCuda), nameof(CanRemoveCuda))]
+    [NotifyCanExecuteChangedFor(nameof(DownloadCudaCommand), nameof(RemoveCudaCommand))]
+    private bool _isCudaDownloaded;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanDownloadCuda), nameof(CanRemoveCuda))]
+    [NotifyCanExecuteChangedFor(nameof(DownloadCudaCommand), nameof(RemoveCudaCommand), nameof(CancelCudaDownloadCommand))]
+    private bool _isCudaDownloading;
+
+    [ObservableProperty] private double _cudaProgress;
+    [ObservableProperty] private string _cudaStatus = string.Empty;
+    [ObservableProperty] private string _cudaHint = string.Empty;
+
+    public bool CanDownloadCuda => IsCudaOffered && !IsCudaDownloaded && !IsCudaDownloading;
+
+    public bool CanRemoveCuda => IsCudaDownloaded && !IsCudaDownloading;
+
+    public bool IsLoraAvailable => _loras is not null;
+
+    public string LoraHint { get; } = "A LoRA is a small add-on that changes what a model draws: a style, a character, a kind of clothing. Choose the folder you keep LoRAs in (.safetensors files, such as from Civitai or Hugging Face); they stay there. Each is used only with models of the base it was made for, read from the file: SDXL 1.0 LoRAs with DreamShaper XL Lightning, SD 1.5 LoRAs with DreamShaper 8, and FLUX.2 [klein] 4B LoRAs with FLUX.2 [klein]. Pony and Illustrious LoRAs are SDXL too, but often suit DreamShaper XL poorly. Trigger words, which many LoRAs need, are filled in when the file or the notes beside it name them, and added to the start of every prompt the LoRA is used with.";
+
+    /// <summary>
+    /// The LoRAs in the chosen folder.
+    /// </summary>
+    public ObservableCollection<ImageLoraItem> Loras { get; } = [];
+
+    private int _loraScan;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasLoraFolder))]
+    private string? _loraFolder;
+
+    [ObservableProperty] private string _loraStatus = string.Empty;
+
+    public bool HasLoraFolder => LoraFolder is not null;
+
+    /// <summary>
+    /// Supplied by the view to let the user choose a folder. Returns its path, or <see langword="null"/>.
+    /// </summary>
+    public Func<string, Task<string?>>? PickFolderAsync { get; set; }
 
     /// <summary>
     /// Whether face matching, which every selfie model needs, is downloaded, and what it takes.
@@ -137,10 +214,13 @@ public partial class SettingsViewModel : BaseViewModel
     /// </summary>
     public Func<AddLocalModelViewModel, Task<string?>>? ShowAddModelAsync { get; set; }
 
-    public SettingsViewModel(ThemeService themeService, ILocalModelLibrary localModels, ITextToSpeech? speech = null, IEmbeddingModelLibrary? embeddingModels = null, IMemoryService? memories = null, IWebSearchService? webSearch = null, IImageModelLibrary? imageModels = null, IImageGenerator? imageGenerator = null)
+    public SettingsViewModel(ThemeService themeService, ILocalModelLibrary localModels, ITextToSpeech? speech = null, IEmbeddingModelLibrary? embeddingModels = null, IMemoryService? memories = null, IWebSearchService? webSearch = null, IImageModelLibrary? imageModels = null, IImageGenerator? imageGenerator = null, IImageGpuRuntime? gpuRuntime = null, IImageLoraLibrary? loras = null)
     {
         _imageModels = imageModels;
         _imageGenerator = imageGenerator;
+        _gpuRuntime = gpuRuntime;
+        _loras = loras;
+        _loraFolder = loras?.Folder;
         _webSearch = webSearch;
         _themeService = themeService ?? throw new ArgumentNullException(nameof(themeService));
         _localModels = localModels ?? throw new ArgumentNullException(nameof(localModels));
@@ -186,6 +266,8 @@ public partial class SettingsViewModel : BaseViewModel
         }
 
         RefreshImageModels();
+        _ = RefreshGpuAsync();
+        _ = ScanLorasAsync();
 
         if (_embeddingModels is not null)
         {
@@ -236,8 +318,10 @@ public partial class SettingsViewModel : BaseViewModel
 
         ImageGeneratorAvailability? availability = _imageGenerator?.GetAvailability();
         ImageRuntimeProblem = availability is { IsRuntimeIncluded: false } ? availability.Problem : null;
-        RefreshImageList(ImageModels, ImageModelPurpose.Portraits);
-        RefreshImageList(SelfieModels, ImageModelPurpose.Selfies);
+        RefreshImageList(ImageModels, ImageModelPurpose.Portraits, ImageProcessor.Cpu);
+        RefreshImageList(SelfieModels, ImageModelPurpose.Selfies, ImageProcessor.Cpu);
+        RefreshImageList(GpuImageModels, ImageModelPurpose.Portraits, ImageProcessor.Gpu);
+        RefreshImageList(GpuSelfieModels, ImageModelPurpose.Selfies, ImageProcessor.Gpu);
 
         FaceMatching faceMatching = _imageModels.GetFaceMatching();
         FaceMatchingStatus = faceMatching.IsDownloaded
@@ -245,11 +329,13 @@ public partial class SettingsViewModel : BaseViewModel
             : $"Face matching ({faceMatching.Name}, {faceMatching.License}) is not downloaded. Downloading a selfie model downloads it too: {FormatSize(faceMatching.DownloadBytes)}, made {FormatSize(faceMatching.DiskBytes)} once prepared.";
     }
 
-    private void RefreshImageList(ObservableCollection<ImageModelItem> items, ImageModelPurpose purpose)
+    private void RefreshImageList(ObservableCollection<ImageModelItem> items, ImageModelPurpose purpose, ImageProcessor processor)
     {
+        IEnumerable<ImageModel> offered = _imageModels!.List(purpose).Where(model => model.Processor == processor);
+
         if (items.Count == 0)
         {
-            foreach (ImageModel model in _imageModels!.List(purpose))
+            foreach (ImageModel model in offered)
             {
                 items.Add(CreateImageItem(model, items, purpose));
             }
@@ -263,7 +349,7 @@ public partial class SettingsViewModel : BaseViewModel
         }
 
         // A model added for the other purpose may now be offered for this one too.
-        foreach (ImageModel model in _imageModels!.List(purpose).Where(model => items.All(item => item.Id != model.Id)))
+        foreach (ImageModel model in offered.Where(model => items.All(item => item.Id != model.Id)))
         {
             items.Add(CreateImageItem(model, items, purpose));
         }
@@ -277,26 +363,45 @@ public partial class SettingsViewModel : BaseViewModel
     }
 
     /// <summary>
-    /// Adds a Stable Diffusion 1.x model from Hugging Face for contact photos, then starts downloading it.
+    /// Adds a Stable Diffusion 1.x model from Hugging Face for contact photos on the processor, then starts downloading it.
     /// </summary>
     [RelayCommand]
     private Task AddImageModelAsync()
     {
-        return AddImageModelForAsync(ImageModels, ImageModelPurpose.Portraits);
+        return AddImageModelForAsync(ImageModels, ImageModelPurpose.Portraits, ImageProcessor.Cpu);
     }
 
     /// <summary>
-    /// Adds a Stable Diffusion 1.x model from Hugging Face for selfies, then starts downloading it with face matching.
+    /// Adds a Stable Diffusion 1.x model from Hugging Face for selfies on the processor, then starts downloading it with
+    /// face matching.
     /// </summary>
     [RelayCommand]
     private Task AddSelfieModelAsync()
     {
-        return AddImageModelForAsync(SelfieModels, ImageModelPurpose.Selfies);
+        return AddImageModelForAsync(SelfieModels, ImageModelPurpose.Selfies, ImageProcessor.Cpu);
     }
 
-    private async Task AddImageModelForAsync(ObservableCollection<ImageModelItem> items, ImageModelPurpose purpose)
+    /// <summary>
+    /// Adds a model from Hugging Face for contact photos on a graphics card, then starts downloading it.
+    /// </summary>
+    [RelayCommand]
+    private Task AddGpuImageModelAsync()
     {
-        if (_imageModels is null || ShowAddImageModelAsync is null || await ShowAddImageModelAsync(new AddImageModelViewModel(_imageModels, purpose)) is not { } modelId)
+        return AddImageModelForAsync(GpuImageModels, ImageModelPurpose.Portraits, ImageProcessor.Gpu);
+    }
+
+    /// <summary>
+    /// Adds a model from Hugging Face for selfies on a graphics card, then starts downloading it.
+    /// </summary>
+    [RelayCommand]
+    private Task AddGpuSelfieModelAsync()
+    {
+        return AddImageModelForAsync(GpuSelfieModels, ImageModelPurpose.Selfies, ImageProcessor.Gpu);
+    }
+
+    private async Task AddImageModelForAsync(ObservableCollection<ImageModelItem> items, ImageModelPurpose purpose, ImageProcessor processor)
+    {
+        if (_imageModels is null || ShowAddImageModelAsync is null || await ShowAddImageModelAsync(new AddImageModelViewModel(_imageModels, purpose, processor)) is not { } modelId)
         {
             return;
         }
@@ -318,6 +423,261 @@ public partial class SettingsViewModel : BaseViewModel
     private static string FormatSize(long bytes)
     {
         return bytes >= 1_000_000_000 ? $"{bytes / 1_000_000_000d:0.0} GB" : $"{bytes / 1_000_000d:0} MB";
+    }
+
+    /// <summary>
+    /// Finds the graphics cards, off the UI thread (the first time loads the image generation runtime), and shows them with
+    /// the CUDA runtime's state.
+    /// </summary>
+    private async Task RefreshGpuAsync()
+    {
+        if (_gpuRuntime is null || _refreshingGpu || IsCudaDownloading)
+        {
+            return;
+        }
+
+        _refreshingGpu = true;
+
+        try
+        {
+            ImageGpuStatus status = await Task.Run(_gpuRuntime.GetStatus);
+            ShowGpu(status);
+        }
+        catch (Exception error)
+        {
+            GpuStatus = "Could not look for graphics cards: " + error.Message;
+        }
+        finally
+        {
+            _refreshingGpu = false;
+        }
+    }
+
+    private void ShowGpu(ImageGpuStatus status)
+    {
+        IsCudaOffered = status.IsCudaOffered;
+        IsCudaDownloaded = status.IsCudaDownloaded;
+
+        if (status.Preferred is not { } device)
+        {
+            GpuStatus = (status.Problem ?? "No graphics card was found.") + " Graphics card models can be downloaded, but not used here; choose a processor model instead.";
+        }
+        else
+        {
+            string memory = device.TotalBytes > 0 ? $", {FormatSize(device.TotalBytes)}" : string.Empty;
+            string backend = device.IsCuda ? "CUDA" : "Vulkan";
+            GpuStatus = $"Graphics card models run on {device.Description} ({backend}{memory}).";
+
+            if (device.IsIntegrated)
+            {
+                GpuStatus += " It shares the computer's memory, so graphics card models may be slow on it.";
+            }
+        }
+
+        CudaHint = !status.IsCudaOffered
+            ? string.Empty
+            : status.IsCudaActive
+                ? "The CUDA runtime is in use."
+                : status.IsCudaDownloaded
+                    ? "The CUDA runtime is downloaded. Restart Homilia Messenger to use it."
+                    : $"For an NVIDIA card, the CUDA runtime makes graphics card models several times faster than the Vulkan backend included with the app, above all for FLUX.2 [klein] (on an RTX 4070 Ti, a photo in about 4 seconds rather than 24, a selfie in 7 rather than 13). {FormatSize(status.CudaDownloadBytes)} to download, {FormatSize(status.CudaDiskBytes)} unpacked; NVIDIA's CUDA libraries in it are redistributed under NVIDIA's license.";
+    }
+
+    [RelayCommand(CanExecute = nameof(CanDownloadCuda))]
+    private async Task DownloadCudaAsync()
+    {
+        if (_gpuRuntime is null)
+        {
+            return;
+        }
+
+        using CancellationTokenSource download = new();
+        _cudaDownload = download;
+        IsCudaDownloading = true;
+        CudaStatus = "Starting download…";
+
+        Progress<LocalModelDownloadProgress> progress = new(update =>
+        {
+            CudaProgress = update.TotalBytes == 0 ? 0 : 100d * update.BytesDownloaded / update.TotalBytes;
+            CudaStatus = update.BytesDownloaded >= update.TotalBytes
+                ? "Verifying and unpacking…"
+                : $"{FormatSize(update.BytesDownloaded)} of {FormatSize(update.TotalBytes)}";
+        });
+
+        try
+        {
+            LocalModelDownloadResult result = await _gpuRuntime.DownloadCudaAsync(progress, download.Token);
+
+            CudaStatus = result.Status switch
+            {
+                LocalModelDownloadStatus.Success => "Ready.",
+                LocalModelDownloadStatus.Canceled => "Download paused. Download again to resume.",
+                _ => result.Problem ?? "The download failed."
+            };
+        }
+        catch (Exception error)
+        {
+            CudaStatus = "The download failed: " + error.Message;
+        }
+        finally
+        {
+            _cudaDownload = null;
+            IsCudaDownloading = false;
+        }
+
+        await RefreshGpuAsync();
+    }
+
+    private bool CanCancelCudaDownload()
+    {
+        return IsCudaDownloading;
+    }
+
+    [RelayCommand(CanExecute = nameof(CanCancelCudaDownload))]
+    private void CancelCudaDownload()
+    {
+        _cudaDownload?.Cancel();
+    }
+
+    [RelayCommand(CanExecute = nameof(CanRemoveCuda))]
+    private async Task RemoveCudaAsync()
+    {
+        if (_gpuRuntime is null || !await ConfirmWithViewAsync("Remove the CUDA runtime", "Remove the CUDA runtime? Graphics card models will run with the Vulkan backend included with the app, which is several times slower on NVIDIA cards."))
+        {
+            return;
+        }
+
+        try
+        {
+            CudaStatus = await _gpuRuntime.DeleteCudaAsync() ? "Removed." : "The CUDA runtime is in use. It is removed when Homilia Messenger restarts.";
+        }
+        catch (Exception error)
+        {
+            CudaStatus = "Could not remove the CUDA runtime: " + error.Message;
+        }
+
+        await RefreshGpuAsync();
+    }
+
+    /// <summary>
+    /// Lets the user choose the folder they keep LoRAs in, then lists them.
+    /// </summary>
+    [RelayCommand]
+    private async Task ChooseLoraFolderAsync()
+    {
+        if (_loras is null || PickFolderAsync is null || await PickFolderAsync("Choose the folder you keep LoRAs in") is not { } folder)
+        {
+            return;
+        }
+
+        if (_loras.SetFolder(folder) is { } problem)
+        {
+            LoraStatus = problem;
+            return;
+        }
+
+        LoraFolder = _loras.Folder;
+        await ScanLorasAsync();
+    }
+
+    [RelayCommand]
+    private async Task ClearLoraFolderAsync()
+    {
+        if (_loras is null)
+        {
+            return;
+        }
+
+        if (_loras.SetFolder(null) is { } problem)
+        {
+            LoraStatus = problem;
+            return;
+        }
+
+        LoraFolder = null;
+        await ScanLorasAsync();
+    }
+
+    /// <summary>
+    /// Lists the LoRAs in the folder, reading each one's header for its base model and trigger words.
+    /// </summary>
+    [RelayCommand]
+    private async Task ScanLorasAsync()
+    {
+        if (_loras is null || _imageModels is null)
+        {
+            return;
+        }
+
+        // Only the latest scan is shown, and only while its folder is still the one chosen; the list is emptied
+        // meanwhile, so no LoRA from another folder is changed while it is read.
+        int scan = ++_loraScan;
+        string? folder = _loras.Folder;
+        Loras.Clear();
+
+        if (folder is null)
+        {
+            LoraStatus = "No folder chosen.";
+            return;
+        }
+
+        LoraStatus = "Reading LoRAs…";
+
+        try
+        {
+            IReadOnlyList<ImageLora> found = await _loras.ScanAsync();
+
+            if (scan != _loraScan || !string.Equals(folder, _loras.Folder, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            IReadOnlyList<ImageModel> models = [.. _imageModels.List(ImageModelPurpose.Portraits), .. _imageModels.List(ImageModelPurpose.Selfies)];
+            Loras.Clear();
+
+            foreach (ImageLora lora in found)
+            {
+                ImageLoraItem item = new(lora, _loras, models);
+                item.PropertyChanged += (_, args) =>
+                {
+                    if (args.PropertyName is nameof(ImageLoraItem.IsEnabled) or nameof(ImageLoraItem.ForPhotos) or nameof(ImageLoraItem.ForSelfies))
+                    {
+                        UpdateLoraStatus();
+                    }
+                };
+                Loras.Add(item);
+            }
+
+            UpdateLoraStatus();
+        }
+        catch (Exception error) when (scan == _loraScan)
+        {
+            LoraStatus = "Could not read the LoRA folder: " + error.Message;
+        }
+        catch (Exception)
+        {
+            // A later scan reports for itself.
+        }
+    }
+
+    /// <summary>
+    /// Says how many LoRAs were found, how many fit, and how many are on, since a LoRA is off until it is turned on.
+    /// </summary>
+    private void UpdateLoraStatus()
+    {
+        if (Loras.Count == 0)
+        {
+            LoraStatus = "No LoRAs (.safetensors files) were found in this folder.";
+            return;
+        }
+
+        int usable = Loras.Count(item => item.IsUsable);
+        int on = Loras.Count(item => item.IsUsable && item.IsEnabled && (item.ForPhotos || item.ForSelfies));
+        string found = $"{Loras.Count} {(Loras.Count == 1 ? "LoRA" : "LoRAs")} found; {usable} {(usable == 1 ? "fits" : "fit")} a model offered here. ";
+
+        LoraStatus = found + (on == 0
+            ? "None is on yet: turn one on to use it."
+            : $"{on} {(on == 1 ? "is" : "are")} on, used with the photo and selfie models {(on == 1 ? "it fits" : "they fit")}.");
     }
 
 

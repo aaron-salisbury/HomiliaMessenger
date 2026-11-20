@@ -39,7 +39,7 @@ public sealed class HuggingFaceImageModelTests
             ("model.safetensors", Encoding.UTF8.GetBytes("not inspected")));
         ImageModelLibrary library = CreateLibrary(folder.Path, hub);
 
-        ImageModelLookup lookup = await library.LookUpAsync($"https://huggingface.co/{REPO}/tree/main", TestContext.CancellationToken);
+        ImageModelLookup lookup = await library.LookUpAsync($"https://huggingface.co/{REPO}/tree/main", cancellationToken: TestContext.CancellationToken);
 
         Assert.AreEqual(HuggingFaceLookupStatus.Found, lookup.Status);
         Assert.AreEqual(REVISION, lookup.Revision);
@@ -76,7 +76,7 @@ public sealed class HuggingFaceImageModelTests
         Assert.IsGreaterThan(ImageModelLibrary.FIRST_HEADER_READ, large.Length - 64);
         hub.AddRepository(REPO, REVISION, null, null, ("large.gguf", large));
 
-        ImageModelLookup lookup = await CreateLibrary(folder.Path, hub).LookUpAsync(REPO, TestContext.CancellationToken);
+        ImageModelLookup lookup = await CreateLibrary(folder.Path, hub).LookUpAsync(REPO, cancellationToken: TestContext.CancellationToken);
 
         Assert.IsTrue(lookup.Files.Single().IsSupported, lookup.Files.Single().Problem);
         Assert.HasCount(2, hub.Ranges);
@@ -93,7 +93,7 @@ public sealed class HuggingFaceImageModelTests
             [new LocalModelFile("model.gguf", content.Length, FakeHub.Sha256(content))], SETTINGS, true);
         ImageModelLibrary library = new([builtIn], folder.Path, hub, new ImageGenerationGate(), NullLogger<ImageModelLibrary>.Instance);
 
-        ImageModelLookup lookup = await library.LookUpAsync(REPO, TestContext.CancellationToken);
+        ImageModelLookup lookup = await library.LookUpAsync(REPO, cancellationToken: TestContext.CancellationToken);
         LocalModelAddResult added = await library.AddAsync(lookup, lookup.Files.Single(), SETTINGS, cancellationToken: TestContext.CancellationToken);
 
         Assert.AreEqual("built-in", lookup.Files.Single().KnownModelId);
@@ -111,10 +111,10 @@ public sealed class HuggingFaceImageModelTests
         hub.Unreachable.Add("api/models/someone/offline");
         ImageModelLibrary library = CreateLibrary(folder.Path, hub);
 
-        ImageModelLookup noGguf = await library.LookUpAsync("someone/safetensors-only", TestContext.CancellationToken);
-        ImageModelLookup missing = await library.LookUpAsync("someone/missing", TestContext.CancellationToken);
-        ImageModelLookup offline = await library.LookUpAsync("someone/offline", TestContext.CancellationToken);
-        ImageModelLookup nonsense = await library.LookUpAsync("not a repository", TestContext.CancellationToken);
+        ImageModelLookup noGguf = await library.LookUpAsync("someone/safetensors-only", cancellationToken: TestContext.CancellationToken);
+        ImageModelLookup missing = await library.LookUpAsync("someone/missing", cancellationToken: TestContext.CancellationToken);
+        ImageModelLookup offline = await library.LookUpAsync("someone/offline", cancellationToken: TestContext.CancellationToken);
+        ImageModelLookup nonsense = await library.LookUpAsync("not a repository", cancellationToken: TestContext.CancellationToken);
 
         Assert.AreEqual(HuggingFaceLookupStatus.NoModels, noGguf.Status);
         Assert.Contains("no GGUF files", noGguf.Problem!);
@@ -132,7 +132,7 @@ public sealed class HuggingFaceImageModelTests
         hub.AddRepository(REPO, REVISION, null, null, ("good.gguf", GgufTestFile.StableDiffusion1()), ("unreadable.gguf", GgufTestFile.Write([], GgufTestFile.StableDiffusion(), padding: 500)));
         hub.Unreachable.Add($"{REPO}/resolve/{REVISION}/unreadable.gguf");
 
-        ImageModelLookup lookup = await CreateLibrary(folder.Path, hub).LookUpAsync(REPO, TestContext.CancellationToken);
+        ImageModelLookup lookup = await CreateLibrary(folder.Path, hub).LookUpAsync(REPO, cancellationToken: TestContext.CancellationToken);
 
         Assert.AreEqual(HuggingFaceLookupStatus.Found, lookup.Status);
         Assert.IsTrue(lookup.Files.Single(file => file.File.Path == "good.gguf").IsSupported);
@@ -147,7 +147,7 @@ public sealed class HuggingFaceImageModelTests
         byte[] sd1 = GgufTestFile.StableDiffusion1();
         hub.AddRepository(REPO, REVISION, "creativeml-openrail-m", "text-to-image", ("portrait-q8_0.gguf", sd1));
         ImageModelLibrary library = CreateLibrary(folder.Path, hub);
-        ImageModelLookup lookup = await library.LookUpAsync(REPO, TestContext.CancellationToken);
+        ImageModelLookup lookup = await library.LookUpAsync(REPO, cancellationToken: TestContext.CancellationToken);
         ImageGenerationSettings lcm = new(512, 512, "lcm", null, 4, 1f);
 
         LocalModelAddResult added = await library.AddAsync(lookup, lookup.Files.Single(), lcm, cancellationToken: TestContext.CancellationToken);
@@ -177,7 +177,7 @@ public sealed class HuggingFaceImageModelTests
         FakeHub hub = new();
         hub.AddRepository(REPO, REVISION, null, null, ("chat.gguf", GgufTestFile.LanguageModel()), ("portrait.gguf", GgufTestFile.StableDiffusion1()));
         ImageModelLibrary library = CreateLibrary(folder.Path, hub);
-        ImageModelLookup lookup = await library.LookUpAsync(REPO, TestContext.CancellationToken);
+        ImageModelLookup lookup = await library.LookUpAsync(REPO, cancellationToken: TestContext.CancellationToken);
 
         LocalModelAddResult languageModel = await library.AddAsync(lookup, lookup.Files.Single(file => file.File.Path == "chat.gguf"), SETTINGS, cancellationToken: TestContext.CancellationToken);
         LocalModelAddResult badSettings = await library.AddAsync(lookup, lookup.Files.Single(file => file.File.Path == "portrait.gguf"), SETTINGS with { Steps = 0 }, cancellationToken: TestContext.CancellationToken);

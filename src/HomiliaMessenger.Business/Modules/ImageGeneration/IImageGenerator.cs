@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -19,12 +20,16 @@ namespace HomiliaMessenger.Business.Modules.ImageGeneration;
 public sealed record ImageGenerationSettings(int Width, int Height, string Sampler, string? Scheduler, int Steps, float GuidanceScale)
 {
     /// <summary>
-    /// The samplers the integrated runtime offers for Stable Diffusion 1.x models, by its names for them.
+    /// The samplers the integrated runtime offers, by its names for them.
     /// </summary>
     public static readonly string[] SAMPLERS = ["euler_a", "euler", "heun", "dpm2", "dpm++2s_a", "dpm++2m", "dpm++2mv2", "ipndm", "ipndm_v", "lcm", "ddim_trailing", "tcd"];
 
     public const int MIN_SIZE = 256;
-    public const int MAX_SIZE = 1024;
+
+    /// <summary>
+    /// The largest side: SDXL and FLUX.2 models draw at about one megapixel, such as 896×1152 for a selfie.
+    /// </summary>
+    public const int MAX_SIZE = 2048;
     public const int MAX_STEPS = 100;
     public const float MAX_GUIDANCE_SCALE = 30;
 
@@ -34,6 +39,26 @@ public sealed record ImageGenerationSettings(int Width, int Height, string Sampl
     /// </summary>
     public const int SELFIE_WIDTH = 512;
     public const int SELFIE_HEIGHT = 640;
+
+    /// <summary>
+    /// The size SDXL and FLUX.2 models draw contact photos at, square like Stable Diffusion 1.x's 512×512.
+    /// </summary>
+    public const int LARGE_PORTRAIT_SIZE = 1024;
+
+    /// <summary>
+    /// The size SDXL and FLUX.2 models draw selfies at: about one megapixel, in the same portrait shape the GPU image
+    /// experiment used for every model.
+    /// </summary>
+    public const int LARGE_SELFIE_WIDTH = 896;
+    public const int LARGE_SELFIE_HEIGHT = 1152;
+
+    /// <summary>
+    /// Whether a negative prompt has any effect. The runtime draws an unconditional branch from the negative prompt only
+    /// when guidance is above 1, so this follows from the settings alone: distilled models such as FLUX.2 [klein] run at
+    /// CFG 1 and ignore it.
+    /// </summary>
+    [JsonIgnore]
+    public bool SupportsNegativePrompt => GuidanceScale > 1;
 
     /// <summary>
     /// Why these settings cannot be used, or <see langword="null"/> when they can.

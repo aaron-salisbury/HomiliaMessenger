@@ -22,11 +22,11 @@ public sealed partial class ImageModelItem : ObservableObject
         " For selfies, face matching (IP-Adapter Plus-Face and its image encoder) is downloaded too, under the Apache 2.0 license.";
 
     /// <summary>
-    /// The use restrictions every user of a CreativeML Open RAIL-M model must agree to (its paragraph 5 and Attachment A),
-    /// in brief; the full license is linked and saved with the model.
+    /// The use restrictions every user of a CreativeML Open RAIL-M or RAIL++-M model must agree to (paragraph 5 and
+    /// Attachment A of either), in brief; the full license is linked with the model. {0} is the model, {1} its license.
     /// </summary>
     internal const string OPENRAIL_NOTICE =
-        "{0} is licensed under the CreativeML Open RAIL-M license. By downloading and using it, you agree to its terms, including the use restrictions "
+        "{0} is licensed under the {1} license. By downloading and using it, you agree to its terms, including the use restrictions "
         + "in its Attachment A: for example, not to use it to break the law, harm or exploit minors, defame or harass people, spread false information "
         + "to harm others, generate personal information that could harm someone, or discriminate against people. Read the full license from the link "
         + "under the model in Settings. You are responsible for the images you make.";
@@ -78,7 +78,9 @@ public sealed partial class ImageModelItem : ObservableObject
         DownloadBytes = model.DownloadBytes;
         IsUserAdded = model.IsUserAdded;
         IsVerified = model.IsVerified;
-        SettingsText = Describe(model.Settings);
+        Processor = model.Processor;
+        FaceSource = model.FaceSource;
+        SettingsText = Describe(model.Settings) + (model.PromptStyle == ImagePromptStyle.Plain ? " · plain-sentence prompts" : " · weighted prompts");
         _isDownloaded = model.IsDownloaded;
         _isSelected = model.IsSelected;
     }
@@ -97,6 +99,8 @@ public sealed partial class ImageModelItem : ObservableObject
     public long DownloadBytes { get; }
     public bool IsUserAdded { get; }
     public bool IsVerified { get; }
+    public ImageProcessor Processor { get; }
+    public SelfieFaceSource FaceSource { get; }
 
     /// <summary>
     /// Whether this is a selfie model that also makes contact photos, so removing it here removes only face matching.
@@ -105,6 +109,12 @@ public sealed partial class ImageModelItem : ObservableObject
 
     public string RemoveHint => IsSharedWithPhotos ? "Remove face matching (the model stays for contact photos)" : "Remove model";
 
+    /// <summary>
+    /// Whether removing the model here would remove nothing: a selfie model that also makes contact photos and keeps faces
+    /// from the photo itself, so it needs nothing for selfies alone. It is removed under Profile photos.
+    /// </summary>
+    private bool HasNothingToRemove => IsSharedWithPhotos && FaceSource == SelfieFaceSource.ReferenceImage;
+
     private bool IsForSelfies => _purpose == ImageModelPurpose.Selfies;
 
     /// <summary>
@@ -112,12 +122,12 @@ public sealed partial class ImageModelItem : ObservableObject
     /// </summary>
     public string SettingsText { get; }
 
-    public string SizeText => $"{FormatSize(DownloadBytes)} · {License} · CPU" + (IsVerified ? string.Empty : " · Unverified")
+    public string SizeText => $"{FormatSize(DownloadBytes)} · {License} · {(Processor == ImageProcessor.Gpu ? "Graphics card" : "CPU")}" + (IsVerified ? string.Empty : " · Unverified")
         + (IsDownloaded ? IsSelected ? " · In use" : " · Downloaded" : string.Empty);
 
     public bool CanDownload => !IsDownloaded && !IsDownloading;
 
-    public bool CanRemove => (IsDownloaded || IsUserAdded) && !IsDownloading;
+    public bool CanRemove => (IsDownloaded || IsUserAdded) && !IsDownloading && !HasNothingToRemove;
 
     public bool CanChoose => IsDownloaded && !IsDownloading && !IsSelected;
 
@@ -125,7 +135,7 @@ public sealed partial class ImageModelItem : ObservableObject
     private async Task DownloadAsync()
     {
         if (License.Contains("RAIL", StringComparison.OrdinalIgnoreCase) && _confirmAsync is not null
-            && !await _confirmAsync("Model license", string.Format(CultureInfo.CurrentCulture, OPENRAIL_NOTICE, DisplayName) + (IsForSelfies ? FACE_MATCHING_NOTICE : string.Empty)))
+            && !await _confirmAsync("Model license", string.Format(CultureInfo.CurrentCulture, OPENRAIL_NOTICE, DisplayName, LicenseName) + (IsForSelfies && FaceSource == SelfieFaceSource.FaceMatching ? FACE_MATCHING_NOTICE : string.Empty)))
         {
             return;
         }
@@ -241,6 +251,11 @@ public sealed partial class ImageModelItem : ObservableObject
         IsSelected = model.IsSelected;
         ProgressPercent = model.IsDownloaded ? 100 : ProgressPercent;
     }
+
+    /// <summary>
+    /// The model's own license, without face matching's, which a selfie listing appends.
+    /// </summary>
+    private string LicenseName => License.Split(" · ")[0];
 
     internal static string Describe(ImageGenerationSettings settings)
     {
